@@ -33,9 +33,6 @@ KEYWORDS="amd64"
 
 DOCS=( "README.md" )
 
-src_unpack() {
-	zig_src_unpack
-}
 
 src_configure() {
 	local my_zbs_args=(
