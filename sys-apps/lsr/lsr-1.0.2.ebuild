@@ -33,7 +33,6 @@ DOCS=( "README.md" )
 
 src_configure() {
 	local my_zbs_args=(
-		-Dpie=true
 		--release=fast
 	)
 	zig_src_configure
