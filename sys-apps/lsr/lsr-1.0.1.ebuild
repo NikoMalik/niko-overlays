@@ -1,7 +1,7 @@
 
 EAPI=8
 
-ZIG_SLOT="0.15.2"
+ZIG_SLOT="0.15"
 ZIG_NEEDS_LLVM=1
 inherit verify-sig zig
 
