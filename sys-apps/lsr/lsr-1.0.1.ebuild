@@ -44,6 +44,3 @@ src_configure() {
 	zig_src_configure
 }
 
-src_install() {
-	zig_src_install
-}
