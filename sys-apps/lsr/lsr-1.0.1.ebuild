@@ -4,9 +4,10 @@ EAPI=8
 
 
 declare -g -r -A ZBS_DEPENDENCIES=(
-	[ourio-091bb8893d03d002652631155eec5f429162be8d.tar.gz]='https://github.com/NikoMalik/ourio/archive/091bb8893d03d002652631155eec5f429162be8d.tar.gz'
+	[ourio-02ed9e8d910c8e513e9344f3dab042fe06009dab.tar.gz]='https://github.com/NikoMalik/ourio/archive/02ed9e8d910c8e513e9344f3dab042fe06009dab.tar.gz'
 	[zeit-ade14edb2025f5e4a57b683f81c915f70a904e88.tar.gz]='https://github.com/rockorager/zeit/archive/ade14edb2025f5e4a57b683f81c915f70a904e88.tar.gz'
 	[zzdoc-a54223bdc13a80839ccf9f473edf3a171e777946.tar.gz]='https://github.com/rockorager/zzdoc/archive/a54223bdc13a80839ccf9f473edf3a171e777946.tar.gz'
+
 )
 
 
@@ -32,6 +33,9 @@ KEYWORDS="amd64"
 
 DOCS=( "README.md" )
 
+src_unpack() {
+	zig_src_unpack
+}
 
 src_configure() {
 	local my_zbs_args=(
@@ -41,3 +45,6 @@ src_configure() {
 	zig_src_configure
 }
 
+src_install() {
+	zig_src_install
+}
