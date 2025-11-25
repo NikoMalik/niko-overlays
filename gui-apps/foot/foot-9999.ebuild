@@ -44,35 +44,8 @@ BDEPEND="
 	app-text/scdoc
 	>=dev-libs/wayland-protocols-1.32
 	dev-util/wayland-scanner
-	pgo? (
-		|| (
-			gui-wm/tinywl
-			gui-libs/wlroots[tinywl(-)]
-		)
-		${PYTHON_DEPS}
-	)
 "
 
-virtwl() {
-	debug-print-function ${FUNCNAME} "$@"
-
-	[[ $# -lt 1 ]] && die "${FUNCNAME} needs at least one argument"
-	[[ -n $XDG_RUNTIME_DIR ]] || die "${FUNCNAME} XDG_RUNTIME_DIR is not set; try xdg_environment_reset"
-	tinywl -h >/dev/null || die 'tinywl -h failed'
-
-	local VIRTWL VIRTWL_PID
-	coproc VIRTWL { WLR_BACKENDS=headless exec tinywl -s 'echo $WAYLAND_DISPLAY; read _; kill $PPID'; }
-	local -x WAYLAND_DISPLAY
-	read WAYLAND_DISPLAY <&${VIRTWL[0]}
-
-	debug-print "${FUNCNAME}: $@"
-	"$@"
-	local r=$?
-
-	[[ -n $VIRTWL_PID ]] || die "tinywl exited unexpectedly"
-	exec {VIRTWL[0]}<&- {VIRTWL[1]}>&-
-	return $r
-}
 
 pkg_setup() {
 	python-any-r1_pkg_setup
@@ -143,8 +116,6 @@ src_compile() {
 	meson_src_compile
 
 	if use pgo; then
-		virtwl ./pgo/full-current-session.sh "${S}" "${BUILD_DIR}"
-
 		if tc-is-clang; then
 			llvm-profdata merge "${BUILD_DIR}"/default_*profraw --output="${BUILD_DIR}"/default.profdata || die
 		fi
