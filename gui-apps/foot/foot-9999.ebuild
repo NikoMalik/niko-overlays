@@ -76,6 +76,9 @@ virtwl() {
 
 pkg_setup() {
 	python-any-r1_pkg_setup
+	export XDG_RUNTIME_DIR="${T}/run"
+    mkdir -p "${XDG_RUNTIME_DIR}"
+    addpredict "${XDG_RUNTIME_DIR}"
 	unset \
 		DBUS_SESSION_BUS_ADDRESS \
 		WAYLAND_DISPLAY \
@@ -109,7 +112,6 @@ pkg_setup() {
 
 			shopt -u nullglob
 	fi
-	xdg_environment_reset
 }
 
 src_prepare() {
