@@ -61,6 +61,12 @@ src_compile() {
         ./pgo/pgo.sh full-headless-sway "${S}" "${BUILD_DIR}" \
             --prefix=/usr \
             --wrap-mode=nodownload || die
+
+		if tc-is-clang; then
+			llvm-profdata merge "${BUILD_DIR}"/default_*profraw --output="${BUILD_DIR}"/default.profdata || die
+		meson_src_configure -Db_pgo=use
+		eninja -C "${BUILD_DIR}"
+		fi
     else
         meson_src_compile
     fi
