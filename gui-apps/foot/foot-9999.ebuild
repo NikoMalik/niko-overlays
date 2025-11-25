@@ -92,39 +92,6 @@ src_compile() {
 
 pkg_setup() {
 	python-any-r1_pkg_setup
-	unset \
-		DBUS_SESSION_BUS_ADDRESS \
-		WAYLAND_DISPLAY \
-		DISPLAY \
-		ORBIT_SOCKETDIR \
-		SESSION_MANAGER \
-		XAUTHORITY \
-		XDG_CACHE_HOME \
-		XDG_SESSION_COOKIE
-
-		if use pgo ; then
-			addpredict /dev/dri
-
-			shopt -s nullglob
-
-			for f in /dev/ati/card*; do
-				addpredict "$f"
-					done
-
-			for f in /dev/dri/card*; do
-				addpredict "$f"
-					done
-
-			for f in /dev/nvidia*; do
-				addpredict "$f"
-					done
-
-			for f in /dev/dri/renderD128*; do
-				addpredict "$f"
-					done
-
-			shopt -u nullglob
-	fi
 	xdg_environment_reset
 }
 
