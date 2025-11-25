@@ -78,7 +78,7 @@ src_configure() {
 		$(usev screencast xdp-gnome-screencast)
 		$(usev systemd)
 	)
-	cargo_src_configure --no-default-features --frozen
+	cargo_src_configure --no-default-features --offline
 }
 
 src_install() {
