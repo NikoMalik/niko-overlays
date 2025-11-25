@@ -1,6 +1,8 @@
 EAPI=8
 
 
+
+
 LLVM_COMPAT=( {18..23} )
 RUST_MIN_VER="1.80.1"
 
@@ -10,9 +12,6 @@ VENDOR="25.08"
 DESCRIPTION="Scrollable-tiling Wayland compositor"
 HOMEPAGE="https://github.com/YaLTeR/niri"
 EGIT_REPO_URI="https://github.com/YaLTeR/niri.git"
-SRC_URI="
-	https://github.com/YaLTeR/niri/releases/download/v${VENDOR}/niri-${VENDOR}-vendored-dependencies.tar.xz
-"
 
 LICENSE="GPL-3+"
 # Dependent crate licenses
@@ -79,7 +78,7 @@ src_configure() {
 		$(usev screencast xdp-gnome-screencast)
 		$(usev systemd)
 	)
-	cargo_src_configure --no-default-features
+	cargo_src_configure --no-default-features --frozen
 }
 
 src_install() {
