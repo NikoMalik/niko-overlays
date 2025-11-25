@@ -1,7 +1,4 @@
-
 EAPI=8
-
-
 
 declare -g -r -A ZBS_DEPENDENCIES=(
 	[ourio-0.0.0-_s-z0aEtAgC9FcfviiCNvmxZP2vvXsx3TMZsel5sgj6X.tar.gz]='https://github.com/NikoMalik/ourio/archive/02ed9e8d910c8e513e9344f3dab042fe06009dab.tar.gz'
@@ -40,4 +37,5 @@ src_configure() {
 	)
 	zig_src_configure
 }
+
 
