@@ -86,33 +86,28 @@ pkg_setup() {
 		XDG_CACHE_HOME \
 		XDG_SESSION_COOKIE
 
-	if use pgo ; then
-		addpredict /dev/dri
+		if use pgo ; then
+			addpredict /dev/dri
 
-		local ati_cards mesa_cards nvidia_cards render_cards
-		shopt -s nullglob
+			shopt -s nullglob
 
-		ati_cards=$(echo -n /dev/ati/card* | sed 's/ /:/g')
-		if [[ -n "${ati_cards}" ]] ; then
-			addpredict "${ati_cards}"
-		fi
+			for f in /dev/ati/card*; do
+				addpredict "$f"
+					done
 
-		mesa_cards=$(echo -n /dev/dri/card* | sed 's/ /:/g')
-		if [[ -n "${mesa_cards}" ]] ; then
-			addpredict "${mesa_cards}"
-		fi
+			for f in /dev/dri/card*; do
+				addpredict "$f"
+					done
 
-		nvidia_cards=$(echo -n /dev/nvidia* | sed 's/ /:/g')
-		if [[ -n "${nvidia_cards}" ]] ; then
-			addpredict "${nvidia_cards}"
-		fi
+			for f in /dev/nvidia*; do
+				addpredict "$f"
+					done
 
-		render_cards=$(echo -n /dev/dri/renderD128* | sed 's/ /:/g')
-		if [[ -n "${render_cards}" ]] ; then
-			addpredict "${render_cards}"
-		fi
+			for f in /dev/dri/renderD128*; do
+				addpredict "$f"
+					done
 
-		shopt -u nullglob
+			shopt -u nullglob
 	fi
 	xdg_environment_reset
 }
