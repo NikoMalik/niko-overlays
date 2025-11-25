@@ -92,7 +92,6 @@ src_compile() {
 
 pkg_setup() {
 	python-any-r1_pkg_setup
-	xdg_environment_reset
 }
 
 src_prepare() {
@@ -122,7 +121,6 @@ src_configure() {
 
 
 src_test() {
-	xdg_environment_reset
 	meson_src_configure -Dtests=true
 	meson_src_test
 }
