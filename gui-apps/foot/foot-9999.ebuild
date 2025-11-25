@@ -18,7 +18,7 @@ DESCRIPTION="A fast, lightweight and minimalistic Wayland terminal emulator"
 HOMEPAGE="https://codeberg.org/dnkl/foot"
 LICENSE="MIT"
 SLOT="0"
-IUSE="+grapheme-clustering pgo"
+IUSE="+grapheme-clustering pgo lto"
 
 CDEPEND="
 	dev-libs/wayland
@@ -57,7 +57,7 @@ virtwl() {
 	debug-print-function ${FUNCNAME} "$@"
 
 	[[ $# -lt 1 ]] && die "${FUNCNAME} needs at least one argument"
-	[[ -n $XDG_RUNTIME_DIR ]] || die "${FUNCNAME} needs XDG_RUNTIME_DIR to be set; try xdg_environment_reset"
+	[[ -n $XDG_RUNTIME_DIR ]] || die "${FUNCNAME} XDG_RUNTIME_DIR is not set; try xdg_environment_reset"
 	tinywl -h >/dev/null || die 'tinywl -h failed'
 
 	local VIRTWL VIRTWL_PID
@@ -130,6 +130,9 @@ src_configure() {
 		-Dterminfo=disabled
 		-Dthemes=true
 	)
+	if use lto; then
+		emesonargs+=( -Db_lto=true )
+	fi
 	if use pgo; then
 		emesonargs+=( -Db_pgo=generate )
 	fi
@@ -153,7 +156,6 @@ src_compile() {
 }
 
 src_test() {
-	xdg_environment_reset
 	meson_src_configure -Dtests=true
 	meson_src_test
 }
