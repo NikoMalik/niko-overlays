@@ -112,19 +112,6 @@ src_configure() {
 	meson_src_configure
 }
 
-src_compile() {
-	meson_src_compile
-
-	if use pgo; then
-		if tc-is-clang; then
-			llvm-profdata merge "${BUILD_DIR}"/default_*profraw --output="${BUILD_DIR}"/default.profdata || die
-		fi
-
-		meson_src_configure -Db_pgo=use
-
-		eninja -C "${BUILD_DIR}"
-	fi
-}
 
 src_test() {
 	meson_src_configure -Dtests=true
