@@ -62,6 +62,9 @@ src_compile() {
             --prefix=/usr \
             --wrap-mode=nodownload || die
 
+		if tc-is-clang; then
+			llvm-profdata merge "${BUILD_DIR}"/default_*profraw --output="${BUILD_DIR}"/default.profdata || die
+		fi
 		meson_src_configure -Db_pgo=use
 		eninja -C "${BUILD_DIR}"
     else
