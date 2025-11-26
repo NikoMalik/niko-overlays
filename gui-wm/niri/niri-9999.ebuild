@@ -12,6 +12,9 @@ VENDOR="25.08"
 DESCRIPTION="Scrollable-tiling Wayland compositor"
 HOMEPAGE="https://github.com/YaLTeR/niri"
 EGIT_REPO_URI="https://github.com/YaLTeR/niri.git"
+SRC_URI="
+	https://github.com/YaLTeR/niri/releases/download/v${VENDOR}/niri-${VENDOR}-vendored-dependencies.tar.xz
+"
 
 LICENSE="GPL-3+"
 # Dependent crate licenses
@@ -61,14 +64,14 @@ pkg_setup() {
 src_unpack() {
 	git-r3_src_unpack
 	default
-	cd "${WORKDIR}/${P}"
-	cargo update
-	cd "${WORKDIR}"
 	cargo_live_src_unpack
 }
 
 src_prepare() {
 	sed -i 's/git = "[^ ]*"/version = "*"/' Cargo.toml || die
+	if ! use systemd; then
+		sed -i 's/niri-session/niri --session/' resources/niri.desktop || die
+	fi
 	default
 }
 
@@ -78,7 +81,7 @@ src_configure() {
 		$(usev screencast xdp-gnome-screencast)
 		$(usev systemd)
 	)
-	cargo_src_configure --no-default-features --offline
+	cargo_src_configure --no-default-features
 }
 
 src_install() {
