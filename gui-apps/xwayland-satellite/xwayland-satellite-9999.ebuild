@@ -1,19 +1,17 @@
 EAPI=8
 
 
-CRATES=""
 
-LLVM_COMPAT=( {17..20} )
+LLVM_COMPAT=( {18..23} )
+RUST_MIN_VER="1.80.1"
 
-RUST_NEEDS_LLVM=1
 
-inherit llvm-r1 cargo
+
+inherit cargo llvm-r2 optfeature  git-r3
 
 DESCRIPTION="Xwayland outside your Wayland"
-HOMEPAGE="https://github.com/NikoMalik/xwayland-satellite"
-SRC_URI="https://github.com/NikoMalik/${PN}/archive/refs/tags/${PV}.tar.gz -> ${P}.tar.gz"
-DEPS_URI="https://github.com/NikoMalik/${PN}/releases/download/${PV}/${P}-crates.tar.xz"
-SRC_URI+=" ${DEPS_URI}"
+HOMEPAGE="https://github.com/Supreeeme/xwayland-satellite"
+EGIT_REPO_URI="https://github.com/Supreeeme/xwayland-satellite.git"
 
 LICENSE="MPL-2.0 Apache-2.0 BSD ISC MIT Unicode-DFS-2016 ZLIB"
 SLOT="0"
@@ -29,44 +27,44 @@ BDEPEND="
 	$(llvm_gen_dep 'llvm-core/clang:${LLVM_SLOT}=')
 "
 
+ECARGO_VENDOR="${WORKDIR}/vendor"
+
+
 QA_FLAGS_IGNORED="usr/bin/${PN}"
 
 pkg_setup() {
-	llvm-r1_pkg_setup
+	llvm-r2_pkg_setup
 	rust_pkg_setup
+
 }
 
 
 src_unpack() {
-	cargo_src_unpack
-
-        if [[ -f "${DISTDIR}/${P}-crates.tar.xz" ]]; then
-                mkdir -p "${CARGO_HOME}/vendor"
-                tar -xf "${DISTDIR}/${P}-crates.tar.xz" -C "${CARGO_HOME}/vendor" --strip-components=1 || die "Failed to unpack crates"
-        fi
+	git-r3_src_unpack
+	default
+	cd "${WORKDIR}/${P}"
+	cargo update
+	cd "${WORKDIR}"
+	cargo_live_src_unpack
 }
 
 
 
 src_prepare() {
-        default
-
-        cat <<-EOF > "${S}/.cargo/config.toml"
-[source.crates-io]
-replace-with = "vendored-sources"
-
-[source.vendored-sources]
-directory = "${CARGO_HOME}/vendor"
-EOF
-
-        mkdir -p "${S}/vendor"
-        ln -sf "${CARGO_HOME}/vendor" "${S}/vendor/vendored" 2>/dev/null || true
+	sed -i 's/git = "[^ ]*"/version = "*"/' Cargo.toml || die
+	default
 }
 
 src_install() {
-	cargo_src_install --locked
+	cargo_src_install
 	einstalldocs
 }
+
+
+src_configure() {
+	cargo_src_configure --no-default-features --offline
+}
+
 
 
 
