@@ -1,10 +1,7 @@
 EAPI=8
 
-VALA_USE_DEPEND="vapigen"
 
-inherit cmake vala virtualx
-
-DESCRIPTION="Ayatana Application Indicators glib (Shared Library)"
+DESCRIPTION="Ayatana Application Indicators Shared Library (GLib-2.0 reimplementation)"
 HOMEPAGE="https://github.com/AyatanaIndicators/libayatana-appindicator-glib"
 
 if [[ "${PV}" = "9999" ]]; then
@@ -15,48 +12,38 @@ SRC_URI="https://github.com/AyatanaIndicators/libayatana-appindicator-glib/archi
 KEYWORDS="~amd64"
 fi
 
+inherit cmake
 
-LICENSE="GPL-3 LGPL-2 LGPL-3"
+LICENSE="GPL-3"
 SLOT="0"
-KEYWORDS="amd64 ~arm arm64 ~loong ~ppc ppc64 ~riscv ~sparc x86"
 IUSE="test"
 RESTRICT="!test? ( test )"
 
-RDEPEND="
-	>=dev-libs/glib-2.37:2
-	>=x11-libs/gtk+-3.24:3[introspection]
-	dev-libs/libdbusmenu[gtk3]
-	>=dev-libs/libayatana-indicator-0.8.4
+DEPEND="
+	sys-libs/glibc
+	dev-libs/glib
+	sys-devel/gcc
 "
-DEPEND="${RDEPEND}"
-BDEPEND="$(vala_depend)
-    dev-libs/gobject-introspection
+RDEPEND="${DEPEND}"
+BDEPEND="
 	kde-frameworks/extra-cmake-modules
 	dev-util/gi-docgen
 	dev-libs/gobject-introspection
 	dev-lang/vala
 	dev-libs/glib
-	test? ( dev-util/dbus-test-runner )
 "
 
 src_prepare() {
-	vala_setup
 	cmake_src_prepare
+	cp -r "${FILESDIR}/cmake" "${S}" || die "cp failed"
 }
 
 src_configure() {
-	local mycmakeargs+=(
-		-DVALA_COMPILER="${VALAC}"
-		-DVAPI_GEN="${VAPIGEN}"
-		-DENABLE_TESTS="$(usex test)"
-		-DENABLE_GTKDOC=OFF
-		-DENABLE_BINDINGS_MONO=OFF
-		-DFLAVOUR_GTK2=OFF
-		-DFLAVOUR_GTK3=ON
+	local mycmakeargs=(
+		-DENABLE_TESTS=$(usex test ON OFF)
+		# -DENABLE_WERROR=OFF
+		# -DENABLE_COVERAGE=OFF
+		-DCMAKE_MODULE_PATH="${S}/cmake"
 	)
 	cmake_src_configure
-}
-
-src_test() {
-	virtx cmake_src_test
 }
