@@ -22,6 +22,7 @@ RDEPEND="
 "
 DEPEND="${RDEPEND}"
 BDEPEND="$(vala_depend)
+    dev-libs/gobject-introspection
 	test? ( dev-util/dbus-test-runner )
 "
 
