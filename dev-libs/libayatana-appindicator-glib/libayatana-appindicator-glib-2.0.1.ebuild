@@ -6,7 +6,15 @@ inherit cmake vala virtualx
 
 DESCRIPTION="Ayatana Application Indicators glib (Shared Library)"
 HOMEPAGE="https://github.com/AyatanaIndicators/libayatana-appindicator-glib"
-SRC_URI="https://github.com/AyatanaIndicators/${PN}/archive/${PV}.tar.gz -> ${P}.tar.gz"
+
+if [[ "${PV}" = "9999" ]]; then
+EGIT_REPO_URI="https://github.com/AyatanaIndicators/libayatana-appindicator-glib"
+inherit git-r3
+else
+SRC_URI="https://github.com/AyatanaIndicators/libayatana-appindicator-glib/archive/refs/tags/${PV}.tar.gz -> ${P}.tar.gz"
+KEYWORDS="~amd64"
+fi
+
 
 LICENSE="GPL-3 LGPL-2 LGPL-3"
 SLOT="0"
@@ -23,6 +31,11 @@ RDEPEND="
 DEPEND="${RDEPEND}"
 BDEPEND="$(vala_depend)
     dev-libs/gobject-introspection
+	kde-frameworks/extra-cmake-modules
+	dev-util/gi-docgen
+	dev-libs/gobject-introspection
+	dev-lang/vala
+	dev-libs/glib
 	test? ( dev-util/dbus-test-runner )
 "
 
