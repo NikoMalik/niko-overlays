@@ -66,6 +66,13 @@ src_prepare() {
     eapply_user
 }
 
+src_install() {
+    insinto /opt/zen-browser
+    doins -r dist/*
+
+    dosym /opt/zen-browser/zen /usr/bin/zen-browser
+}
+
 src_compile() {
     npm run build --with-libclang-path="$(llvm-config --libdir)" || die
 }

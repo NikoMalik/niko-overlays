@@ -8,7 +8,7 @@ RUST_MIN_VER="1.80.1"
 
 inherit cargo llvm-r2 optfeature systemd git-r3
 
-VENDOR="25.08"
+VENDOR="25.11"
 DESCRIPTION="Scrollable-tiling Wayland compositor"
 HOMEPAGE="https://github.com/YaLTeR/niri"
 EGIT_REPO_URI="https://github.com/YaLTeR/niri.git"
