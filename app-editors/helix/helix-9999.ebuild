@@ -7,7 +7,7 @@ RUST_MIN_VER="1.82"
 
 
 
-inherit cargo llvm-r2 optfeature  git-r3
+inherit cargo llvm-r2 optfeature  git-r3 shell-completion xdg
 
 DESCRIPTION="A post modern text editor"
 HOMEPAGE="
@@ -26,7 +26,7 @@ SLOT="0"
 RESTRICT="test"
 KEYWORDS="amd64"
 
-IUSE="+grammar"
+IUSE="-grammar"
 
 DEPEND="
 	dev-vcs/git
@@ -45,6 +45,7 @@ pkg_setup() {
 		usr/bin/hx
 		usr/$(get_libdir)/${PN}/.*\.so
 	"
+	# FIXME: unable to fetch grammar
 	export HELIX_DEFAULT_RUNTIME="${EPREFIX}/usr/share/${PN}/runtime"
 	use grammar || export HELIX_DISABLE_AUTO_GRAMMAR_BUILD=1
 	llvm-r2_pkg_setup
