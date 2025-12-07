@@ -113,7 +113,7 @@ pkg_postinst() {
 
 
 src_configure() {
-	cargo_src_configure --no-default-features --offline
+	cargo_src_configure --offline
 }
 
 
