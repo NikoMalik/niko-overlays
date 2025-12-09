@@ -81,7 +81,7 @@ src_configure() {
 		$(usev screencast xdp-gnome-screencast)
 		$(usev systemd)
 	)
-	cargo_src_configure --no-default-features
+	cargo_src_configure --features=profile-with-tracy-ondemand
 }
 
 src_install() {
