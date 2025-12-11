@@ -3,7 +3,7 @@ EAPI=8
 
 
 LLVM_COMPAT=( {18..23} )
-RUST_MIN_VER="1.82"
+RUST_MIN_VER="1.88"
 
 
 
