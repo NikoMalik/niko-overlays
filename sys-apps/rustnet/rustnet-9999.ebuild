@@ -61,16 +61,6 @@ src_prepare() {
 
 src_install() {
 	cargo_src_install 
-
-	DOCS=(
-		README.md
-		CHANGELOG.md
-		docs/
-	)
-	HTML_DOCS=(
-		book/
-	)
-	einstalldocs
 }
 
 
