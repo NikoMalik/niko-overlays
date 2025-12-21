@@ -11,7 +11,7 @@ inherit cargo llvm-r2 optfeature  git-r3
 
 DESCRIPTION="Xwayland outside your Wayland"
 HOMEPAGE="https://github.com/Supreeeme/xwayland-satellite"
-EGIT_REPO_URI="https://github.com/Supreeeme/xwayland-satellite.git"
+EGIT_REPO_URI="https://github.com/NikoMalik/xwayland-satellite.git"
 
 LICENSE="MPL-2.0 Apache-2.0 BSD ISC MIT Unicode-DFS-2016 ZLIB"
 SLOT="0"
