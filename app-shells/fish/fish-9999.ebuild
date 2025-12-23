@@ -16,7 +16,7 @@ MY_P="${PN}-${MY_PV}"
 
 if [[ ${PV} == 9999 ]]; then
 	inherit git-r3
-	EGIT_REPO_URI="https://github.com/NikoMalik/fish-shell.git"
+	EGIT_REPO_URI="https://github.com/fish-shell/fish-shell.git"
 else
 	SRC_URI="
 		https://github.com/fish-shell/fish-shell/releases/download/${MY_PV}/${MY_P}.tar.xz
