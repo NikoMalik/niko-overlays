@@ -67,10 +67,12 @@ src_configure() {
 
 src_compile() {
 	local -x PREFIX="${EPREFIX}/usr"
+	local -x DATADIR="${EPREFIX}/usr/share"
 	local -x DOCDIR="${EPREFIX}/usr/share/doc/${PF}"
 
 	# Bug: https://bugs.gentoo.org/950699
 	local -x SYSCONFDIR="${EPREFIX}/etc"
+
 
 	# Release tarballs contain prebuilt documentation.
 	local -x FISH_BUILD_DOCS
