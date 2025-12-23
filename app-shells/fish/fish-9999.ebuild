@@ -5,10 +5,6 @@ EAPI=8
 
 CRATES=""
 
-declare -A GIT_CRATES=(
-	[pcre2-sys]='https://github.com/fish-shell/rust-pcre2;85b7afba1a9d9bd445779800e5bcafeb732e4421;rust-pcre2-%commit%/pcre2-sys'
-	[pcre2]='https://github.com/fish-shell/rust-pcre2;85b7afba1a9d9bd445779800e5bcafeb732e4421;rust-pcre2-%commit%'
-)
 
 inherit cargo cmake readme.gentoo-r1 xdg
 
