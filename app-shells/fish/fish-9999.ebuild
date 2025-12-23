@@ -59,7 +59,7 @@ src_unpack() {
 src_configure() {
 	local mycmakeargs=(
 		-DCMAKE_INSTALL_SYSCONFDIR="${EPREFIX}/etc"
-		-DINSTALL_DOCS="$(usex doc)"
+		-DWITH_DOCS="$(usex doc)"
 		-DWITH_GETTEXT="$(usex nls 1 0)"
 	)
 	cargo_src_configure --no-default-features \
