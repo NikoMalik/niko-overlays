@@ -104,9 +104,6 @@ src_configure() {
 src_install() {
 	cmake_src_install
 
-	# install a default configuration file
-	insinto /etc/vim
-	doins "${FILESDIR}"/sysinit.vim
 
 	# symlink tree-sitter parsers
 	dodir /usr/share/nvim/runtime
