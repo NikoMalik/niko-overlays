@@ -107,7 +107,10 @@ src_configure() {
 
 	
 
-	use mimalloc && emesonargs+=( -Dc_args='-Wl,--whole-archive -lmimalloc-static -Wl,--no-whole-archive' )
+
+	if use mimalloc; then
+        append-ldflags "-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
+    fi
 	meson_src_configure
 }
 
