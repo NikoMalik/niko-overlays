@@ -20,7 +20,7 @@ DESCRIPTION="A fast, lightweight and minimalistic Wayland terminal emulator"
 HOMEPAGE="https://codeberg.org/dnkl/foot"
 LICENSE="MIT"
 SLOT="0"
-IUSE="+grapheme-clustering pgo lto"
+IUSE="+grapheme-clustering pgo lto +mimalloc"
 
 CDEPEND="
 	dev-libs/wayland
@@ -37,6 +37,8 @@ CDEPEND="
 DEPEND="
 	${CDEPEND}
 	dev-libs/tllist
+	mimalloc? ( dev-libs/mimalloc:= )
+
 "
 RDEPEND="
 	${CDEPEND}
@@ -99,6 +101,10 @@ src_configure() {
 	fi
 	if use pgo; then
 		emesonargs+=( -Db_pgo=generate )
+	fi
+	
+	if use mimalloc; then
+		emesonargs+=( -Db_malloc=mimalloc )
 	fi
 	meson_src_configure
 }
