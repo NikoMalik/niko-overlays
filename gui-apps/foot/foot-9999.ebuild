@@ -90,6 +90,11 @@ src_configure() {
 		tc-is-clang && append-cflags -Wno-ignored-optimization-argument
 	fi
 
+	if use mimalloc; then
+    append-ldflags -lmimalloc-override
+    fi
+
+
 	local emesonargs=(
 		-Dime=true
 		$(meson_feature grapheme-clustering)
@@ -101,11 +106,7 @@ src_configure() {
 	fi
 	if use pgo; then
 		emesonargs+=( -Db_pgo=generate )
-	fi
-	
-	if use mimalloc; then
-		emesonargs+=( -Db_malloc=mimalloc )
-	fi
+	fi	
 	meson_src_configure
 }
 
