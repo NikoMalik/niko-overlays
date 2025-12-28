@@ -90,9 +90,6 @@ src_configure() {
 		tc-is-clang && append-cflags -Wno-ignored-optimization-argument
 	fi
 
-	if use mimalloc; then
-    append-ldflags -lmimalloc-override
-    fi
 
 
 	local emesonargs=(
@@ -107,6 +104,14 @@ src_configure() {
 	if use pgo; then
 		emesonargs+=( -Db_pgo=generate )
 	fi	
+
+	
+	if use mimalloc; then
+		emesonargs+=(
+			-Dc_link_args=-lmimalloc-override
+			-Dcpp_link_args=-lmimalloc-override
+		)
+	fi
 	meson_src_configure
 }
 
