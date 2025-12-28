@@ -106,12 +106,8 @@ src_configure() {
 	fi	
 
 	
-	if use mimalloc; then
-		emesonargs+=(
-			-Dc_link_args=-lmimalloc-override
-			-Dcpp_link_args=-lmimalloc-override
-		)
-	fi
+
+	use mimalloc && emesonargs+=( -Dc_args='-Wl,--whole-archive -lmimalloc-static -Wl,--no-whole-archive' )
 	meson_src_configure
 }
 
