@@ -33,7 +33,7 @@ fi
 S="${WORKDIR}/${PN}-${MY_PV}"
 LICENSE="BSD-2"
 SLOT="0"
-IUSE="avif libei pipewire +sdl systemd +wsi-layer"
+IUSE="avif libei pipewire +sdl systemd +wsi-layer +mimalloc"
 
 RDEPEND="
 	dev-lang/luajit:2=
@@ -63,6 +63,8 @@ RDEPEND="
 	sdl? ( media-libs/libsdl2[video,vulkan] )
 	systemd? ( sys-apps/systemd:= )
 	wsi-layer? ( x11-libs/libxcb )
+	mimalloc? ( dev-libs/mimalloc:= )
+
 "
 # For bundled wlroots.
 RDEPEND+="
@@ -144,6 +146,11 @@ src_configure() {
 		-Dwlroots:backends=libinput
 		-Dwlroots:session=enabled
 	)
+
+	if use mimalloc; then
+        append-ldflags "-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
+    fi
+
 	meson_src_configure
 }
 
