@@ -92,7 +92,6 @@ BDEPEND="
 "
 
 PATCHES=(
-	"${FILESDIR}"/${PN}-deprecated-stb.patch
 	"${FILESDIR}"/${PN}-system-stb-glm.patch
 )
 
