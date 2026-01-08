@@ -972,7 +972,6 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-adaptive_spin.patch"
 		eapply "${FILESDIR}/glibc-2.41-set-vector-width.patch"
 		eapply "${FILESDIR}/glibc-2.41-disable-vectorization-more.patch"
-		eapply "${FILESDIR}/glibc-2.41-spin-smarter.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi
