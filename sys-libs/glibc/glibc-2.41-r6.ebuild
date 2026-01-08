@@ -973,7 +973,6 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-set-vector-width.patch"
 		eapply "${FILESDIR}/glibc-2.41-disable-vectorization-more.patch"
 		eapply "${FILESDIR}/glibc-2.41-pause.patch"
-		eapply "${FILESDIR}/glibc-2.41-vzeroupper.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi
