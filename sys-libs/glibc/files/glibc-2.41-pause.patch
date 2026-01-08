@@ -1,0 +1,10 @@
+--- a/sysdeps/x86/atomic-machine.h~	2019-01-31 16:45:36.000000000 +0000
++++ b/sysdeps/x86/atomic-machine.h	2019-01-31 22:21:32.316611237 +0000
+@@ -566,6 +566,6 @@
+ #define atomic_read_barrier() __asm ("" ::: "memory")
+ #define atomic_write_barrier() __asm ("" ::: "memory")
+ 
+-#define atomic_spin_nop() __asm ("pause")
++#define atomic_spin_nop() __asm ("lfence")
+ 
+ #endif /* atomic-machine.h */
