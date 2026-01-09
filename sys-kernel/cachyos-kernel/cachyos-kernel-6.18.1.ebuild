@@ -854,7 +854,7 @@ src_prepare() {
 
 	# apply package and user patches
 	eapply "${WORKDIR}/patches"
-	eapply "${FILESDIR}/0163-extra-optimization-flags.patch"
+	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
 	einfo "Applying optimization flags"
 
 
