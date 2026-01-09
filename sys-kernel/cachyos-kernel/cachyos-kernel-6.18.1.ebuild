@@ -577,8 +577,6 @@ cachy_use_config() {
 	einfo "  _use_kcfi=${_use_kcfi}"
 	einfo "  _use_llvm_lto=${_use_llvm_lto}"
 
-	kconf unset INIT_ON_ALLOC_DEFAULT_ON
-	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
 	# _processor_opt
 	local MARCH="${_processor_opt^^}"
@@ -803,6 +801,10 @@ cachy_use_config() {
 		kconf set BCACHEFS_LOCK_TIME_STATS
 		kconf set BCACHEFS_SIX_OPTIMISTIC_SPIN
 	fi
+
+	kconf unset INIT_ON_ALLOC_DEFAULT_ON
+	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
+
 }
 
 pkg_pretend() {
