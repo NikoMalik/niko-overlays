@@ -855,6 +855,7 @@ src_prepare() {
 	# apply package and user patches
 	eapply "${WORKDIR}/patches"
 	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
+	eapply "${FILESDIR}/6.18.1-rwsmem.patch"
 	einfo "Applying optimization flags"
 
 
