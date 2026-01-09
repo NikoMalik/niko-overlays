@@ -577,6 +577,9 @@ cachy_use_config() {
 	einfo "  _use_kcfi=${_use_kcfi}"
 	einfo "  _use_llvm_lto=${_use_llvm_lto}"
 
+	kconf unset INIT_ON_ALLOC_DEFAULT_ON
+	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
+
 	# _processor_opt
 	local MARCH="${_processor_opt^^}"
 	case "${MARCH}" in
@@ -857,7 +860,6 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
 	eapply "${FILESDIR}/6.18.1-tcp.patch"
 	eapply "${FILESDIR}/6.18.1-harder-flags.patch"
-	eapply "${FILESDIR}/6.18.1-disable-zeroed.patch"
 	einfo "Applying optimization flags"
 
 
