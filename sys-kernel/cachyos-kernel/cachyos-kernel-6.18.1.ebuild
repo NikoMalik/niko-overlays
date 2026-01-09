@@ -854,6 +854,10 @@ src_prepare() {
 
 	# apply package and user patches
 	eapply "${WORKDIR}/patches"
+	eapply "${FILESDIR}/0163-extra-optimization-flags.patch"
+	einfo "Applying optimization flags"
+
+
 	eapply_user
 
 	# Localversion
