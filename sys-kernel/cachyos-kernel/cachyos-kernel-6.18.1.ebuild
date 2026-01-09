@@ -856,6 +856,7 @@ src_prepare() {
 	eapply "${WORKDIR}/patches"
 	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
 	eapply "${FILESDIR}/6.18.1-tcp.patch"
+	eapply "${FILESIDR}/6.18.1-harder-flags.patch"
 	einfo "Applying optimization flags"
 
 
