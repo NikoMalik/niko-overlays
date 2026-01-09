@@ -73,3 +73,18 @@ index 133b74730738..1647fb8662eb 100644
  void init_wait_entry(struct wait_queue_entry *wq_entry, int flags)
  {
  	wq_entry->flags = flags;
+diff --git a/net/ipv4/inet_connection_sock.c b/net/ipv4/inet_connection_sock.c
+index f2c43f67187d..9885bfb429a2 100644
+--- a/net/ipv4/inet_connection_sock.c
++++ b/net/ipv4/inet_connection_sock.c
+@@ -606,7 +606,7 @@ static int inet_csk_wait_for_connect(struct sock *sk, long timeo)
+ 	 * having to remove and re-insert us on the wait queue.
+ 	 */
+ 	for (;;) {
+-		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
++		prepare_to_wait_exclusive_lifo(sk_sleep(sk), &wait,
+ 					  TASK_INTERRUPTIBLE);
+ 		release_sock(sk);
+ 		if (reqsk_queue_empty(&icsk->icsk_accept_queue))
+--
+2.39.1
