@@ -862,7 +862,8 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
 	eapply "${FILESDIR}/6.18.1-tcp.patch"
 	eapply "${FILESDIR}/6.18.1-harder-flags.patch"
-	einfo "Applying optimization flags"
+	eapply "${FILESDIR}/6.18.1-nmve-latenc.patch"
+	einfo "Applying local flags"
 
 
 	eapply_user
