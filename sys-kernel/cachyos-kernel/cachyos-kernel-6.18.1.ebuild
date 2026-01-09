@@ -557,9 +557,9 @@ cachy_use_config() {
 	fi
 
 	if use lto; then
-		: "${_use_llvm_lto:=thin}"
+		: "${_use_llvm_lto:=full}"
 	else
-		: "${_use_llvm_lto:=none}"
+		: "${_use_llvm_lto:=thin}"
 	fi
 
 	# print cachy config
