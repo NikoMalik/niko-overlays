@@ -1,0 +1,20 @@
+diff --git a/malloc/arena.c b/malloc/arena.c
+index 5bfcd7f9..4dc21032 100644
+--- a/malloc/arena.c
++++ b/malloc/arena.c
+@@ -429,7 +429,13 @@ alloc_new_heap  (size_t size, size_t top_pad, size_t pagesize,
+   /* Only considere the actual usable range.  */
+   __set_vma_name (p2, size, " glibc: malloc arena");
+ 
+-  madvise_thp (p2, size);
++
++  /* mprotect preserves MADV_HUGEPAGE semantics - this means that if the old
++  region was marked with MADV_HUGEPAGE, the new region will retain that.  */
++  if (h->size < mp_.thp_pagesize)
++     madvise_thp (h, new_size);
++
++
+ 
+   h = (heap_info *) p2;
+   h->size = size;
+
