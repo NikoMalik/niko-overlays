@@ -11,7 +11,7 @@ index 5bfcd7f9..4dc21032 100644
 +  /* mprotect preserves MADV_HUGEPAGE semantics - this means that if the old
 +  region was marked with MADV_HUGEPAGE, the new region will retain that.  */
 +  if (h->size < mp_.thp_pagesize)
-+     madvise_thp (h, new_size);
++     madvise_thp (p2, size);
 +
 +
  
