@@ -31,8 +31,10 @@ src_configure() {
 		-DMI_OPT_ARCH=OFF
 		-DMI_OSX_ZONE=OFF
 	    -DMI_OSX_INTERPOSE=OFF
-		-DMI_USE_PTHREADS=1
 	)
+
+	mycmakeargs+=("-DCMAKE_C_FLAGS=-DMI_USE_PTHREADS ${CMAKE_C_FLAGS}")
+    mycmakeargs+=("-DCMAKE_CXX_FLAGS=-DMI_USE_PTHREADS ${CMAKE_CXX_FLAGS}")
 
 	cmake-multilib_src_configure
 }
