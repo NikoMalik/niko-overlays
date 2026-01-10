@@ -1,3 +1,5 @@
+this feature disable by default
+
 diff --git a/elf/dl-map-segments.h b/elf/dl-map-segments.h
 index 139004ae..da146730 100644
 --- a/elf/dl-map-segments.h
