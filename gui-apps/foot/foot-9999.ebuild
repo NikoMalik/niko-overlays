@@ -81,6 +81,7 @@ pkg_setup() {
 }
 
 src_prepare() {
+	eapply "${FILESDIR}/rss.patch"
 	default
 	python_fix_shebang ./scripts
 }
