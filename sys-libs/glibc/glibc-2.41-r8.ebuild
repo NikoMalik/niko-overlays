@@ -41,7 +41,7 @@ HOMEPAGE="https://www.gnu.org/software/libc/"
 if [[ ${PV} == 9999* ]]; then
 	inherit git-r3
 else
-	KEYWORDS="~alpha ~amd64 ~arm ~arm64 ~hppa ~loong ~m68k ~mips ~ppc ~ppc64 ~riscv ~s390 ~sparc ~x86"
+	KEYWORDS="~alpha amd64 ~arm ~arm64 ~hppa ~loong ~m68k ~mips ~ppc ~ppc64 ~riscv ~s390 ~sparc ~x86"
 	SRC_URI="mirror://gnu/glibc/${P}.tar.xz"
 	SRC_URI+=" https://dev.gentoo.org/~${PATCH_DEV}/distfiles/${P}-patches-${PATCH_VER}.tar.xz"
 fi
@@ -969,6 +969,12 @@ src_prepare() {
 			patchsetname="${PV}-${PATCH_VER}"
 		fi
 		einfo "Applying Gentoo Glibc patchset ${patchsetname}"
+		eapply "${FILESDIR}/glibc-2.41-mathlto.patch"
+		eapply "${FILESDIR}/glibc-2.41-adaptive_spin.patch"
+		eapply "${FILESDIR}/glibc-2.41-set-vector-width.patch"
+		eapply "${FILESDIR}/glibc-2.41-disable-vectorization-more.patch"
+		eapply "${FILESDIR}/glibc-2.41-pause.patch"
+		eapply "${FILESDIR}/glibc-2.41-nanosleep.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi
