@@ -975,6 +975,8 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-disable-vectorization-more.patch"
 		eapply "${FILESDIR}/glibc-2.41-pause.patch"
 		eapply "${FILESDIR}/glibc-2.41-nanosleep.patch"
+		eapply "${FILESDIR}/glibc-2.41-madvise.patch"
+		eapply "${FILESDIR}/glibc-2.41-madvise-free.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi

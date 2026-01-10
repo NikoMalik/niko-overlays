@@ -1,0 +1,27 @@
+diff --git a/malloc/arena.c b/malloc/arena.c
+index 5bfcd7f9..3fb4ff38 100644
+--- a/malloc/arena.c
++++ b/malloc/arena.c
+@@ -512,7 +512,7 @@ shrink_heap (heap_info *h, long diff)
+       h->mprotect_size = new_size;
+     }
+   else
+-    __madvise ((char *) h + new_size, diff, MADV_DONTNEED);
++    __madvise ((char *) h + new_size, diff, MADV_FREE);
+   /*fprintf(stderr, "shrink %p %08lx\n", h, new_size);*/
+ 
+   h->size = new_size;
+diff --git a/malloc/malloc.c b/malloc/malloc.c
+index 20874a5d..49fe3bd9 100644
+--- a/malloc/malloc.c
++++ b/malloc/malloc.c
+@@ -4803,7 +4803,7 @@ mtrim (mstate av, size_t pad)
+                        content.  */
+                     memset (paligned_mem, 0x89, size & ~psm1);
+ #endif
+-                    __madvise (paligned_mem, size & ~psm1, MADV_DONTNEED);
++                    __madvise (paligned_mem, size & ~psm1, MADV_FREE);
+ 
+                     result = 1;
+                   }
+
