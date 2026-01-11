@@ -1,0 +1,14 @@
+diff --git a/malloc/malloc.c b/malloc/malloc.c
+index d42f0183e3..d60a133a06 100644
+--- a/malloc/malloc.c
++++ b/malloc/malloc.c
+@@ -314,7 +314,7 @@ 
+ 
+ /* This is another arbitrary limit, which tunables can change.  Each
+    tcache bin will hold at most this number of chunks.  */
+-# define TCACHE_FILL_COUNT 16
++# define TCACHE_FILL_COUNT 24
+ 
+ /* Maximum chunks in tcache bins for tunables.  This value must fit the range
+    of tcache->num_slots[] entries, else they may overflow.  */
+
