@@ -2,7 +2,7 @@ diff --git a/malloc/malloc.c b/malloc/malloc.c
 index d42f0183e3..d60a133a06 100644
 --- a/malloc/malloc.c
 +++ b/malloc/malloc.c
-@@ -314,7 +314,7 @@ 
+@@ -317,7 +317,7 @@ 
  
  /* This is another arbitrary limit, which tunables can change.  Each
     tcache bin will hold at most this number of chunks.  */
