@@ -1,0 +1,71 @@
+diff --git a/string/memmem.c b/string/memmem.c
+index 8d9b7d19..02214e02 100644
+--- a/string/memmem.c
++++ b/string/memmem.c
+@@ -38,6 +38,20 @@
+    in smaller shifts.  */
+ #define hash2(p) (((size_t)(p)[0] - ((size_t)(p)[-1] << 3)) % sizeof (shift))
+ 
++/* Returns the first edge within the needle, returns original S
++   if no edge is found.  Example: 'ab' is the first edge in 'aaaaaaaaaabaarddg'.
++   N must be > 0.  */
++static inline unsigned char *__attribute__ ((always_inline))
++find_edge_in_needle (const unsigned char *s, size_t n)
++{
++  unsigned char *const ret = (unsigned char *) s;
++  for (; --n; ++s)
++    if (*(s + 1) != *s)
++      return (unsigned char *) s + 1;
++  return ret;
++}
++
++
+ /* Fast memmem algorithm with guaranteed linear-time performance.
+    Small needles up to size 2 use a dedicated linear search.  Longer needles
+    up to size 256 use a novel modified Horspool algorithm.  It hashes pairs
+@@ -58,8 +72,6 @@ __memmem (const void *haystack, size_t hs_len,
+ 
+   if (ne_len == 0)
+     return (void *) hs;
+-  if (ne_len == 1)
+-    return (void *) memchr (hs, ne[0], hs_len);
+ 
+   /* Ensure haystack length is >= needle length.  */
+   if (hs_len < ne_len)
+@@ -67,17 +79,27 @@ __memmem (const void *haystack, size_t hs_len,
+ 
+   const unsigned char *end = hs + hs_len - ne_len;
+ 
+-  if (ne_len == 2)
++  if (ne_len <= sizeof (unsigned long) * 4)
+     {
+-      uint32_t nw = ne[0] << 16 | ne[1], hw = hs[0] << 16 | hs[1];
+-      for (hs++; hs <= end && hw != nw; )
+-	hw = hw << 16 | *++hs;
+-      return hw == nw ? (void *)hs - 1 : NULL;
+-    }
++    const unsigned int edge = find_edge_in_needle (ne, ne_len) - ne;
++      hs = memchr (hs + edge, *((char *) ne + edge),
++		   (hs_len - edge) - (ne_len - edge) + 1);
++      if (hs == NULL || memcmp (hs -= edge, ne, ne_len) == 0)
++	return (void *) hs;
++      if (ne_len == 2)
++	{
++	  uint32_t nw = ne[0] << 16 | ne[1], hw = hs[0] << 16 | hs[1];
++	  for (hs++; hs <= end && hw != nw;)
++	    hw = hw << 16 | *++hs;
++	  return hw == nw ? (void *) (hs - 1) : NULL;
++	}   
++  }
+ 
+   /* Use Two-Way algorithm for very long needles.  */
+-  if (__builtin_expect (ne_len > 256, 0))
+-    return two_way_long_needle (hs, hs_len, ne, ne_len);
++  else if (__glibc_unlikely (ne_len > 256))
++    {
++      return two_way_long_needle (hs, hs_len, ne, ne_len);
++    }
+ 
+   uint8_t shift[256];
+   size_t tmp, shift1;
+
