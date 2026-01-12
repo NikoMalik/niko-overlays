@@ -977,6 +977,7 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-nanosleep.patch"
 		eapply "${FILESDIR}/glibc-2.41-madvise-free.patch"
 		eapply "${FILESDIR}/glibc-2.41-large-tcache.patch"
+		eapply "${FILESDIR}/glibc-2.41-chech-tache_size.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi
