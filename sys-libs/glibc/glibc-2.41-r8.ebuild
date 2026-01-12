@@ -979,6 +979,7 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-large-tcache.patch"
 		eapply "${FILESDIR}/glibc-2.41-memmem.patch"
 		eapply "${FILESDIR}/glibc-2.41-qsort.patch"
+		eapply "${FILESDIR}/glibc-2.41-mcheck.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi

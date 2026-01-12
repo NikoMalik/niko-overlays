@@ -1,0 +1,14 @@
+diff --git a/malloc/mcheck-impl.c b/malloc/mcheck-impl.c
+index a874211e..971ee399 100644
+--- a/malloc/mcheck-impl.c
++++ b/malloc/mcheck-impl.c
+@@ -91,7 +91,7 @@ checkhdr (const struct hdr *hdr)
+ 	status = MCHECK_OK;
+       break;
+     }
+-  if (status != MCHECK_OK)
++  if (__glibc_unlikely (status != MCHECK_OK))
+     {
+       mcheck_used = 0;
+       (*abortfunc) (status);
+
