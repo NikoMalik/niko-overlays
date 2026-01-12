@@ -1,0 +1,53 @@
+diff --git a/stdlib/qsort.c b/stdlib/qsort.c
+index 08fdb845..cc894253 100644
+--- a/stdlib/qsort.c
++++ b/stdlib/qsort.c
+@@ -85,29 +85,29 @@ static inline void
+ siftdown (void *base, size_t size, size_t k, size_t n,
+ 	  enum swap_type_t swap_type, __compar_d_fn_t cmp, void *arg)
+ {
+-  /* There can only be a heap condition violation if there are
+-     children.  */
+-  while (2 * k + 1 <= n)
++  size_t i, j;
++
++  /* Find the sift-down path all the way to the leaves. */
++  for (i = k; j = 2 * i + 1, j + 1 <= n;)
++    i = cmp (base + j * size, base + (j + 1) * size, arg) >= 0 ? j : (j + 1);
++	 /* Special case for the last leaf with no sibling. */
++	 if (j == n)
++     i = j;
++	 /* Backtrack to the correct location. */
++  while (i != k && cmp (base + k * size, base + i * size, arg) > 0)
++    i = (i - 1) / 2;
++
++  /* Shift the element into its correct place. */
++  j = i;
++  while (i != k)
+     {
+-      /* Left child.  */
+-      size_t j = 2 * k + 1;
+-      /* If the right child is larger, use it.  */
+-      if (j < n && cmp (base + (j * size), base + ((j + 1) * size), arg) < 0)
+-	j++;
+-
+-      /* If k is already >= to its children, we are done.  */
+-      if (j == k || cmp (base + (k * size), base + (j * size), arg) >= 0)
+-	break;
+-
+-      /* Heal the violation.  */
+-      do_swap (base + (size * j), base + (k * size), size, swap_type);
++      i = (i - 1) / 2;
++      do_swap (base + i * size, base + j * size, size, swap_type);
+ 
+-      /* Swapping with j may have introduced a violation at j.  Fix
+-	 it in the next loop iteration.  */
+-      k = j;
+     }
+ }
+ 
++
+ /* Establish the heap condition for the indices 0 to N (inclusive).  */
+ static inline void
+ heapify (void *base, size_t size, size_t n, enum swap_type_t swap_type,
+
