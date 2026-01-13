@@ -864,6 +864,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-harder-flags.patch"
 	eapply "${FILESDIR}/6.18.1-nvme-latency.patch"
 	eapply "${FILESDIR}/6.18.1-mm-branch.patch"
+	eapply "${FILESDIR}/6.18.1-kcompressed.patch"
 	einfo "Applying local flags"
 
 
