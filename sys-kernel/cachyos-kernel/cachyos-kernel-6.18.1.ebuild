@@ -805,11 +805,8 @@ cachy_use_config() {
 	kconf unset INIT_ON_ALLOC_DEFAULT_ON
 	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
-	kconf val ANON_MIN_RATIO 0
-	kconf val CLEAN_LOW_RATIO 0
-	kconf val CLEAN_MIN_RATIO 1
 	kconf set LRU_GEN_ENABLED
-	einfo "le9uo settings was set"
+	einfo "lru was set"
 
 }
 
@@ -871,7 +868,6 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-nvme-latency.patch"
 	eapply "${FILESDIR}/6.18.1-mm-branch.patch"
 	eapply "${FILESDIR}/6.18.1-kcompressed.patch"
-	eapply "${FILESDIR}/6.18.1-le9uo.patch"
 	einfo "Applying local flags"
 
 
