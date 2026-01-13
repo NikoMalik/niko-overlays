@@ -74,11 +74,12 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="bcachefs cfi clang debug lto ${FLAVOURS/cachyos/+cachyos}"
+IUSE="bcachefs cfi clang debug +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
 	lto? ( clang )
+	polly? ( clang )
 	clang? ( ${LLVM_REQUIRED_USE} )
 "
 
@@ -802,6 +803,11 @@ cachy_use_config() {
 		kconf set BCACHEFS_SIX_OPTIMISTIC_SPIN
 	fi
 
+	if use polly; then
+		kconf set POLLY_CLANG
+    fi
+
+
 	kconf unset INIT_ON_ALLOC_DEFAULT_ON
 	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
@@ -868,6 +874,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-nvme-latency.patch"
 	eapply "${FILESDIR}/6.18.1-mm-branch.patch"
 	eapply "${FILESDIR}/6.18.1-kcompressed.patch"
+	eapply "${FILESDIR}/6.18.1-polly.patch"
 	einfo "Applying local flags"
 
 
