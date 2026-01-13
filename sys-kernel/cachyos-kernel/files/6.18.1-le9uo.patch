@@ -1,8 +1,8 @@
 From 58e7836546ead70f1a14a483cbcd360c7f4e505d Mon Sep 17 00:00:00 2001
 From: Masahito S <firelzrd@gmail.com>
 Date: Mon, 4 Aug 2025 01:49:07 +0900
-Subject: [PATCH] linux6.16-le9uo-1.15b
-
+Subject: [PATCH] linux6.18-le9uo-1.15b
+ 
 ---
  Documentation/admin-guide/sysctl/vm.rst |  72 +++++++++++
  include/linux/mm.h                      |   8 ++
@@ -11,13 +11,12 @@ Subject: [PATCH] linux6.16-le9uo-1.15b
  mm/util.c                               |  34 ++++++
  mm/vmscan.c                             | 153 +++++++++++++++++++++++-
  6 files changed, 328 insertions(+), 3 deletions(-)
-
+ 
 diff --git a/Documentation/admin-guide/sysctl/vm.rst b/Documentation/admin-guide/sysctl/vm.rst
 index 9bef46151d..e6b5315036 100644
 --- a/Documentation/admin-guide/sysctl/vm.rst
 +++ b/Documentation/admin-guide/sysctl/vm.rst
-@@ -25,6 +25,9 @@ files can be found in mm/swap.c.
- Currently, these files are in /proc/sys/vm:
+@@ -26,5 +26,8 @@ Currently, these files are in /proc/sys/vm:
  
  - admin_reserve_kbytes
 +- anon_min_ratio
@@ -207,6 +206,8 @@ index f2944748f5..223a23f0c8 100644
 --- a/mm/mm_init.c
 +++ b/mm/mm_init.c
 @@ -2725,6 +2725,7 @@ static void __init mem_init_print_info(void)
+ 		K(totalcma_pages)
+ #ifdef	CONFIG_HIGHMEM
  		, K(totalhigh_pages())
  #endif
  		);
@@ -458,15 +459,15 @@ index 424412680c..3346ea14d7 100644
  		return LRU_GEN_FILE;
  
  	if (swappiness >= MAX_SWAPPINESS)
-@@ -4687,7 +4826,7 @@ static int isolate_folios(struct lruvec *lruvec, struct scan_control *sc, int sw
+@@ -4680,7 +4819,7 @@ static int get_type_to_scan(struct lruvec *lruvec, int swappiness)
+ 	return positive_ctrl_err(&sp, &pv);
+ }
+ 
+-static int isolate_folios(struct lruvec *lruvec, struct scan_control *sc, int swappiness,
++static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec, struct scan_control *sc, int swappiness,
  			  int *type_scanned, struct list_head *list)
  {
  	int i;
--	int type = get_type_to_scan(lruvec, swappiness);
-+	int type = get_type_to_scan(lruvec, sc, swappiness);
- 
- 	for_each_evictable_type(i, swappiness) {
- 		int scanned;
 @@ -4930,6 +5069,12 @@ static int shrink_one(struct lruvec *lruvec, struct scan_control *sc)
  	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
  	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
@@ -489,5 +490,6 @@ index 424412680c..3346ea14d7 100644
  	shrink_node_memcgs(pgdat, sc);
  
  	flush_reclaim_state(sc);
--- 
+--
 2.34.1
+ 
