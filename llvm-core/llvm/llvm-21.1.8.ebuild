@@ -478,7 +478,7 @@ multilib_src_configure() {
 	)
 
 	# Link polly against LLVM, #715612
-	if use polly; then
+	if use polly && multilib_is_native_abi; then
 		local -x LDFLAGS="${LDFLAGS} \
 			-L\"${EPREFIX}/usr/lib/llvm/${LLVM_MAJOR}/lib\" -lPolly -lPollyISL"
 	fi
