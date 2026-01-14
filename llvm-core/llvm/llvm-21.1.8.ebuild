@@ -37,7 +37,7 @@ RDEPEND="
 	libffi? ( >=dev-libs/libffi-3.0.13-r1:0=[${MULTILIB_USEDEP}] )
 	xml? ( dev-libs/libxml2:2=[${MULTILIB_USEDEP}] )
 	z3? ( >=sci-mathematics/z3-4.7.1:0=[${MULTILIB_USEDEP}] )
-	polly? ( llvm-runtimes/polly:${LLVM_MAJOR}= )
+	polly? ( llvm-core/polly:${LLVM_MAJOR}= )
 	zstd? ( app-arch/zstd:=[${MULTILIB_USEDEP}] )
 "
 DEPEND="
