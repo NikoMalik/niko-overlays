@@ -410,7 +410,6 @@ multilib_src_configure() {
 		-DLLVM_ENABLE_LIBXML2=$(usex xml)
 		-DLLVM_ENABLE_ASSERTIONS=$(usex debug)
 		-DLLVM_ENABLE_LIBPFM=$(usex exegesis)
-		-DLLVM_ENABLE_PROJECTS="polly" 
 		-DLLVM_ENABLE_EH=ON
 		-DLLVM_ENABLE_RTTI=ON
 		-DLLVM_ENABLE_Z3_SOLVER=$(usex z3)
@@ -477,6 +476,13 @@ multilib_src_configure() {
 		# Use our libtool instead of looking it up with xcrun
 		-DCMAKE_LIBTOOL="${EPREFIX}/usr/bin/${CHOST}-libtool"
 	)
+
+
+	# Link polly against LLVM, #715612
+	if use polly; then
+		local -x LDFLAGS="${LDFLAGS} \
+			-L\"${EPREFIX}/usr/lib/llvm/${LLVM_MAJOR}/lib\" -lPolly -lPollyISL -lPollyPPCG"
+	fi
 
 
 	# LLVM can have very high memory consumption while linking,
