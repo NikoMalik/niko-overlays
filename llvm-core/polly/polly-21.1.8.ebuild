@@ -43,7 +43,10 @@ pkg_setup() {
 
 src_configure() {
 	local mycmakeargs=(
+		"-DBUILD_SHARED_LIBS=OFF"
+		"-DLLVM_POLLY_LINK_INTO_TOOLS=OFF"
 		-DCMAKE_INSTALL_PREFIX="${EPREFIX}/usr/lib/llvm/${LLVM_MAJOR}"
+		-DCMAKE_PREFIX_PATH="${EPREFIX}/usr/lib/llvm/${LLVM_MAJOR}/$(get_libdir)/cmake/llvm"
 		-DLLVM_ROOT="${ESYSROOT}/usr/lib/llvm/${LLVM_MAJOR}"
 	)
 	use test && mycmakeargs+=(
