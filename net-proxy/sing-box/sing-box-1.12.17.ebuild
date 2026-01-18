@@ -1,4 +1,4 @@
-# Copyright 2024-2025 Gentoo Authors
+# Copyright 2024-2026 Gentoo Authors
 # Distributed under the terms of the GNU General Public License v2
 
 EAPI=8
@@ -21,7 +21,7 @@ S="${WORKDIR}/${PN}-${_PV}"
 
 LICENSE="GPL-3+"
 SLOT="0"
-KEYWORDS=""
+KEYWORDS="~amd64 ~arm64 ~riscv"
 
 IUSE="+quic grpc +dhcp +wireguard +utls +acme +clash-api v2ray-api +gvisor tor +tailscale"
 
@@ -73,4 +73,3 @@ src_install() {
 	dofishcomp completions/sing-box.fish
 	dozshcomp completions/_sing-box
 }
-
