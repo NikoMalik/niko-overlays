@@ -11,7 +11,7 @@ if [[ ${PV} != *9999* ]]; then
 	S="${WORKDIR}/${PN}"
 else
 	inherit git-r3
-	EGIT_REPO_URI="https://codeberg.org/dnkl/foot.git"
+	EGIT_REPO_URI="https://github.com/NikoMalik/foot.git"
 fi
 
 BUILD_DIR="${S}/build"
@@ -20,7 +20,7 @@ DESCRIPTION="A fast, lightweight and minimalistic Wayland terminal emulator"
 HOMEPAGE="https://codeberg.org/dnkl/foot"
 LICENSE="MIT"
 SLOT="0"
-IUSE="+grapheme-clustering pgo lto +mimalloc"
+IUSE="+grapheme-clustering  pgo lto +mimalloc"
 
 CDEPEND="
 	dev-libs/wayland
@@ -81,7 +81,7 @@ pkg_setup() {
 }
 
 src_prepare() {
-	eapply "${FILESDIR}/rss.patch"
+	# eapply "${FILESDIR}/rss.patch"
 	default
 	python_fix_shebang ./scripts
 }
@@ -96,6 +96,7 @@ src_configure() {
 	local emesonargs=(
 		-Dime=true
 		$(meson_feature grapheme-clustering)
+		$(meson_feature mimalloc)
 		-Dterminfo=disabled
 		-Dthemes=true
 	)
@@ -107,11 +108,6 @@ src_configure() {
 	fi	
 
 	
-
-
-	if use mimalloc; then
-        append-ldflags "-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
-    fi
 	meson_src_configure
 }
 
