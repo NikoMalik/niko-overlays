@@ -20,12 +20,12 @@ fi
 
 LICENSE="ISC"
 SLOT="0"
-IUSE="debug +mimalloc selinux sixel systemd utempter vim-syntax"
+IUSE="debug +tcmalloc selinux sixel systemd utempter vim-syntax"
 
 DEPEND="
 	dev-libs/libevent:=
 	sys-libs/ncurses:=
-	mimalloc? ( dev-libs/mimalloc:= )
+	tcmalloc? ( dev-util/google-perftools:= )
 	systemd? ( sys-apps/systemd:= )
 	utempter? ( sys-libs/libutempter )
 	kernel_Darwin? ( dev-libs/libutf8proc:= )
@@ -53,7 +53,7 @@ DOCS=( CHANGES README )
 
 PATCHES=(
 	"${FILESDIR}"/${PN}-flags.patch
-	"${FILESDIR}"/${PN}-mimalloc.patch
+	"${FILESDIR}"/${PN}-tcmalloc.patch
 )
 
 src_prepare() {
@@ -69,7 +69,7 @@ src_configure() {
 	local myeconfargs=(
 		--sysconfdir="${EPREFIX}"/etc
 		$(use_enable debug)
-		$(use_enable mimalloc)
+		$(use_enable tcmalloc)
 		$(use_enable sixel)
 		$(use_enable systemd)
 		$(use_enable utempter)

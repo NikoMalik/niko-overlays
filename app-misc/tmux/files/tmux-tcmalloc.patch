@@ -1,0 +1,55 @@
+diff --git a/CHANGES b/CHANGES
+index bcd1e1c..39a7d5b 100644
+--- a/CHANGES
++++ b/CHANGES
+@@ -281,7 +281,7 @@ CHANGES FROM 3.4 TO 3.5
+   if selecting the element below the deleted one fails (because as the last
+   one), select the one above it instead.
+ 
+-* Add --enable-jemalloc to build with jemalloc memory allocator (since glibc
++* Add --enable-tcmalloc to build with tcmalloc memory allocator (since glibc
+   malloc is so poor).
+ 
+ * Add a way (refresh-client -r) for control mode clients to provide OSC 10 and
+diff --git a/configure.ac b/configure.ac
+index fa47482..2e38f0f 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -558,24 +558,26 @@ if test "x$found_malloc_trim" = xyes; then
+ 	AC_DEFINE(HAVE_MALLOC_TRIM)
+ fi
+ 
+-# Build against jemalloc if requested.
++# Build against tcmalloc if requested.
+ AC_ARG_ENABLE(
+-	jemalloc,
+-	AS_HELP_STRING(--enable-jemalloc, use jemalloc if it is installed)
++	tcmalloc,
++	AS_HELP_STRING(--enable-tcmalloc, use tcmalloc if it is installed)
+ )
+-if test "x$enable_jemalloc" = xyes; then
++
++if test "x$enable_tcmalloc" = xyes; then
+ 	PKG_CHECK_MODULES(
+-		JEMALLOC,
+-		jemalloc,
++		TCMALLOC,
++		libtcmalloc,
+ 		[
+-			AM_CPPFLAGS="$JEMALLOC_CFLAGS $AM_CPPFLAGS"
++			AM_CPPFLAGS="$TCMALLOC_CFLAGS $AM_CPPFLAGS"
+ 			CPPFLAGS="$AM_CPPFLAGS $SAVED_CPPFLAGS"
+-			LIBS="$LIBS $JEMALLOC_LIBS"
++			LIBS="$LIBS $TCMALLOC_LIBS"
+ 		],
+-		AC_MSG_ERROR("jemalloc not found")
++		[
++			LIBS="$LIBS -ltcmalloc"
++		]
+ 	)
+ fi
+-
+ # Check for CMSG_DATA. On some platforms like HP-UX this requires UNIX 95
+ # (_XOPEN_SOURCE and _XOPEN_SOURCE_EXTENDED) (see xopen_networking(7)). On
+ # others, UNIX 03 (_XOPEN_SOURCE 600, see standards(7) on Solaris).
+
