@@ -83,7 +83,7 @@ pkg_setup() {
 src_prepare() {
 	eapply "${FILESDIR}/rss.patch"
 	eapply "${FILESDIR}/mimalloc.patch"
-	eapply "${FILESIDR}/iouring.patch"
+	eapply "${FILESDIR}/iouring.patch"
 	default
 	python_fix_shebang ./scripts
 }
