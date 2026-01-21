@@ -1,0 +1,2614 @@
+diff --git a/meson.build b/meson.build
+index aa8342a..0e94d75 100644
+--- a/meson.build
++++ b/meson.build
+@@ -151,6 +151,22 @@ if utf8proc.found()
+   add_project_arguments('-DFOOT_GRAPHEME_CLUSTERING=1', language: 'c')
+ endif
+ 
++mimalloc_opt = get_option('mimalloc')
++
++
++if mimalloc_opt.enabled()
++  mi_dep = dependency('mimalloc', required: true, static: true)
++else
++  mi_dep = dependency('mimalloc', required: false, static: true)
++endif
++
++if mi_dep.found()
++  add_project_arguments('-DMIMALLOC=1', language: 'c')
++else
++  add_project_arguments('-DMIMALLOC=0', language: 'c')
++endif
++
++
+ if pixman.version().version_compare('>=0.46.0')
+   add_project_arguments('-DHAVE_PIXMAN_RGBA_16', language: 'c')
+ endif
+diff --git a/meson_options.txt b/meson_options.txt
+index ab7a07b..9fd4976 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -7,6 +7,10 @@ option('themes', type: 'boolean', value: true,
+ option('ime', type: 'boolean', value: true,
+        description: 'IME (Input Method Editor) support')
+ 
++option('mimalloc', type: 'feature', value: 'auto',
++       description: 'Use mimalloc allocator instead of system malloc')
++
++
+ option('grapheme-clustering', type: 'feature',
+        description: 'Enables grapheme clustering using libutf8proc. Requires fcft with harfbuzz support to be useful.')
+ 
+diff --git a/terminal.c b/terminal.c
+index b670d60..3c04440 100644
+--- a/terminal.c
++++ b/terminal.c
+@@ -51,8 +51,7 @@
+ 
+ static void
+ enqueue_data_for_slave(const void *data, size_t len, size_t offset,
+-                       ptmx_buffer_list_t *buffer_list)
+-{
++                       ptmx_buffer_list_t *buffer_list) {
+     struct ptmx_buffer queued = {
+         .data = xmemdup(data, len),
+         .len = len,
+@@ -63,8 +62,7 @@ enqueue_data_for_slave(const void *data, size_t len, size_t offset,
+ 
+ static bool
+ data_to_slave(struct terminal *term, const void *data, size_t len,
+-              ptmx_buffer_list_t *buffer_list)
+-{
++              ptmx_buffer_list_t *buffer_list) {
+     /*
+      * Try a synchronous write first. If we fail to write everything,
+      * switch to asynchronous.
+@@ -91,9 +89,7 @@ data_to_slave(struct terminal *term, const void *data, size_t len,
+     return false;
+ }
+ 
+-bool
+-term_paste_data_to_slave(struct terminal *term, const void *data, size_t len)
+-{
++bool term_paste_data_to_slave(struct terminal *term, const void *data, size_t len) {
+     xassert(term->is_sending_paste_data);
+ 
+     if (term->ptmx < 0) {
+@@ -112,9 +108,7 @@ term_paste_data_to_slave(struct terminal *term, const void *data, size_t len)
+     return data_to_slave(term, data, len, &term->ptmx_paste_buffers);
+ }
+ 
+-bool
+-term_to_slave(struct terminal *term, const void *data, size_t len)
+-{
++bool term_to_slave(struct terminal *term, const void *data, size_t len) {
+     if (term->ptmx < 0) {
+         /* We're probably in "hold" */
+         return false;
+@@ -138,30 +132,29 @@ term_to_slave(struct terminal *term, const void *data, size_t len)
+ }
+ 
+ static bool
+-fdm_ptmx_out(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_ptmx_out(struct fdm *fdm, int fd, int events, void *data) {
+     struct terminal *term = data;
+ 
+     /* If there is no queued data, then we shouldn't be in asynchronous mode */
+     xassert(tll_length(term->ptmx_buffers) > 0 ||
+-           tll_length(term->ptmx_paste_buffers) > 0);
++            tll_length(term->ptmx_paste_buffers) > 0);
+ 
+     /* Writes a single buffer, returns if not all of it could be written */
+-#define write_one_buffer(buffer_list)                                   \
+-    {                                                                   \
++#define write_one_buffer(buffer_list)                                                  \
++    {                                                                                  \
+         switch (async_write(term->ptmx, it->item.data, it->item.len, &it->item.idx)) { \
+-        case ASYNC_WRITE_DONE:                                          \
+-            free(it->item.data);                                        \
+-            tll_remove(buffer_list, it);                                \
+-            break;                                                      \
+-        case ASYNC_WRITE_REMAIN:                                        \
+-            /* to_slave() updated it->item.idx */                       \
+-            return true;                                                \
+-        case ASYNC_WRITE_ERR:                                           \
+-            LOG_ERRNO("failed to asynchronously write %zu bytes to slave", \
+-                      it->item.len - it->item.idx);                     \
+-            return false;                                               \
+-        }                                                               \
++        case ASYNC_WRITE_DONE:                                                         \
++            free(it->item.data);                                                       \
++            tll_remove(buffer_list, it);                                               \
++            break;                                                                     \
++        case ASYNC_WRITE_REMAIN:                                                       \
++            /* to_slave() updated it->item.idx */                                      \
++            return true;                                                               \
++        case ASYNC_WRITE_ERR:                                                          \
++            LOG_ERRNO("failed to asynchronously write %zu bytes to slave",             \
++                      it->item.len - it->item.idx);                                    \
++            return false;                                                              \
++        }                                                                              \
+     }
+ 
+     tll_foreach(term->ptmx_paste_buffers, it)
+@@ -190,8 +183,7 @@ fdm_ptmx_out(struct fdm *fdm, int fd, int events, void *data)
+ }
+ 
+ static bool
+-add_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx)
+-{
++add_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx) {
+ #if defined(UTMP_ADD)
+     if (ptmx < 0)
+         return true;
+@@ -206,8 +198,7 @@ add_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx)
+ }
+ 
+ static bool
+-del_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx)
+-{
++del_utmp_record(const struct config *conf, struct reaper *reaper, int ptmx) {
+ #if defined(UTMP_DEL)
+     if (ptmx < 0)
+         return true;
+@@ -237,9 +228,7 @@ static bool cursor_blink_rearm_timer(struct terminal *term);
+ 
+ /* Externally visible, but not declared in terminal.h, to enable pgo
+  * to call this function directly */
+-bool
+-fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
+-{
++bool fdm_ptmx(struct fdm *fdm, int fd, int events, void *data) {
+     struct terminal *term = data;
+ 
+     const bool pollin = events & EPOLLIN;
+@@ -385,25 +374,20 @@ fdm_ptmx(struct fdm *fdm, int fd, int events, void *data)
+     return true;
+ }
+ 
+-bool
+-term_ptmx_pause(struct terminal *term)
+-{
++bool term_ptmx_pause(struct terminal *term) {
+     if (term->ptmx < 0)
+         return false;
+     return fdm_event_del(term->fdm, term->ptmx, EPOLLIN);
+ }
+ 
+-bool
+-term_ptmx_resume(struct terminal *term)
+-{
++bool term_ptmx_resume(struct terminal *term) {
+     if (term->ptmx < 0)
+         return false;
+     return fdm_event_add(term->fdm, term->ptmx, EPOLLIN);
+ }
+ 
+ static bool
+-fdm_flash(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_flash(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -434,8 +418,7 @@ fdm_flash(struct fdm *fdm, int fd, int events, void *data)
+ }
+ 
+ static bool
+-fdm_blink(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_blink(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -457,7 +440,8 @@ fdm_blink(struct fdm *fdm, int fd, int events, void *data)
+ 
+     /* Invert blink state */
+     term->blink.state = term->blink.state == BLINK_ON
+-        ? BLINK_OFF : BLINK_ON;
++                            ? BLINK_OFF
++                            : BLINK_ON;
+ 
+     /* Scan all visible cells and mark rows with blinking cells dirty */
+     bool no_blinking_cells = true;
+@@ -485,9 +469,7 @@ fdm_blink(struct fdm *fdm, int fd, int events, void *data)
+     return true;
+ }
+ 
+-void
+-term_arm_blink_timer(struct terminal *term)
+-{
++void term_arm_blink_timer(struct terminal *term) {
+     if (term->blink.fd >= 0)
+         return;
+ 
+@@ -518,8 +500,7 @@ term_arm_blink_timer(struct terminal *term)
+ }
+ 
+ static void
+-cursor_refresh(struct terminal *term)
+-{
++cursor_refresh(struct terminal *term) {
+     if (!term->window->is_configured)
+         return;
+ 
+@@ -529,8 +510,7 @@ cursor_refresh(struct terminal *term)
+ }
+ 
+ static bool
+-fdm_cursor_blink(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_cursor_blink(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -552,15 +532,15 @@ fdm_cursor_blink(struct fdm *fdm, int fd, int events, void *data)
+ 
+     /* Invert blink state */
+     term->cursor_blink.state = term->cursor_blink.state == CURSOR_BLINK_ON
+-        ? CURSOR_BLINK_OFF : CURSOR_BLINK_ON;
++                                   ? CURSOR_BLINK_OFF
++                                   : CURSOR_BLINK_ON;
+ 
+     cursor_refresh(term);
+     return true;
+ }
+ 
+ static bool
+-fdm_delayed_render(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_delayed_render(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -607,8 +587,7 @@ fdm_delayed_render(struct fdm *fdm, int fd, int events, void *data)
+ 
+ static bool
+ fdm_app_sync_updates_timeout(
+-    struct fdm *fdm, int fd, int events, void *data)
+-{
++    struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -629,8 +608,7 @@ fdm_app_sync_updates_timeout(
+ }
+ 
+ static bool
+-fdm_title_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_title_update_timeout(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -653,8 +631,7 @@ fdm_title_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+ }
+ 
+ static bool
+-fdm_icon_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_icon_update_timeout(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -677,8 +654,7 @@ fdm_icon_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+ }
+ 
+ static bool
+-fdm_app_id_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_app_id_update_timeout(struct fdm *fdm, int fd, int events, void *data) {
+     if (events & EPOLLHUP)
+         return false;
+ 
+@@ -701,13 +677,11 @@ fdm_app_id_update_timeout(struct fdm *fdm, int fd, int events, void *data)
+ }
+ 
+ static bool
+-initialize_render_workers(struct terminal *term)
+-{
++initialize_render_workers(struct terminal *term) {
+     LOG_INFO("using %hu rendering threads", term->render.workers.count);
+ 
+     if (sem_init(&term->render.workers.start, 0, 0) < 0 ||
+-        sem_init(&term->render.workers.done, 0, 0) < 0)
+-    {
++        sem_init(&term->render.workers.done, 0, 0) < 0) {
+         LOG_ERRNO("failed to instantiate render worker semaphores");
+         return false;
+     }
+@@ -727,7 +701,7 @@ initialize_render_workers(struct terminal *term)
+ 
+     for (size_t i = 0; i < term->render.workers.count; i++) {
+         struct render_worker_context *ctx = xmalloc(sizeof(*ctx));
+-        *ctx = (struct render_worker_context) {
++        *ctx = (struct render_worker_context){
+             .term = term,
+             .my_id = 1 + i,
+         };
+@@ -752,8 +726,7 @@ err_sem_destroy:
+ }
+ 
+ static void
+-free_custom_glyph(struct fcft_glyph **glyph)
+-{
++free_custom_glyph(struct fcft_glyph **glyph) {
+     if (*glyph == NULL)
+         return;
+ 
+@@ -764,8 +737,7 @@ free_custom_glyph(struct fcft_glyph **glyph)
+ }
+ 
+ static void
+-free_custom_glyphs(struct fcft_glyph ***glyphs, size_t count)
+-{
++free_custom_glyphs(struct fcft_glyph ***glyphs, size_t count) {
+     if (*glyphs == NULL)
+         return;
+ 
+@@ -777,8 +749,7 @@ free_custom_glyphs(struct fcft_glyph ***glyphs, size_t count)
+ }
+ 
+ static void
+-term_line_height_update(struct terminal *term)
+-{
++term_line_height_update(struct terminal *term) {
+     const struct config *conf = term->conf;
+ 
+     if (term->conf->line_height.px < 0) {
+@@ -791,17 +762,17 @@ term_line_height_update(struct terminal *term)
+ 
+     const float font_original_pt_size =
+         conf->fonts[0].arr[0].px_size > 0
+-        ? conf->fonts[0].arr[0].px_size * 72. / dpi
+-        : conf->fonts[0].arr[0].pt_size;
++            ? conf->fonts[0].arr[0].px_size * 72. / dpi
++            : conf->fonts[0].arr[0].pt_size;
+     const float font_current_pt_size =
+         term->font_sizes[0][0].px_size > 0
+-        ? term->font_sizes[0][0].px_size * 72. / dpi
+-        : term->font_sizes[0][0].pt_size;
++            ? term->font_sizes[0][0].px_size * 72. / dpi
++            : term->font_sizes[0][0].pt_size;
+ 
+     const float change = font_current_pt_size / font_original_pt_size;
+     const float line_original_pt_size = conf->line_height.px > 0
+-            ? conf->line_height.px * 72. / dpi
+-            : conf->line_height.pt;
++                                            ? conf->line_height.px * 72. / dpi
++                                            : conf->line_height.pt;
+ 
+     term->font_line_height.px = 0;
+     term->font_line_height.pt = fmaxf(line_original_pt_size * change, 0.);
+@@ -809,8 +780,7 @@ term_line_height_update(struct terminal *term)
+ 
+ static bool
+ term_set_fonts(struct terminal *term, struct fcft_font *fonts[static 4],
+-               bool resize_grid)
+-{
++               bool resize_grid) {
+     for (size_t i = 0; i < 4; i++) {
+         xassert(fonts[i] != NULL);
+ 
+@@ -836,12 +806,12 @@ term_set_fonts(struct terminal *term, struct fcft_font *fonts[static 4],
+     term_line_height_update(term);
+ 
+     term->cell_width = advance +
+-        term_pt_or_px_as_pixels(term, &conf->letter_spacing);
++                       term_pt_or_px_as_pixels(term, &conf->letter_spacing);
+ 
+     term->cell_height = term->font_line_height.px >= 0
+-        ? term_pt_or_px_as_pixels(term, &term->font_line_height)
+-        : max(term->fonts[0]->height,
+-              term->fonts[0]->ascent + term->fonts[0]->descent);
++                            ? term_pt_or_px_as_pixels(term, &term->font_line_height)
++                            : max(term->fonts[0]->height,
++                                  term->fonts[0]->ascent + term->fonts[0]->descent);
+ 
+     if (term->cell_width <= 0)
+         term->cell_width = 1;
+@@ -875,8 +845,7 @@ term_set_fonts(struct terminal *term, struct fcft_font *fonts[static 4],
+ }
+ 
+ static float
+-get_font_dpi(const struct terminal *term)
+-{
++get_font_dpi(const struct terminal *term) {
+     /*
+      * Use output's DPI to scale font. This is to ensure the font has
+      * the same physical height (if measured by a ruler) regardless of
+@@ -924,17 +893,16 @@ get_font_dpi(const struct terminal *term)
+     }
+ 
+     const float monitor_dpi = mon != NULL
+-        ? term_fractional_scaling(term)
+-            ? mon->dpi.physical
+-            : mon->dpi.scaled
+-        : 96.;
++                                  ? term_fractional_scaling(term)
++                                        ? mon->dpi.physical
++                                        : mon->dpi.scaled
++                                  : 96.;
+ 
+     return monitor_dpi > 0. ? monitor_dpi : 96.;
+ }
+ 
+ static enum fcft_subpixel
+-get_font_subpixel(const struct terminal *term)
+-{
++get_font_subpixel(const struct terminal *term) {
+     if (term->colors.alpha != 0xffff) {
+         /* Can't do subpixel rendering on transparent background */
+         return FCFT_SUBPIXEL_NONE;
+@@ -966,27 +934,31 @@ get_font_subpixel(const struct terminal *term)
+         wl_subpixel = WL_OUTPUT_SUBPIXEL_UNKNOWN;
+ 
+     switch (wl_subpixel) {
+-    case WL_OUTPUT_SUBPIXEL_UNKNOWN:        return FCFT_SUBPIXEL_DEFAULT;
+-    case WL_OUTPUT_SUBPIXEL_NONE:           return FCFT_SUBPIXEL_NONE;
+-    case WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB: return FCFT_SUBPIXEL_HORIZONTAL_RGB;
+-    case WL_OUTPUT_SUBPIXEL_HORIZONTAL_BGR: return FCFT_SUBPIXEL_HORIZONTAL_BGR;
+-    case WL_OUTPUT_SUBPIXEL_VERTICAL_RGB:   return FCFT_SUBPIXEL_VERTICAL_RGB;
+-    case WL_OUTPUT_SUBPIXEL_VERTICAL_BGR:   return FCFT_SUBPIXEL_VERTICAL_BGR;
++    case WL_OUTPUT_SUBPIXEL_UNKNOWN:
++        return FCFT_SUBPIXEL_DEFAULT;
++    case WL_OUTPUT_SUBPIXEL_NONE:
++        return FCFT_SUBPIXEL_NONE;
++    case WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB:
++        return FCFT_SUBPIXEL_HORIZONTAL_RGB;
++    case WL_OUTPUT_SUBPIXEL_HORIZONTAL_BGR:
++        return FCFT_SUBPIXEL_HORIZONTAL_BGR;
++    case WL_OUTPUT_SUBPIXEL_VERTICAL_RGB:
++        return FCFT_SUBPIXEL_VERTICAL_RGB;
++    case WL_OUTPUT_SUBPIXEL_VERTICAL_BGR:
++        return FCFT_SUBPIXEL_VERTICAL_BGR;
+     }
+ 
+     return FCFT_SUBPIXEL_DEFAULT;
+ }
+ 
+-int
+-term_pt_or_px_as_pixels(const struct terminal *term,
+-                        const struct pt_or_px *pt_or_px)
+-{
++int term_pt_or_px_as_pixels(const struct terminal *term,
++                            const struct pt_or_px *pt_or_px) {
+     float scale = !term->font_is_sized_by_dpi ? term->scale : 1.;
+-    float dpi = term->font_is_sized_by_dpi  ? term->font_dpi : 96.;
++    float dpi = term->font_is_sized_by_dpi ? term->font_dpi : 96.;
+ 
+     return pt_or_px->px == 0
+-        ? (int)roundf(pt_or_px->pt * scale * dpi / 72)
+-        : (int)roundf(pt_or_px->px * scale);
++               ? (int)roundf(pt_or_px->pt * scale * dpi / 72)
++               : (int)roundf(pt_or_px->px * scale);
+ }
+ 
+ struct font_load_data {
+@@ -999,8 +971,7 @@ struct font_load_data {
+ };
+ 
+ static int
+-font_loader_thread(void *_data)
+-{
++font_loader_thread(void *_data) {
+     struct font_load_data *data = _data;
+     *data->font = fcft_from_name2(
+         data->count, data->names, data->attrs, data->options);
+@@ -1008,8 +979,7 @@ font_loader_thread(void *_data)
+ }
+ 
+ static bool
+-reload_fonts(struct terminal *term, bool resize_grid)
+-{
++reload_fonts(struct terminal *term, bool resize_grid) {
+     const struct config *conf = term->conf;
+ 
+     const size_t counts[4] = {
+@@ -1070,7 +1040,7 @@ reload_fonts(struct terminal *term, bool resize_grid)
+         [1] = xstrjoin(dpi, !custom_bold ? ":weight=bold" : ""),
+         [2] = xstrjoin(dpi, !custom_italic ? ":slant=italic" : ""),
+         [3] = xstrjoin(dpi, !custom_bold_italic ? ":weight=bold:slant=italic" : ""),
+-        };
++    };
+ 
+     struct fcft_font_options *options = fcft_font_options_create();
+ 
+@@ -1094,9 +1064,9 @@ reload_fonts(struct terminal *term, bool resize_grid)
+ 
+     struct fcft_font *fonts[4];
+     struct font_load_data data[4] = {
+-        {count_regular,     names_regular,     attrs[0], options, &fonts[0]},
+-        {count_bold,        names_bold,        attrs[1], options, &fonts[1]},
+-        {count_italic,      names_italic,      attrs[2], options, &fonts[2]},
++        {count_regular, names_regular, attrs[0], options, &fonts[0]},
++        {count_bold, names_bold, attrs[1], options, &fonts[1]},
++        {count_italic, names_italic, attrs[2], options, &fonts[2]},
+         {count_bold_italic, names_bold_italic, attrs[3], options, &fonts[3]},
+     };
+ 
+@@ -1143,8 +1113,7 @@ reload_fonts(struct terminal *term, bool resize_grid)
+ }
+ 
+ static bool
+-load_fonts_from_conf(struct terminal *term)
+-{
++load_fonts_from_conf(struct terminal *term) {
+     const struct config *conf = term->conf;
+ 
+     for (size_t i = 0; i < 4; i++) {
+@@ -1170,8 +1139,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+           struct wayland *wayl, const char *foot_exe, const char *cwd,
+           const char *token, const char *pty_path,
+           int argc, char *const *argv, const char *const *envp,
+-          void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data)
+-{
++          void (*shutdown_cb)(void *data, int exit_code), void *shutdown_data) {
+     int ptmx = -1;
+     int flash_fd = -1;
+     int delay_lower_fd = -1;
+@@ -1197,39 +1165,33 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+         goto close_fds;
+     }
+     if ((delay_lower_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0 ||
+-        (delay_upper_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0)
+-    {
++        (delay_upper_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0) {
+         LOG_ERRNO("failed to create delayed rendering timer FDs");
+         goto close_fds;
+     }
+ 
+-    if ((app_sync_updates_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0)
+-    {
++    if ((app_sync_updates_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0) {
+         LOG_ERRNO("failed to create application synchronized updates timer FD");
+         goto close_fds;
+     }
+ 
+-    if ((title_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0)
+-    {
++    if ((title_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0) {
+         LOG_ERRNO("failed to create title update throttle timer FD");
+         goto close_fds;
+     }
+ 
+-    if ((icon_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0)
+-    {
++    if ((icon_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0) {
+         LOG_ERRNO("failed to create icon update throttle timer FD");
+         goto close_fds;
+     }
+ 
+-    if ((app_id_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0)
+-    {
++    if ((app_id_update_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK)) < 0) {
+         LOG_ERRNO("failed to create app ID update throttle timer FD");
+         goto close_fds;
+     }
+ 
+     if (ioctl(ptmx, (unsigned int)TIOCSWINSZ,
+-              &(struct winsize){.ws_row = 24, .ws_col = 80}) < 0)
+-    {
++              &(struct winsize){.ws_row = 24, .ws_col = 80}) < 0) {
+         LOG_ERRNO("failed to set initial TIOCSWINSZ");
+         goto close_fds;
+     }
+@@ -1241,8 +1203,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+ 
+     int ptmx_flags;
+     if ((ptmx_flags = fcntl(ptmx, F_GETFL)) < 0 ||
+-        fcntl(ptmx, F_SETFL, ptmx_flags | O_NONBLOCK) < 0)
+-    {
++        fcntl(ptmx, F_SETFL, ptmx_flags | O_NONBLOCK) < 0) {
+         LOG_ERRNO("failed to configure ptmx as non-blocking");
+         goto err;
+     }
+@@ -1259,8 +1220,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+         !fdm_add(fdm, app_sync_updates_fd, EPOLLIN, &fdm_app_sync_updates_timeout, term) ||
+         !fdm_add(fdm, title_update_fd, EPOLLIN, &fdm_title_update_timeout, term) ||
+         !fdm_add(fdm, icon_update_fd, EPOLLIN, &fdm_icon_update_timeout, term) ||
+-        !fdm_add(fdm, app_id_update_fd, EPOLLIN, &fdm_app_id_update_timeout, term))
+-    {
++        !fdm_add(fdm, app_id_update_fd, EPOLLIN, &fdm_app_id_update_timeout, term)) {
+         goto err;
+     }
+ 
+@@ -1271,14 +1231,22 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+ 
+     const struct color_theme *theme = NULL;
+     switch (conf->initial_color_theme) {
+-    case COLOR_THEME_DARK: theme = &conf->colors_dark; break;
+-    case COLOR_THEME_LIGHT: theme = &conf->colors_light; break;
+-    case COLOR_THEME_1: BUG("COLOR_THEME_1 should not be used"); break;
+-    case COLOR_THEME_2: BUG("COLOR_THEME_2 should not be used"); break;
++    case COLOR_THEME_DARK:
++        theme = &conf->colors_dark;
++        break;
++    case COLOR_THEME_LIGHT:
++        theme = &conf->colors_light;
++        break;
++    case COLOR_THEME_1:
++        BUG("COLOR_THEME_1 should not be used");
++        break;
++    case COLOR_THEME_2:
++        BUG("COLOR_THEME_2 should not be used");
++        break;
+     }
+ 
+     /* Initialize configure-based terminal attributes */
+-    *term = (struct terminal) {
++    *term = (struct terminal){
+         .fdm = fdm,
+         .reaper = reaper,
+         .conf = conf,
+@@ -1294,9 +1262,9 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+         },
+         .font_dpi = 0.,
+         .font_dpi_before_unmap = -1.,
+-        .font_subpixel = (theme->alpha == 0xffff  /* Can't do subpixel rendering on transparent background */
+-                          ? FCFT_SUBPIXEL_DEFAULT
+-                          : FCFT_SUBPIXEL_NONE),
++        .font_subpixel = (theme->alpha == 0xffff /* Can't do subpixel rendering on transparent background */
++                              ? FCFT_SUBPIXEL_DEFAULT
++                              : FCFT_SUBPIXEL_NONE),
+         .cursor_keys_mode = CURSOR_KEYS_NORMAL,
+         .keypad_keys_mode = KEYPAD_NUMERICAL,
+         .reverse_wrap = true,
+@@ -1307,7 +1275,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+         .flash = {.fd = flash_fd},
+         .blink = {.fd = -1},
+         .vt = {
+-            .state = 0,  /* STATE_GROUND */
++            .state = 0, /* STATE_GROUND */
+         },
+         .colors = {
+             .fg = theme->fg,
+@@ -1360,9 +1328,8 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+         .wl = wayl,
+         .render = {
+             .chains = {
+-                .grid = shm_chain_new(wayl, true, 1 + conf->render_worker_count,
+-                                      desired_bit_depth, &render_buffer_release_callback, term),
+-                .search = shm_chain_new(wayl, false, 1 ,desired_bit_depth, NULL, NULL),
++                .grid = shm_chain_new(wayl, true, 1 + conf->render_worker_count, desired_bit_depth, &render_buffer_release_callback, term),
++                .search = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
+                 .scrollback_indicator = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
+                 .render_timer = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
+                 .url = shm_chain_new(wayl, false, 1, desired_bit_depth, NULL, NULL),
+@@ -1436,8 +1403,7 @@ term_init(const struct config *conf, struct fdm *fdm, struct reaper *reaper,
+         if ((term->slave = slave_spawn(
+                  term->ptmx, argc, term->cwd, argv, envp, &conf->env_vars,
+                  conf->term, conf->shell, conf->login_shell,
+-                 &conf->notifications)) == -1)
+-        {
++                 &conf->notifications)) == -1) {
+             goto err;
+         }
+ 
+@@ -1501,9 +1467,7 @@ close_fds:
+     return NULL;
+ }
+ 
+-void
+-term_window_configured(struct terminal *term)
+-{
++void term_window_configured(struct terminal *term) {
+     /* Enable ptmx FDM callback */
+     if (!term->shutdown.in_progress) {
+         xassert(term->window->is_configured);
+@@ -1579,16 +1543,15 @@ term_window_configured(struct terminal *term)
+  */
+ 
+ static void
+-shutdown_maybe_done(struct terminal *term)
+-{
++shutdown_maybe_done(struct terminal *term) {
+     bool shutdown_done =
+         term->window == NULL && term->shutdown.client_has_terminated;
+ 
+     LOG_DBG("window=%p, slave-has-been-reaped=%d --> %s",
+             (void *)term->window, term->shutdown.client_has_terminated,
+             (shutdown_done
+-             ? "shutdown done, calling term_destroy()"
+-             : "no action"));
++                 ? "shutdown done, calling term_destroy()"
++                 : "no action"));
+ 
+     if (!shutdown_done)
+         return;
+@@ -1602,8 +1565,7 @@ shutdown_maybe_done(struct terminal *term)
+ }
+ 
+ static void
+-fdm_client_terminated(struct reaper *reaper, pid_t pid, int status, void *data)
+-{
++fdm_client_terminated(struct reaper *reaper, pid_t pid, int status, void *data) {
+     struct terminal *term = data;
+     LOG_DBG("slave (PID=%u) died", pid);
+ 
+@@ -1622,8 +1584,7 @@ fdm_client_terminated(struct reaper *reaper, pid_t pid, int status, void *data)
+ }
+ 
+ static bool
+-fdm_shutdown(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_shutdown(struct fdm *fdm, int fd, int events, void *data) {
+     struct terminal *term = data;
+ 
+     /* Kill the event FD */
+@@ -1654,8 +1615,7 @@ fdm_shutdown(struct fdm *fdm, int fd, int events, void *data)
+ }
+ 
+ static bool
+-fdm_terminate_timeout(struct fdm *fdm, int fd, int events, void *data)
+-{
++fdm_terminate_timeout(struct fdm *fdm, int fd, int events, void *data) {
+     uint64_t unused;
+     ssize_t bytes = read(fd, &unused, sizeof(unused));
+     if (bytes < 0) {
+@@ -1668,9 +1628,9 @@ fdm_terminate_timeout(struct fdm *fdm, int fd, int events, void *data)
+ 
+     LOG_DBG("slave (PID=%u) has not terminated, sending %s (%d)",
+             term->slave,
+-            term->shutdown.next_signal == SIGTERM ? "SIGTERM"
+-                : term->shutdown.next_signal == SIGKILL ? "SIGKILL"
+-                    : "<unknown>",
++            term->shutdown.next_signal == SIGTERM   ? "SIGTERM"
++            : term->shutdown.next_signal == SIGKILL ? "SIGKILL"
++                                                    : "<unknown>",
+             term->shutdown.next_signal);
+ 
+     kill(-term->slave, term->shutdown.next_signal);
+@@ -1699,9 +1659,7 @@ fdm_terminate_timeout(struct fdm *fdm, int fd, int events, void *data)
+     return true;
+ }
+ 
+-bool
+-term_shutdown(struct terminal *term)
+-{
++bool term_shutdown(struct terminal *term) {
+     if (term->shutdown.in_progress)
+         return true;
+ 
+@@ -1737,7 +1695,8 @@ term_shutdown(struct terminal *term)
+             term->shutdown.client_has_terminated = true;
+         } else {
+             LOG_DBG("initiating asynchronous terminate of slave; "
+-                    "sending SIGHUP to PID=%u", term->slave);
++                    "sending SIGHUP to PID=%u",
++                    term->slave);
+ 
+             kill(-term->slave, SIGHUP);
+ 
+@@ -1753,8 +1712,7 @@ term_shutdown(struct terminal *term)
+             int timeout_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+             if (timeout_fd < 0 ||
+                 timerfd_settime(timeout_fd, 0, &timeout, NULL) < 0 ||
+-                !fdm_add(term->fdm, timeout_fd, EPOLLIN, &fdm_terminate_timeout, term))
+-            {
++                !fdm_add(term->fdm, timeout_fd, EPOLLIN, &fdm_terminate_timeout, term)) {
+                 if (timeout_fd >= 0)
+                     close(timeout_fd);
+                 LOG_ERRNO("failed to create slave terminate timeout FD");
+@@ -1801,15 +1759,12 @@ term_shutdown(struct terminal *term)
+ static volatile sig_atomic_t alarm_raised;
+ 
+ static void
+-sig_alarm(int signo)
+-{
++sig_alarm(int signo) {
+     LOG_DBG("SIGALRM");
+     alarm_raised = 1;
+ }
+ 
+-int
+-term_destroy(struct terminal *term)
+-{
++int term_destroy(struct terminal *term) {
+     if (term == NULL)
+         return 0;
+ 
+@@ -1878,7 +1833,6 @@ term_destroy(struct terminal *term)
+     for (size_t i = 0; i < 4; i++)
+         free(term->font_sizes[i]);
+ 
+-
+     free_custom_glyphs(
+         &term->custom_glyphs.box_drawing, GLYPH_BOX_DRAWING_COUNT);
+     free_custom_glyphs(
+@@ -1962,7 +1916,8 @@ term_destroy(struct terminal *term)
+             exit_status = term->shutdown.exit_status;
+         else {
+             LOG_DBG("initiating blocking terminate of slave; "
+-                    "sending SIGHUP to PID=%u", term->slave);
++                    "sending SIGHUP to PID=%u",
++                    term->slave);
+ 
+             kill(-term->slave, SIGHUP);
+ 
+@@ -2003,7 +1958,8 @@ term_destroy(struct terminal *term)
+ 
+                     if (alarm_raised) {
+                         LOG_DBG("slave (PID=%u) has not terminated yet, "
+-                                "sending: %s (%d)", term->slave,
++                                "sending: %s (%d)",
++                                term->slave,
+                                 next_signal == SIGTERM ? "SIGTERM" : "SIGKILL",
+                                 next_signal);
+ 
+@@ -2037,17 +1993,13 @@ term_destroy(struct terminal *term)
+ 
+     free(term);
+ 
+-#if defined(__GLIBC__)
+-    if (!malloc_trim(0))
+-        LOG_WARN("failed to trim memory");
+-#endif
++    xtrim();
+ 
+     return ret;
+ }
+ 
+ static inline void
+-erase_cell_range(struct terminal *term, struct row *row, int start, int end)
+-{
++erase_cell_range(struct terminal *term, struct row *row, int start, int end) {
+     xassert(start < term->cols);
+     xassert(end < term->cols);
+ 
+@@ -2071,8 +2023,7 @@ erase_cell_range(struct terminal *term, struct row *row, int start, int end)
+ }
+ 
+ static inline void
+-erase_line(struct terminal *term, struct row *row)
+-{
++erase_line(struct terminal *term, struct row *row) {
+     erase_cell_range(term, row, 0, term->cols - 1);
+     row->linebreak = true;
+     row->shell_integration.prompt_marker = false;
+@@ -2081,8 +2032,7 @@ erase_line(struct terminal *term, struct row *row)
+ }
+ 
+ static void
+-term_theme_apply(struct terminal *term, const struct color_theme *theme)
+-{
++term_theme_apply(struct terminal *term, const struct color_theme *theme) {
+     term->colors.fg = theme->fg;
+     term->colors.bg = theme->bg;
+     term->colors.alpha = theme->alpha;
+@@ -2093,9 +2043,7 @@ term_theme_apply(struct terminal *term, const struct color_theme *theme)
+     memcpy(term->colors.table, theme->table, sizeof(term->colors.table));
+ }
+ 
+-void
+-term_reset(struct terminal *term, bool hard)
+-{
++void term_reset(struct terminal *term, bool hard) {
+     LOG_INFO("%s resetting the terminal", hard ? "hard" : "soft");
+ 
+     term->cursor_keys_mode = CURSOR_KEYS_NORMAL;
+@@ -2135,7 +2083,7 @@ term_reset(struct terminal *term, bool hard)
+     free(term->vt.osc.data);
+ 
+     term->vt = (struct vt){
+-        .state = 0,     /* STATE_GROUND */
++        .state = 0, /* STATE_GROUND */
+     };
+ 
+     if (term->grid == &term->alt) {
+@@ -2179,15 +2127,24 @@ term_reset(struct terminal *term, bool hard)
+     const struct color_theme *theme = NULL;
+ 
+     switch (term->conf->initial_color_theme) {
+-    case COLOR_THEME_DARK: theme = &term->conf->colors_dark; break;
+-    case COLOR_THEME_LIGHT: theme = &term->conf->colors_light; break;
+-    case COLOR_THEME_1: BUG("COLOR_THEME_1 should not be used"); break;
+-    case COLOR_THEME_2: BUG("COLOR_THEME_2 should not be used"); break;
++    case COLOR_THEME_DARK:
++        theme = &term->conf->colors_dark;
++        break;
++    case COLOR_THEME_LIGHT:
++        theme = &term->conf->colors_light;
++        break;
++    case COLOR_THEME_1:
++        BUG("COLOR_THEME_1 should not be used");
++        break;
++    case COLOR_THEME_2:
++        BUG("COLOR_THEME_2 should not be used");
++        break;
+     }
+ 
+     term->flash.active = false;
+     term->blink.state = BLINK_ON;
+-    fdm_del(term->fdm, term->blink.fd); term->blink.fd = -1;
++    fdm_del(term->fdm, term->blink.fd);
++    term->blink.fd = -1;
+     term_theme_apply(term, theme);
+     term->colors.active_theme = term->conf->initial_color_theme;
+     free(term->color_stack.stack);
+@@ -2243,8 +2200,7 @@ term_reset(struct terminal *term, bool hard)
+ }
+ 
+ static bool
+-term_font_size_adjust_by_points(struct terminal *term, float amount)
+-{
++term_font_size_adjust_by_points(struct terminal *term, float amount) {
+     const struct config *conf = term->conf;
+     const float dpi = term->font_is_sized_by_dpi ? term->font_dpi : 96.;
+ 
+@@ -2267,8 +2223,7 @@ term_font_size_adjust_by_points(struct terminal *term, float amount)
+ }
+ 
+ static bool
+-term_font_size_adjust_by_pixels(struct terminal *term, int amount)
+-{
++term_font_size_adjust_by_pixels(struct terminal *term, int amount) {
+     const struct config *conf = term->conf;
+     const float dpi = term->font_is_sized_by_dpi ? term->font_dpi : 96.;
+ 
+@@ -2290,12 +2245,11 @@ term_font_size_adjust_by_pixels(struct terminal *term, int amount)
+ }
+ 
+ static bool
+-term_font_size_adjust_by_percent(struct terminal *term, bool increment, float percent)
+-{
++term_font_size_adjust_by_percent(struct terminal *term, bool increment, float percent) {
+     const struct config *conf = term->conf;
+     const float multiplier = increment
+-        ? 1. + percent
+-        : 1. / (1. + percent);
++                                 ? 1. + percent
++                                 : 1. / (1. + percent);
+ 
+     for (size_t i = 0; i < 4; i++) {
+         const struct config_font_list *font_list = &conf->fonts[i];
+@@ -2313,9 +2267,7 @@ term_font_size_adjust_by_percent(struct terminal *term, bool increment, float pe
+     return reload_fonts(term, true);
+ }
+ 
+-bool
+-term_font_size_increase(struct terminal *term)
+-{
++bool term_font_size_increase(struct terminal *term) {
+     const struct config *conf = term->conf;
+     const struct font_size_adjustment *inc_dec = &conf->font_size_adjustment;
+ 
+@@ -2327,9 +2279,7 @@ term_font_size_increase(struct terminal *term)
+         return term_font_size_adjust_by_points(term, inc_dec->pt_or_px.pt);
+ }
+ 
+-bool
+-term_font_size_decrease(struct terminal *term)
+-{
++bool term_font_size_decrease(struct terminal *term) {
+     const struct config *conf = term->conf;
+     const struct font_size_adjustment *inc_dec = &conf->font_size_adjustment;
+ 
+@@ -2341,29 +2291,21 @@ term_font_size_decrease(struct terminal *term)
+         return term_font_size_adjust_by_points(term, -inc_dec->pt_or_px.pt);
+ }
+ 
+-bool
+-term_font_size_reset(struct terminal *term)
+-{
++bool term_font_size_reset(struct terminal *term) {
+     return load_fonts_from_conf(term);
+ }
+ 
+-bool
+-term_fractional_scaling(const struct terminal *term)
+-{
++bool term_fractional_scaling(const struct terminal *term) {
+     return term->wl->fractional_scale_manager != NULL &&
+            term->wl->viewporter != NULL &&
+            term->window->scale > 0.;
+ }
+ 
+-bool
+-term_preferred_buffer_scale(const struct terminal *term)
+-{
++bool term_preferred_buffer_scale(const struct terminal *term) {
+     return term->window->preferred_buffer_scale > 0;
+ }
+ 
+-bool
+-term_update_scale(struct terminal *term)
+-{
++bool term_update_scale(struct terminal *term) {
+     const struct wl_window *win = term->window;
+ 
+     /*
+@@ -2382,16 +2324,16 @@ term_update_scale(struct terminal *term)
+      *  - if there aren't any outputs available, use 1.0
+      */
+     const float new_scale = (term_fractional_scaling(term)
+-        ? win->scale
+-        : term_preferred_buffer_scale(term)
+-            ? win->preferred_buffer_scale
+-            : tll_length(win->on_outputs) > 0
+-                ? tll_back(win->on_outputs)->scale
+-                : term->scale_before_unmap > 0.
+-                    ? term->scale_before_unmap
+-                    : tll_length(term->wl->monitors) > 0
+-                        ? tll_front(term->wl->monitors).scale
+-                        : 1.);
++                                 ? win->scale
++                             : term_preferred_buffer_scale(term)
++                                 ? win->preferred_buffer_scale
++                             : tll_length(win->on_outputs) > 0
++                                 ? tll_back(win->on_outputs)->scale
++                             : term->scale_before_unmap > 0.
++                                 ? term->scale_before_unmap
++                             : tll_length(term->wl->monitors) > 0
++                                 ? tll_front(term->wl->monitors).scale
++                                 : 1.);
+ 
+     if (new_scale == term->scale)
+         return false;
+@@ -2402,9 +2344,7 @@ term_update_scale(struct terminal *term)
+     return true;
+ }
+ 
+-bool
+-term_font_dpi_changed(struct terminal *term, float old_scale)
+-{
++bool term_font_dpi_changed(struct terminal *term, float old_scale) {
+     float dpi = get_font_dpi(term);
+     xassert(term->scale > 0.);
+ 
+@@ -2414,8 +2354,8 @@ term_font_dpi_changed(struct terminal *term, float old_scale)
+     bool need_font_reload =
+         was_scaled_using_dpi != will_scale_using_dpi ||
+         (will_scale_using_dpi
+-         ? term->font_dpi != dpi
+-         : old_scale != term->scale);
++             ? term->font_dpi != dpi
++             : old_scale != term->scale);
+ 
+     if (need_font_reload) {
+         LOG_DBG("DPI/scale change: DPI-aware=%s, "
+@@ -2436,9 +2376,7 @@ term_font_dpi_changed(struct terminal *term, float old_scale)
+     return reload_fonts(term, false);
+ }
+ 
+-void
+-term_font_subpixel_changed(struct terminal *term)
+-{
++void term_font_subpixel_changed(struct terminal *term) {
+     enum fcft_subpixel subpixel = get_font_subpixel(term);
+ 
+     if (term->font_subpixel == subpixel)
+@@ -2462,9 +2400,7 @@ term_font_subpixel_changed(struct terminal *term)
+     render_refresh(term);
+ }
+ 
+-int
+-term_font_baseline(const struct terminal *term)
+-{
++int term_font_baseline(const struct terminal *term) {
+     const struct fcft_font *font = term->fonts[0];
+     const int line_height = term->cell_height;
+     const int font_height = font->ascent + font->descent;
+@@ -2475,15 +2411,13 @@ term_font_baseline(const struct terminal *term)
+      * bottom of the cell
+      */
+     const int glyph_top_y = term->font_line_height.px >= 0
+-        ? round((line_height - font_height) / 2.)
+-        : 0;
++                                ? round((line_height - font_height) / 2.)
++                                : 0;
+ 
+     return term->font_y_ofs + line_height - glyph_top_y - font->descent;
+ }
+ 
+-void
+-term_damage_rows(struct terminal *term, int start, int end)
+-{
++void term_damage_rows(struct terminal *term, int start, int end) {
+     xassert(start <= end);
+     for (int r = start; r <= end; r++) {
+         struct row *row = grid_row(term->grid, r);
+@@ -2493,9 +2427,7 @@ term_damage_rows(struct terminal *term, int start, int end)
+     }
+ }
+ 
+-void
+-term_damage_rows_in_view(struct terminal *term, int start, int end)
+-{
++void term_damage_rows_in_view(struct terminal *term, int start, int end) {
+     xassert(start <= end);
+     for (int r = start; r <= end; r++) {
+         struct row *row = grid_row_in_view(term->grid, r);
+@@ -2505,34 +2437,24 @@ term_damage_rows_in_view(struct terminal *term, int start, int end)
+     }
+ }
+ 
+-void
+-term_damage_all(struct terminal *term)
+-{
++void term_damage_all(struct terminal *term) {
+     term_damage_rows(term, 0, term->rows - 1);
+ }
+ 
+-void
+-term_damage_view(struct terminal *term)
+-{
++void term_damage_view(struct terminal *term) {
+     term_damage_rows_in_view(term, 0, term->rows - 1);
+ }
+ 
+-void
+-term_damage_cursor(struct terminal *term)
+-{
++void term_damage_cursor(struct terminal *term) {
+     term->grid->cur_row->cells[term->grid->cursor.point.col].attrs.clean = 0;
+     term->grid->cur_row->dirty = true;
+ }
+ 
+-void
+-term_damage_margins(struct terminal *term)
+-{
++void term_damage_margins(struct terminal *term) {
+     term->render.margins = true;
+ }
+ 
+-void
+-term_damage_color(struct terminal *term, enum color_source src, int idx)
+-{
++void term_damage_color(struct terminal *term, enum color_source src, int idx) {
+     xassert(src == COLOR_DEFAULT || src == COLOR_BASE256);
+ 
+     for (int r = 0; r < term->rows; r++) {
+@@ -2620,18 +2542,15 @@ term_damage_color(struct terminal *term, enum color_source src, int idx)
+     }
+ }
+ 
+-void
+-term_damage_scroll(struct terminal *term, enum damage_type damage_type,
+-                   struct scroll_region region, int lines)
+-{
++void term_damage_scroll(struct terminal *term, enum damage_type damage_type,
++                        struct scroll_region region, int lines) {
+     if (likely(tll_length(term->grid->scroll_damage) > 0)) {
+         struct damage *dmg = &tll_back(term->grid->scroll_damage);
+ 
+         if (likely(
+                 dmg->type == damage_type &&
+                 dmg->region.start == region.start &&
+-                dmg->region.end == region.end))
+-        {
++                dmg->region.end == region.end)) {
+             /* Make sure we don't overflow... */
+             int new_line_count = (int)dmg->lines + lines;
+             if (likely(new_line_count <= UINT16_MAX)) {
+@@ -2648,10 +2567,8 @@ term_damage_scroll(struct terminal *term, enum damage_type damage_type,
+     tll_push_back(term->grid->scroll_damage, dmg);
+ }
+ 
+-void
+-term_erase(struct terminal *term, int start_row, int start_col,
+-           int end_row, int end_col)
+-{
++void term_erase(struct terminal *term, int start_row, int start_col,
++                int end_row, int end_col) {
+     xassert(start_row <= end_row);
+     xassert(start_col <= end_col || start_row < end_row);
+ 
+@@ -2677,9 +2594,7 @@ term_erase(struct terminal *term, int start_row, int start_col,
+     sixel_overwrite_by_row(term, end_row, 0, end_col + 1);
+ }
+ 
+-void
+-term_erase_scrollback(struct terminal *term)
+-{
++void term_erase_scrollback(struct terminal *term) {
+     const struct grid *grid = term->grid;
+     const int num_rows = grid->num_rows;
+     const int mask = num_rows - 1;
+@@ -2718,8 +2633,7 @@ term_erase_scrollback(struct terminal *term)
+ 
+         if ((rel_sel_start <= rel_start && rel_sel_end >= rel_start) ||
+             (rel_sel_start <= rel_end && rel_sel_end >= rel_end) ||
+-            (rel_sel_start >= rel_start && rel_sel_end <= rel_end))
+-        {
++            (rel_sel_start >= rel_start && rel_sel_end <= rel_end)) {
+             selection_cancel(term);
+         }
+     }
+@@ -2732,8 +2646,7 @@ term_erase_scrollback(struct terminal *term)
+ 
+         if ((six_start <= rel_start && six_end >= rel_start) ||
+             (six_start <= rel_end && six_end >= rel_end) ||
+-            (six_start >= rel_start && six_end <= rel_end))
+-        {
++            (six_start >= rel_start && six_end <= rel_end)) {
+             sixel_destroy(six);
+             tll_remove(term->grid->sixel_images, it);
+         }
+@@ -2764,8 +2677,7 @@ term_erase_scrollback(struct terminal *term)
+     term_damage_view(term);
+ }
+ 
+-UNITTEST
+-{
++UNITTEST {
+     const int scrollback_rows = 16;
+     const int term_rows = 5;
+     const int cols = 5;
+@@ -2795,14 +2707,15 @@ UNITTEST
+         },
+     };
+ 
+-#define populate_scrollback() do {                                      \
+-        for (int i = 0; i < scrollback_rows; i++) {                     \
+-            if (term.normal.rows[i] == NULL) {                          \
++#define populate_scrollback()                                             \
++    do {                                                                  \
++        for (int i = 0; i < scrollback_rows; i++) {                       \
++            if (term.normal.rows[i] == NULL) {                            \
+                 struct row *r = xcalloc(1, sizeof(*term.normal.rows[i])); \
+-                r->cells = xcalloc(cols, sizeof(r->cells[0]));          \
+-                term.normal.rows[i] = r;                                \
+-            }                                                           \
+-        }                                                               \
++                r->cells = xcalloc(cols, sizeof(r->cells[0]));            \
++                term.normal.rows[i] = r;                                  \
++            }                                                             \
++        }                                                                 \
+     } while (0)
+ 
+     /*
+@@ -2825,7 +2738,7 @@ UNITTEST
+      * selection is cancelled.
+      */
+ 
+-    term.normal.offset = 14;  /* Screen covers rows 14,15,0,1,2 */
++    term.normal.offset = 14; /* Screen covers rows 14,15,0,1,2 */
+ 
+     /* Selection covers rows 15,0,1,2,3 */
+     term.selection.coords.start = (struct coord){.row = 15};
+@@ -2891,9 +2804,7 @@ UNITTEST
+     fdm_destroy(fdm);
+ }
+ 
+-int
+-term_row_rel_to_abs(const struct terminal *term, int row)
+-{
++int term_row_rel_to_abs(const struct terminal *term, int row) {
+     switch (term->origin) {
+     case ORIGIN_ABSOLUTE:
+         return min(row, term->rows - 1);
+@@ -2906,9 +2817,7 @@ term_row_rel_to_abs(const struct terminal *term, int row)
+     return -1;
+ }
+ 
+-void
+-term_cursor_to(struct terminal *term, int row, int col)
+-{
++void term_cursor_to(struct terminal *term, int row, int col) {
+     xassert(row < term->rows);
+     xassert(col < term->cols);
+ 
+@@ -2922,15 +2831,11 @@ term_cursor_to(struct terminal *term, int row, int col)
+     term->grid->cur_row = grid_row(term->grid, row);
+ }
+ 
+-void
+-term_cursor_home(struct terminal *term)
+-{
++void term_cursor_home(struct terminal *term) {
+     term_cursor_to(term, term_row_rel_to_abs(term, 0), 0);
+ }
+ 
+-void
+-term_cursor_col(struct terminal *term, int col)
+-{
++void term_cursor_col(struct terminal *term, int col) {
+     xassert(col < term->cols);
+ 
+     term->grid->cursor.lcf = false;
+@@ -2938,9 +2843,7 @@ term_cursor_col(struct terminal *term, int col)
+     term_reset_grapheme_state(term);
+ }
+ 
+-void
+-term_cursor_left(struct terminal *term, int count)
+-{
++void term_cursor_left(struct terminal *term, int count) {
+     int move_amount = min(term->grid->cursor.point.col, count);
+     term->grid->cursor.point.col -= move_amount;
+     xassert(term->grid->cursor.point.col >= 0);
+@@ -2948,9 +2851,7 @@ term_cursor_left(struct terminal *term, int count)
+     term_reset_grapheme_state(term);
+ }
+ 
+-void
+-term_cursor_right(struct terminal *term, int count)
+-{
++void term_cursor_right(struct terminal *term, int count) {
+     int move_amount = min(term->cols - term->grid->cursor.point.col - 1, count);
+     term->grid->cursor.point.col += move_amount;
+     xassert(term->grid->cursor.point.col < term->cols);
+@@ -2958,9 +2859,7 @@ term_cursor_right(struct terminal *term, int count)
+     term_reset_grapheme_state(term);
+ }
+ 
+-void
+-term_cursor_up(struct terminal *term, int count)
+-{
++void term_cursor_up(struct terminal *term, int count) {
+     int top = term->origin == ORIGIN_ABSOLUTE ? 0 : term->scroll_region.start;
+     xassert(term->grid->cursor.point.row >= top);
+ 
+@@ -2968,9 +2867,7 @@ term_cursor_up(struct terminal *term, int count)
+     term_cursor_to(term, term->grid->cursor.point.row - move_amount, term->grid->cursor.point.col);
+ }
+ 
+-void
+-term_cursor_down(struct terminal *term, int count)
+-{
++void term_cursor_down(struct terminal *term, int count) {
+     int bottom = term->origin == ORIGIN_ABSOLUTE ? term->rows : term->scroll_region.end;
+     xassert(bottom >= term->grid->cursor.point.row);
+ 
+@@ -2979,8 +2876,7 @@ term_cursor_down(struct terminal *term, int count)
+ }
+ 
+ static bool
+-cursor_blink_rearm_timer(struct terminal *term)
+-{
++cursor_blink_rearm_timer(struct terminal *term) {
+     if (term->cursor_blink.fd < 0) {
+         int fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+         if (fd < 0) {
+@@ -3016,16 +2912,13 @@ cursor_blink_rearm_timer(struct terminal *term)
+ }
+ 
+ static bool
+-cursor_blink_disarm_timer(struct terminal *term)
+-{
++cursor_blink_disarm_timer(struct terminal *term) {
+     fdm_del(term->fdm, term->cursor_blink.fd);
+     term->cursor_blink.fd = -1;
+     return true;
+ }
+ 
+-void
+-term_cursor_blink_update(struct terminal *term)
+-{
++void term_cursor_blink_update(struct terminal *term) {
+     bool enable = term->cursor_blink.decset || term->cursor_blink.deccsusr;
+     bool activate = !term->shutdown.in_progress && enable && term->visual_focus;
+ 
+@@ -3043,23 +2936,19 @@ term_cursor_blink_update(struct terminal *term)
+ 
+ static bool
+ selection_on_top_region(const struct terminal *term,
+-                        struct scroll_region region)
+-{
++                        struct scroll_region region) {
+     return region.start > 0 &&
+-        selection_on_rows(term, 0, region.start - 1);
++           selection_on_rows(term, 0, region.start - 1);
+ }
+ 
+ static bool
+ selection_on_bottom_region(const struct terminal *term,
+-                           struct scroll_region region)
+-{
++                           struct scroll_region region) {
+     return region.end < term->rows &&
+-        selection_on_rows(term, region.end, term->rows - 1);
++           selection_on_rows(term, region.end, term->rows - 1);
+ }
+ 
+-void
+-term_scroll_partial(struct terminal *term, struct scroll_region region, int rows)
+-{
++void term_scroll_partial(struct terminal *term, struct scroll_region region, int rows) {
+     LOG_DBG("scroll: rows=%d, region.start=%d, region.end=%d",
+             rows, region.start, region.end);
+ 
+@@ -3074,8 +2963,7 @@ term_scroll_partial(struct terminal *term, struct scroll_region region, int rows
+          * scrolled in (i.e. reused lines).
+          */
+         if (selection_on_top_region(term, region) ||
+-            selection_on_bottom_region(term, region))
+-        {
++            selection_on_bottom_region(term, region)) {
+             selection_cancel(term);
+         } else
+             selection_scroll_up(term, rows);
+@@ -3124,16 +3012,12 @@ term_scroll_partial(struct terminal *term, struct scroll_region region, int rows
+ #endif
+ }
+ 
+-void
+-term_scroll(struct terminal *term, int rows)
+-{
++void term_scroll(struct terminal *term, int rows) {
+     term_scroll_partial(term, term->scroll_region, rows);
+ }
+ 
+-void
+-term_scroll_reverse_partial(struct terminal *term,
+-                            struct scroll_region region, int rows)
+-{
++void term_scroll_reverse_partial(struct terminal *term,
++                                 struct scroll_region region, int rows) {
+     LOG_DBG("scroll reverse: rows=%d, region.start=%d, region.end=%d",
+             rows, region.start, region.end);
+ 
+@@ -3148,8 +3032,7 @@ term_scroll_reverse_partial(struct terminal *term,
+          * scrolled in (i.e. reused lines).
+          */
+         if (selection_on_top_region(term, region) ||
+-            selection_on_bottom_region(term, region))
+-        {
++            selection_on_bottom_region(term, region)) {
+             selection_cancel(term);
+         } else
+             selection_scroll_down(term, rows);
+@@ -3221,21 +3104,15 @@ term_scroll_reverse_partial(struct terminal *term,
+ #endif
+ }
+ 
+-void
+-term_scroll_reverse(struct terminal *term, int rows)
+-{
++void term_scroll_reverse(struct terminal *term, int rows) {
+     term_scroll_reverse_partial(term, term->scroll_region, rows);
+ }
+ 
+-void
+-term_carriage_return(struct terminal *term)
+-{
++void term_carriage_return(struct terminal *term) {
+     term_cursor_left(term, term->grid->cursor.point.col);
+ }
+ 
+-void
+-term_linefeed(struct terminal *term)
+-{
++void term_linefeed(struct terminal *term) {
+     term->grid->cursor.lcf = false;
+ 
+     if (term->grid->cursor.point.row == term->scroll_region.end - 1)
+@@ -3246,18 +3123,14 @@ term_linefeed(struct terminal *term)
+     term_reset_grapheme_state(term);
+ }
+ 
+-void
+-term_reverse_index(struct terminal *term)
+-{
++void term_reverse_index(struct terminal *term) {
+     if (term->grid->cursor.point.row == term->scroll_region.start)
+         term_scroll_reverse(term, 1);
+     else
+         term_cursor_up(term, 1);
+ }
+ 
+-void
+-term_reset_view(struct terminal *term)
+-{
++void term_reset_view(struct terminal *term) {
+     if (term->grid->view == term->grid->offset)
+         return;
+ 
+@@ -3265,17 +3138,13 @@ term_reset_view(struct terminal *term)
+     term_damage_view(term);
+ }
+ 
+-void
+-term_save_cursor(struct terminal *term)
+-{
++void term_save_cursor(struct terminal *term) {
+     term->grid->saved_cursor = term->grid->cursor;
+     term->vt.saved_attrs = term->vt.attrs;
+     term->saved_charsets = term->charsets;
+ }
+ 
+-void
+-term_restore_cursor(struct terminal *term, const struct cursor *cursor)
+-{
++void term_restore_cursor(struct terminal *term, const struct cursor *cursor) {
+     int row = min(cursor->point.row, term->rows - 1);
+     int col = min(cursor->point.col, term->cols - 1);
+ 
+@@ -3290,9 +3159,7 @@ term_restore_cursor(struct terminal *term, const struct cursor *cursor)
+     term_update_ascii_printer(term);
+ }
+ 
+-void
+-term_visual_focus_in(struct terminal *term)
+-{
++void term_visual_focus_in(struct terminal *term) {
+     if (term->visual_focus)
+         return;
+ 
+@@ -3301,9 +3168,7 @@ term_visual_focus_in(struct terminal *term)
+     render_refresh_csd(term);
+ }
+ 
+-void
+-term_visual_focus_out(struct terminal *term)
+-{
++void term_visual_focus_out(struct terminal *term) {
+     if (!term->visual_focus)
+         return;
+ 
+@@ -3312,9 +3177,7 @@ term_visual_focus_out(struct terminal *term)
+     render_refresh_csd(term);
+ }
+ 
+-void
+-term_kbd_focus_in(struct terminal *term)
+-{
++void term_kbd_focus_in(struct terminal *term) {
+     if (term->kbd_focus)
+         return;
+ 
+@@ -3331,15 +3194,11 @@ term_kbd_focus_in(struct terminal *term)
+         term_to_slave(term, "\033[I", 3);
+ }
+ 
+-void
+-term_kbd_focus_out(struct terminal *term)
+-{
++void term_kbd_focus_out(struct terminal *term) {
+     if (!term->kbd_focus)
+         return;
+ 
+-    tll_foreach(term->wl->seats, it)
+-        if (it->item.kbd_focus == term)
+-            return;
++    tll_foreach(term->wl->seats, it) if (it->item.kbd_focus == term) return;
+ 
+ #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+     if (term_ime_reset(term))
+@@ -3354,25 +3213,36 @@ term_kbd_focus_out(struct terminal *term)
+ }
+ 
+ static int
+-linux_mouse_button_to_x(int button)
+-{
++linux_mouse_button_to_x(int button) {
+     /* Note: on X11, scroll events where reported as buttons. Not so
+      * on Wayland. We manually map scroll events to custom "button"
+      * defines (BTN_WHEEL_*).
+      */
+     switch (button) {
+-    case BTN_LEFT:          return 1;
+-    case BTN_MIDDLE:        return 2;
+-    case BTN_RIGHT:         return 3;
+-    case BTN_WHEEL_BACK:    return 4;  /* Foot custom define */
+-    case BTN_WHEEL_FORWARD: return 5;  /* Foot custom define */
+-    case BTN_WHEEL_LEFT:    return 6;  /* Foot custom define */
+-    case BTN_WHEEL_RIGHT:   return 7;  /* Foot custom define */
+-    case BTN_SIDE:          return 8;
+-    case BTN_EXTRA:         return 9;
+-    case BTN_FORWARD:       return 10;
+-    case BTN_BACK:          return 11;
+-    case BTN_TASK:          return 12; /* Guessing... */
++    case BTN_LEFT:
++        return 1;
++    case BTN_MIDDLE:
++        return 2;
++    case BTN_RIGHT:
++        return 3;
++    case BTN_WHEEL_BACK:
++        return 4; /* Foot custom define */
++    case BTN_WHEEL_FORWARD:
++        return 5; /* Foot custom define */
++    case BTN_WHEEL_LEFT:
++        return 6; /* Foot custom define */
++    case BTN_WHEEL_RIGHT:
++        return 7; /* Foot custom define */
++    case BTN_SIDE:
++        return 8;
++    case BTN_EXTRA:
++        return 9;
++    case BTN_FORWARD:
++        return 10;
++    case BTN_BACK:
++        return 11;
++    case BTN_TASK:
++        return 12; /* Guessing... */
+ 
+     default:
+         LOG_WARN("unrecognized mouse button: %d (0x%x)", button, button);
+@@ -3381,17 +3251,24 @@ linux_mouse_button_to_x(int button)
+ }
+ 
+ static int
+-encode_xbutton(int xbutton)
+-{
++encode_xbutton(int xbutton) {
+     switch (xbutton) {
+-    case 1: case 2: case 3:
++    case 1:
++    case 2:
++    case 3:
+         return xbutton - 1;
+ 
+-    case 4: case 5: case 6: case 7:
++    case 4:
++    case 5:
++    case 6:
++    case 7:
+         /* Like button 1 and 2, but with 64 added */
+         return xbutton - 4 + 64;
+ 
+-    case 8: case 9: case 10: case 11:
++    case 8:
++    case 9:
++    case 10:
++    case 11:
+         /* Similar to 4 and 5, but adding 128 instead of 64 */
+         return xbutton - 8 + 128;
+ 
+@@ -3403,8 +3280,7 @@ encode_xbutton(int xbutton)
+ 
+ static void
+ report_mouse_click(struct terminal *term, int encoded_button, int row, int col,
+-                   int row_pixels, int col_pixels, bool release)
+-{
++                   int row_pixels, int col_pixels, bool release) {
+     char response[128];
+ 
+     switch (term->mouse_reporting) {
+@@ -3446,14 +3322,11 @@ report_mouse_click(struct terminal *term, int encoded_button, int row, int col,
+ }
+ 
+ static void
+-report_mouse_motion(struct terminal *term, int encoded_button, int row, int col, int row_pixels, int col_pixels)
+-{
++report_mouse_motion(struct terminal *term, int encoded_button, int row, int col, int row_pixels, int col_pixels) {
+     report_mouse_click(term, encoded_button, row, col, row_pixels, col_pixels, false);
+ }
+ 
+-bool
+-term_mouse_grabbed(const struct terminal *term, const struct seat *seat)
+-{
++bool term_mouse_grabbed(const struct terminal *term, const struct seat *seat) {
+     /*
+      * Mouse is grabbed by us, regardless of whether mouse tracking
+      * has been enabled or not.
+@@ -3468,14 +3341,12 @@ term_mouse_grabbed(const struct terminal *term, const struct seat *seat)
+     bool override_mods_pressed = (mods & override_modmask) == override_modmask;
+ 
+     return term->mouse_tracking == MOUSE_NONE ||
+-        (seat->kbd_focus == term && override_mods_pressed);
++           (seat->kbd_focus == term && override_mods_pressed);
+ }
+ 
+-void
+-term_mouse_down(struct terminal *term, int button, int row, int col,
+-                int row_pixels, int col_pixels,
+-                bool _shift, bool _alt, bool _ctrl)
+-{
++void term_mouse_down(struct terminal *term, int button, int row, int col,
++                     int row_pixels, int col_pixels,
++                     bool _shift, bool _alt, bool _ctrl) {
+     /* Map libevent button event code to X button number */
+     int xbutton = linux_mouse_button_to_x(button);
+     if (xbutton == -1)
+@@ -3485,7 +3356,6 @@ term_mouse_down(struct terminal *term, int button, int row, int col,
+     if (encoded == -1)
+         return;
+ 
+-
+     bool has_focus = term->kbd_focus;
+     bool shift = has_focus ? _shift : false;
+     bool alt = has_focus ? _alt : false;
+@@ -3510,11 +3380,9 @@ term_mouse_down(struct terminal *term, int button, int row, int col,
+     }
+ }
+ 
+-void
+-term_mouse_up(struct terminal *term, int button, int row, int col,
+-              int row_pixels, int col_pixels,
+-              bool _shift, bool _alt, bool _ctrl)
+-{
++void term_mouse_up(struct terminal *term, int button, int row, int col,
++                   int row_pixels, int col_pixels,
++                   bool _shift, bool _alt, bool _ctrl) {
+     /* Map libevent button event code to X button number */
+     int xbutton = linux_mouse_button_to_x(button);
+     if (xbutton == -1)
+@@ -3553,11 +3421,9 @@ term_mouse_up(struct terminal *term, int button, int row, int col,
+     }
+ }
+ 
+-void
+-term_mouse_motion(struct terminal *term, int button, int row, int col,
+-                  int row_pixels, int col_pixels,
+-                  bool _shift, bool _alt, bool _ctrl)
+-{
++void term_mouse_motion(struct terminal *term, int button, int row, int col,
++                       int row_pixels, int col_pixels,
++                       bool _shift, bool _alt, bool _ctrl) {
+     int encoded = 0;
+ 
+     if (button != 0) {
+@@ -3570,7 +3436,7 @@ term_mouse_motion(struct terminal *term, int button, int row, int col,
+         if (encoded == -1)
+             return;
+     } else
+-        encoded = 3;  /* "released" */
++        encoded = 3; /* "released" */
+ 
+     bool has_focus = term->kbd_focus;
+     bool shift = has_focus ? _shift : false;
+@@ -3601,9 +3467,7 @@ term_mouse_motion(struct terminal *term, int button, int row, int col,
+     }
+ }
+ 
+-void
+-term_xcursor_update_for_seat(struct terminal *term, struct seat *seat)
+-{
++void term_xcursor_update_for_seat(struct terminal *term, struct seat *seat) {
+     enum cursor_shape shape = CURSOR_SHAPE_NONE;
+ 
+     switch (term->active_surface) {
+@@ -3612,10 +3476,9 @@ term_xcursor_update_for_seat(struct terminal *term, struct seat *seat)
+             shape = CURSOR_SHAPE_HIDDEN;
+ 
+         else if (cursor_string_to_server_shape(
+-            term->mouse_user_cursor,
+-            term->wl->shape_manager_version) != 0 ||
+-                 render_xcursor_is_valid(seat, term->mouse_user_cursor))
+-        {
++                     term->mouse_user_cursor,
++                     term->wl->shape_manager_version) != 0 ||
++                 render_xcursor_is_valid(seat, term->mouse_user_cursor)) {
+             shape = CURSOR_SHAPE_CUSTOM;
+         }
+ 
+@@ -3651,16 +3514,12 @@ term_xcursor_update_for_seat(struct terminal *term, struct seat *seat)
+     render_xcursor_set(seat, term, shape);
+ }
+ 
+-void
+-term_xcursor_update(struct terminal *term)
+-{
++void term_xcursor_update(struct terminal *term) {
+     tll_foreach(term->wl->seats, it)
+         term_xcursor_update_for_seat(term, &it->item);
+ }
+ 
+-void
+-term_set_window_title(struct terminal *term, const char *title)
+-{
++void term_set_window_title(struct terminal *term, const char *title) {
+     if (term->conf->locked_title && term->window_title_has_been_set)
+         return;
+ 
+@@ -3680,9 +3539,7 @@ term_set_window_title(struct terminal *term, const char *title)
+     term->window_title_has_been_set = true;
+ }
+ 
+-void
+-term_set_app_id(struct terminal *term, const char *app_id)
+-{
++void term_set_app_id(struct terminal *term, const char *app_id) {
+     if (app_id != NULL && *app_id == '\0')
+         app_id = NULL;
+ 
+@@ -3721,8 +3578,7 @@ term_set_app_id(struct terminal *term, const char *app_id)
+ }
+ 
+ const char *
+-term_icon(const struct terminal *term)
+-{
++term_icon(const struct terminal *term) {
+     const char *app_id =
+         term->app_id != NULL ? term->app_id : term->conf->app_id;
+ 
+@@ -3731,15 +3587,13 @@ term_icon(const struct terminal *term)
+ term->window_icon != NULL
+         ? term->window_icon
+         :
+-        #endif
++#endif
+         streq(app_id, "footclient")
+             ? "foot"
+             : app_id;
+ }
+ 
+-void
+-term_flash(struct terminal *term, unsigned duration_ms)
+-{
++void term_flash(struct terminal *term, unsigned duration_ms) {
+     LOG_DBG("FLASH for %ums", duration_ms);
+ 
+     struct itimerspec alarm = {
+@@ -3753,9 +3607,7 @@ term_flash(struct terminal *term, unsigned duration_ms)
+     }
+ }
+ 
+-void
+-term_bell(struct terminal *term)
+-{
++void term_bell(struct terminal *term) {
+ 
+     if (!term->bell_action_enabled)
+         return;
+@@ -3777,19 +3629,18 @@ term_bell(struct terminal *term)
+ 
+     if (term->conf->bell.notify) {
+         notify_notify(term, &(struct notification){
+-            .title = xstrdup("Bell"),
+-            .body = xstrdup("Bell in terminal"),
+-            .expire_time = -1,
+-            .focus = true,
+-        });
++                                .title = xstrdup("Bell"),
++                                .body = xstrdup("Bell in terminal"),
++                                .expire_time = -1,
++                                .focus = true,
++                            });
+     }
+ 
+     if (term->conf->bell.flash)
+         term_flash(term, 100);
+ 
+     if ((term->conf->bell.command.argv.args != NULL) &&
+-        (!term->kbd_focus || term->conf->bell.command_focused))
+-    {
++        (!term->kbd_focus || term->conf->bell.command_focused)) {
+         int devnull = open("/dev/null", O_RDONLY);
+         spawn(term->reaper, NULL, term->conf->bell.command.argv.args,
+               devnull, -1, -1, NULL, NULL, NULL);
+@@ -3799,31 +3650,25 @@ term_bell(struct terminal *term)
+     }
+ }
+ 
+-bool
+-term_spawn_new(const struct terminal *term)
+-{
++bool term_spawn_new(const struct terminal *term) {
+     return spawn(
+-        term->reaper, term->cwd, (char *const []){term->foot_exe, NULL},
+-        -1, -1, -1, NULL, NULL, NULL) >= 0;
++               term->reaper, term->cwd, (char *const[]){term->foot_exe, NULL},
++               -1, -1, -1, NULL, NULL, NULL) >= 0;
+ }
+ 
+-void
+-term_enable_app_sync_updates(struct terminal *term)
+-{
++void term_enable_app_sync_updates(struct terminal *term) {
+     term->render.app_sync_updates.enabled = true;
+ 
+     if (timerfd_settime(
+             term->render.app_sync_updates.timer_fd, 0,
+-            &(struct itimerspec){.it_value = {.tv_sec = 1}}, NULL) < 0)
+-    {
++            &(struct itimerspec){.it_value = {.tv_sec = 1}}, NULL) < 0) {
+         LOG_ERR("failed to arm timer for application synchronized updates");
+     }
+ 
+     /* Disable pending refresh *iff* the grid is the *only* thing
+      * scheduled to be re-rendered */
+     if (!term->render.refresh.csd && !term->render.refresh.search &&
+-        !term->render.pending.csd && !term->render.pending.search)
+-    {
++        !term->render.pending.csd && !term->render.pending.search) {
+         term->render.refresh.grid = false;
+         term->render.pending.grid = false;
+     }
+@@ -3838,9 +3683,7 @@ term_enable_app_sync_updates(struct terminal *term)
+     term->delayed_render_timer.is_armed = false;
+ }
+ 
+-void
+-term_disable_app_sync_updates(struct terminal *term)
+-{
++void term_disable_app_sync_updates(struct terminal *term) {
+     if (!term->render.app_sync_updates.enabled)
+         return;
+ 
+@@ -3854,8 +3697,7 @@ term_disable_app_sync_updates(struct terminal *term)
+ }
+ 
+ static inline void
+-print_linewrap(struct terminal *term)
+-{
++print_linewrap(struct terminal *term) {
+     if (likely(!term->grid->cursor.lcf)) {
+         /* Not and end of line */
+         return;
+@@ -3883,8 +3725,7 @@ print_linewrap(struct terminal *term)
+ }
+ 
+ static inline void
+-print_insert(struct terminal *term, int width)
+-{
++print_insert(struct terminal *term, int width) {
+     if (likely(!term->insert_mode))
+         return;
+ 
+@@ -3904,8 +3745,7 @@ print_insert(struct terminal *term, int width)
+ }
+ 
+ static void
+-print_spacer(struct terminal *term, int col, int remaining)
+-{
++print_spacer(struct terminal *term, int col, int remaining) {
+     struct grid *grid = term->grid;
+     struct row *row = grid->cur_row;
+     struct cell *cell = &row->cells[col];
+@@ -3926,18 +3766,16 @@ print_spacer(struct terminal *term, int col, int remaining)
+  * Limitations:
+  *   - double width characters not supported
+  */
+-void
+-term_fill(struct terminal *term, int r, int c, uint8_t data, size_t count,
+-    bool use_sgr_attrs)
+-{
++void term_fill(struct terminal *term, int r, int c, uint8_t data, size_t count,
++               bool use_sgr_attrs) {
+     struct row *row = grid_row(term->grid, r);
+     row->dirty = true;
+ 
+     xassert(c + count <= term->cols);
+ 
+     struct attributes attrs = use_sgr_attrs
+-        ? term->vt.attrs
+-        : (struct attributes){0};
++                                  ? term->vt.attrs
++                                  : (struct attributes){0};
+ 
+     const struct cell *last = &row->cells[c + count];
+     for (struct cell *cell = &row->cells[c]; cell < last; cell++) {
+@@ -3960,8 +3798,7 @@ term_fill(struct terminal *term, int r, int c, uint8_t data, size_t count,
+ 
+         if (unlikely(use_sgr_attrs &&
+                      (term->vt.underline.style > UNDERLINE_SINGLE ||
+-                      term->vt.underline.color_src != COLOR_DEFAULT)))
+-        {
++                      term->vt.underline.color_src != COLOR_DEFAULT))) {
+             grid_row_underline_range_put(row, c, term->vt.underline);
+         }
+     }
+@@ -3971,8 +3808,7 @@ term_fill(struct terminal *term, int r, int c, uint8_t data, size_t count,
+             grid_row_uri_range_erase(row, c, c + count - 1);
+ 
+         if (likely(term->vt.underline.style <= UNDERLINE_SINGLE &&
+-                   term->vt.underline.color_src == COLOR_DEFAULT))
+-        {
++                   term->vt.underline.color_src == COLOR_DEFAULT)) {
+             /* No extended/styled underlines active, so erase any such
+                attributes at the target columns */
+             grid_row_underline_range_erase(row, c, c + count - 1);
+@@ -3980,16 +3816,13 @@ term_fill(struct terminal *term, int r, int c, uint8_t data, size_t count,
+     }
+ }
+ 
+-void
+-term_print(struct terminal *term, char32_t wc, int width, bool insert_mode_disable)
+-{
++void term_print(struct terminal *term, char32_t wc, int width, bool insert_mode_disable) {
+     xassert(width > 0);
+ 
+     struct grid *grid = term->grid;
+ 
+     if (unlikely(term->charsets.set[term->charsets.selected] == CHARSET_GRAPHIC) &&
+-        wc >= 0x60 && wc <= 0x7e)
+-    {
++        wc >= 0x60 && wc <= 0x7e) {
+         /* 0x60 - 0x7e */
+         static const char32_t vt100_0[] = {
+             U'◆', U'▒', U'␉', U'␌', U'␍', U'␊', U'°', U'±', /* ` - g */
+@@ -4009,8 +3842,7 @@ term_print(struct terminal *term, char32_t wc, int width, bool insert_mode_disab
+     int col = grid->cursor.point.col;
+ 
+     if (unlikely(width > 1) && likely(term->auto_margin) &&
+-        col + width > term->cols)
+-    {
++        col + width > term->cols) {
+         /* Multi-column character that doesn't fit on current line -
+          * pad with spacers */
+         for (size_t i = col; i < term->cols; i++)
+@@ -4051,8 +3883,7 @@ term_print(struct terminal *term, char32_t wc, int width, bool insert_mode_disab
+         grid_row_uri_range_erase(row, col, col + width - 1);
+ 
+     if (unlikely(term->vt.underline.style > UNDERLINE_SINGLE ||
+-                 term->vt.underline.color_src != COLOR_DEFAULT))
+-    {
++                 term->vt.underline.color_src != COLOR_DEFAULT)) {
+         grid_row_underline_range_put(row, col, term->vt.underline);
+     } else if (row->extra != NULL)
+         grid_row_underline_range_erase(row, col, col + width - 1);
+@@ -4076,14 +3907,12 @@ term_print(struct terminal *term, char32_t wc, int width, bool insert_mode_disab
+ }
+ 
+ static void
+-ascii_printer_generic(struct terminal *term, char32_t wc)
+-{
++ascii_printer_generic(struct terminal *term, char32_t wc) {
+     term_print(term, wc, 1, false);
+ }
+ 
+ static void
+-ascii_printer_fast(struct terminal *term, char32_t wc)
+-{
++ascii_printer_fast(struct terminal *term, char32_t wc) {
+     struct grid *grid = term->grid;
+ 
+     xassert(term->charsets.set[term->charsets.selected] == CHARSET_ASCII);
+@@ -4121,8 +3950,7 @@ ascii_printer_fast(struct terminal *term, char32_t wc)
+ }
+ 
+ static void
+-ascii_printer_single_shift(struct terminal *term, char32_t wc)
+-{
++ascii_printer_single_shift(struct terminal *term, char32_t wc) {
+     ascii_printer_generic(term, wc);
+     term->charsets.selected = term->charsets.saved;
+ 
+@@ -4131,9 +3959,7 @@ ascii_printer_single_shift(struct terminal *term, char32_t wc)
+     term_update_ascii_printer(term);
+ }
+ 
+-void
+-term_update_ascii_printer(struct terminal *term)
+-{
++void term_update_ascii_printer(struct terminal *term) {
+     _Static_assert(sizeof(term->bits_affecting_ascii_printer) == sizeof(uint8_t), "bad size");
+ 
+     void (*new_printer)(struct terminal *term, char32_t wc) =
+@@ -4152,9 +3978,7 @@ term_update_ascii_printer(struct terminal *term)
+     term->ascii_printer = new_printer;
+ }
+ 
+-void
+-term_single_shift(struct terminal *term, enum charset_designator idx)
+-{
++void term_single_shift(struct terminal *term, enum charset_designator idx) {
+     term->charsets.saved = term->charsets.selected;
+     term->charsets.selected = idx;
+     term->ascii_printer = &ascii_printer_single_shift;
+@@ -4162,8 +3986,7 @@ term_single_shift(struct terminal *term, enum charset_designator idx)
+ 
+ #if defined(FOOT_GRAPHEME_CLUSTERING)
+ static int
+-emoji_vs_compare(const void *_key, const void *_entry)
+-{
++emoji_vs_compare(const void *_key, const void *_entry) {
+     const struct emoji_vs *key = _key;
+     const struct emoji_vs *entry = _entry;
+ 
+@@ -4177,8 +4000,7 @@ emoji_vs_compare(const void *_key, const void *_entry)
+         return 0;
+ }
+ 
+-UNITTEST
+-{
++UNITTEST {
+     /* Verify the emoji_vs list is sorted */
+     int64_t last_end = -1;
+ 
+@@ -4192,9 +4014,7 @@ UNITTEST
+ }
+ #endif
+ 
+-void
+-term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+-{
++void term_process_and_print_non_ascii(struct terminal *term, char32_t wc) {
+     int width = c32width(wc);
+     bool insert_mode_disable = false;
+     const bool grapheme_clustering = term->grapheme_shaping;
+@@ -4205,8 +4025,7 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+ 
+     if (term->grid->cursor.point.col > 0 &&
+         (grapheme_clustering ||
+-         (!grapheme_clustering && width == 0 && wc >= 0x300)))
+-    {
++         (!grapheme_clustering && width == 0 && wc >= 0x300))) {
+         int col = term->grid->cursor.point.col;
+         if (!term->grid->cursor.lcf)
+             col--;
+@@ -4223,8 +4042,8 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+         /* Is base cell already a cluster? */
+         const struct composed *composed =
+             (base >= CELL_COMB_CHARS_LO && base <= CELL_COMB_CHARS_HI)
+-            ? composed_lookup(term->composed, base - CELL_COMB_CHARS_LO)
+-            : NULL;
++                ? composed_lookup(term->composed, base - CELL_COMB_CHARS_LO)
++                : NULL;
+ 
+         uint32_t key;
+ 
+@@ -4239,8 +4058,7 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+         if (grapheme_clustering) {
+             /* Check if we're on a grapheme cluster break */
+             if (utf8proc_grapheme_break_stateful(
+-                    last, wc, &term->vt.grapheme_state))
+-            {
++                    last, wc, &term->vt.grapheme_state)) {
+                 term_reset_grapheme_state(term);
+                 goto out;
+             }
+@@ -4259,10 +4077,10 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+                 bool pre_from_primary;
+ 
+                 char32_t precomposed = term->fonts[0] != NULL
+-                    ? fcft_precompose(
+-                        term->fonts[0], base, wc, &base_from_primary,
+-                        &comb_from_primary, &pre_from_primary)
+-                    : (char32_t)-1;
++                                           ? fcft_precompose(
++                                                 term->fonts[0], base, wc, &base_from_primary,
++                                                 &comb_from_primary, &pre_from_primary)
++                                           : (char32_t)-1;
+ 
+                 int precomposed_width = c32width(precomposed);
+ 
+@@ -4280,8 +4098,7 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+                     precomposed_width == base_width &&
+                     (pre_from_primary ||
+                      !base_from_primary ||
+-                     !comb_from_primary))
+-                {
++                     !comb_from_primary)) {
+                     wc = precomposed;
+                     width = precomposed_width;
+                     term_reset_grapheme_state(term);
+@@ -4324,8 +4141,7 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+             }
+ 
+             if (unlikely(term->composed_count >=
+-                         (CELL_COMB_CHARS_HI - CELL_COMB_CHARS_LO)))
+-            {
++                         (CELL_COMB_CHARS_HI - CELL_COMB_CHARS_LO))) {
+                 /* We reached our maximum number of allowed composed
+                  * character chains. Fall through here and print the
+                  * current zero-width character to the current cell */
+@@ -4363,8 +4179,7 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+                 /* Handle VS-15 and VS-16 variation selectors */
+                 if (unlikely(grapheme_clustering &&
+                              (wc == 0xfe0e || wc == 0xfe0f) &&
+-                             new_cc->count == 2))
+-                {
++                             new_cc->count == 2)) {
+                     const struct emoji_vs *vs =
+                         bsearch(
+                             &(struct emoji_vs){.start = new_cc->chars[0]},
+@@ -4408,15 +4223,13 @@ term_process_and_print_non_ascii(struct terminal *term, char32_t wc)
+     } else
+         term_reset_grapheme_state(term);
+ 
+-
+ out:
+     if (width > 0)
+         term_print(term, wc, width, insert_mode_disable);
+ }
+ 
+ enum term_surface
+-term_surface_kind(const struct terminal *term, const struct wl_surface *surface)
+-{
++term_surface_kind(const struct terminal *term, const struct wl_surface *surface) {
+     if (likely(surface == term->window->surface.surf))
+         return TERM_SURF_GRID;
+     else if (surface == term->window->csd.surface[CSD_SURF_TITLE].surface.surf)
+@@ -4441,8 +4254,7 @@ term_surface_kind(const struct terminal *term, const struct wl_surface *surface)
+ 
+ static bool
+ rows_to_text(const struct terminal *term, int start, int end,
+-             int col_start, int col_end, char **text, size_t *len)
+-{
++             int col_start, int col_end, char **text, size_t *len) {
+     struct extraction_context *ctx = extract_begin(SELECTION_NONE, true);
+     if (ctx == NULL)
+         return false;
+@@ -4474,9 +4286,7 @@ out:
+     return extract_finish(ctx, text, len);
+ }
+ 
+-bool
+-term_scrollback_to_text(const struct terminal *term, char **text, size_t *len)
+-{
++bool term_scrollback_to_text(const struct terminal *term, char **text, size_t *len) {
+     const int grid_rows = term->grid->num_rows;
+     int start = (term->grid->offset + term->rows) & (grid_rows - 1);
+     int end = (term->grid->offset + term->rows - 1) & (grid_rows - 1);
+@@ -4502,17 +4312,13 @@ term_scrollback_to_text(const struct terminal *term, char **text, size_t *len)
+     return rows_to_text(term, start, end, 0, term->cols, text, len);
+ }
+ 
+-bool
+-term_view_to_text(const struct terminal *term, char **text, size_t *len)
+-{
++bool term_view_to_text(const struct terminal *term, char **text, size_t *len) {
+     int start = grid_row_absolute_in_view(term->grid, 0);
+     int end = grid_row_absolute_in_view(term->grid, term->rows - 1);
+     return rows_to_text(term, start, end, 0, term->cols, text, len);
+ }
+ 
+-bool
+-term_command_output_to_text(const struct terminal *term, char **text, size_t *len)
+-{
++bool term_command_output_to_text(const struct terminal *term, char **text, size_t *len) {
+     int start_row = -1;
+     int end_row = -1;
+     int start_col = -1;
+@@ -4594,9 +4400,7 @@ term_command_output_to_text(const struct terminal *term, char **text, size_t *le
+     return true;
+ }
+ 
+-bool
+-term_ime_is_enabled(const struct terminal *term)
+-{
++bool term_ime_is_enabled(const struct terminal *term) {
+ #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+     return term->ime_enabled;
+ #else
+@@ -4604,9 +4408,7 @@ term_ime_is_enabled(const struct terminal *term)
+ #endif
+ }
+ 
+-void
+-term_ime_enable(struct terminal *term)
+-{
++void term_ime_enable(struct terminal *term) {
+ #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+     if (term->ime_enabled)
+         return;
+@@ -4623,9 +4425,7 @@ term_ime_enable(struct terminal *term)
+ #endif
+ }
+ 
+-void
+-term_ime_disable(struct terminal *term)
+-{
++void term_ime_disable(struct terminal *term) {
+ #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+     if (!term->ime_enabled)
+         return;
+@@ -4642,9 +4442,7 @@ term_ime_disable(struct terminal *term)
+ #endif
+ }
+ 
+-bool
+-term_ime_reset(struct terminal *term)
+-{
++bool term_ime_reset(struct terminal *term) {
+     bool at_least_one_seat_was_reset = false;
+ 
+ #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+@@ -4662,10 +4460,8 @@ term_ime_reset(struct terminal *term)
+     return at_least_one_seat_was_reset;
+ }
+ 
+-void
+-term_ime_set_cursor_rect(struct terminal *term, int x, int y, int width,
+-                         int height)
+-{
++void term_ime_set_cursor_rect(struct terminal *term, int x, int y, int width,
++                              int height) {
+ #if defined(FOOT_IME_ENABLED) && FOOT_IME_ENABLED
+     tll_foreach(term->wl->seats, it) {
+         if (it->item.kbd_focus == term) {
+@@ -4678,9 +4474,7 @@ term_ime_set_cursor_rect(struct terminal *term, int x, int y, int width,
+ #endif
+ }
+ 
+-void
+-term_osc8_open(struct terminal *term, uint64_t id, const char *uri)
+-{
++void term_osc8_open(struct terminal *term, uint64_t id, const char *uri) {
+     term_osc8_close(term);
+     xassert(term->vt.osc8.uri == NULL);
+ 
+@@ -4691,9 +4485,7 @@ term_osc8_open(struct terminal *term, uint64_t id, const char *uri)
+     term_update_ascii_printer(term);
+ }
+ 
+-void
+-term_osc8_close(struct terminal *term)
+-{
++void term_osc8_close(struct terminal *term) {
+     free(term->vt.osc8.uri);
+     term->vt.osc8.uri = NULL;
+     term->vt.osc8.id = 0;
+@@ -4701,37 +4493,29 @@ term_osc8_close(struct terminal *term)
+     term_update_ascii_printer(term);
+ }
+ 
+-void
+-term_set_user_mouse_cursor(struct terminal *term, const char *cursor)
+-{
++void term_set_user_mouse_cursor(struct terminal *term, const char *cursor) {
+     free(term->mouse_user_cursor);
+     term->mouse_user_cursor = cursor != NULL && strlen(cursor) > 0
+-        ? xstrdup(cursor)
+-        : NULL;
++                                  ? xstrdup(cursor)
++                                  : NULL;
+     term_xcursor_update(term);
+ }
+ 
+-void
+-term_enable_size_notifications(struct terminal *term)
+-{
++void term_enable_size_notifications(struct terminal *term) {
+     /* Note: always send current size upon activation, regardless of
+        previous state */
+     term->size_notifications = true;
+     term_send_size_notification(term);
+ }
+ 
+-void
+-term_disable_size_notifications(struct terminal *term)
+-{
++void term_disable_size_notifications(struct terminal *term) {
+     if (!term->size_notifications)
+         return;
+ 
+     term->size_notifications = false;
+ }
+ 
+-void
+-term_send_size_notification(struct terminal *term)
+-{
++void term_send_size_notification(struct terminal *term) {
+     if (!term->size_notifications)
+         return;
+ 
+@@ -4745,9 +4529,7 @@ term_send_size_notification(struct terminal *term)
+     term_to_slave(term, buf, n);
+ }
+ 
+-void
+-term_theme_switch_to_dark(struct terminal *term)
+-{
++void term_theme_switch_to_dark(struct terminal *term) {
+     if (term->colors.active_theme == COLOR_THEME_DARK)
+         return;
+ 
+@@ -4765,9 +4547,7 @@ term_theme_switch_to_dark(struct terminal *term)
+     render_refresh(term);
+ }
+ 
+-void
+-term_theme_switch_to_light(struct terminal *term)
+-{
++void term_theme_switch_to_light(struct terminal *term) {
+     if (term->colors.active_theme == COLOR_THEME_LIGHT)
+         return;
+ 
+@@ -4785,9 +4565,7 @@ term_theme_switch_to_light(struct terminal *term)
+     render_refresh(term);
+ }
+ 
+-void
+-term_theme_toggle(struct terminal *term)
+-{
++void term_theme_toggle(struct terminal *term) {
+     if (term->colors.active_theme == COLOR_THEME_DARK) {
+         term_theme_apply(term, &term->conf->colors_light);
+         term->colors.active_theme = COLOR_THEME_LIGHT;
+diff --git a/xmalloc.c b/xmalloc.c
+index ccfb5c4..7a218b3 100644
+--- a/xmalloc.c
++++ b/xmalloc.c
+@@ -4,68 +4,103 @@
+ #include "xmalloc.h"
+ #include "debug.h"
+ 
+-static void *
+-check_alloc(void *alloc)
+-{
+-    if (unlikely(alloc == NULL)) {
++#if defined(MIMALLOC)
++#include <mimalloc.h>
++#define XMALLOC_PREFIX mi_
++#else
++#define XMALLOC_PREFIX
++#endif
++
++static inline void *
++check_alloc(void *ptr) {
++    if (unlikely(ptr == NULL)) {
+         FATAL_ERROR(__func__, ENOMEM);
+     }
+-    return alloc;
++    return ptr;
+ }
+ 
+ void *
+-xmalloc(size_t size)
+-{
+-    if (unlikely(size == 0)) {
++xmalloc(size_t size) {
++    if (unlikely(size == 0))
+         size = 1;
+-    }
++#if defined(MIMALLOC)
++    return check_alloc(mi_malloc(size));
++#else
+     return check_alloc(malloc(size));
++#endif
+ }
+ 
+ void *
+-xcalloc(size_t nmemb, size_t size)
+-{
+-    xassert(size != 0);
+-    return check_alloc(calloc(likely(nmemb) ? nmemb : 1, size));
++xcalloc(size_t nmemb, size_t size) {
++    if (unlikely(nmemb == 0 || size == 0)) {
++        nmemb = 1;
++        size = 1;
++    }
++#if defined(MIMALLOC)
++    return check_alloc(mi_calloc(nmemb, size));
++#else
++    return check_alloc(calloc(nmemb, size));
++#endif
+ }
+ 
+ void *
+-xrealloc(void *ptr, size_t size)
+-{
+-    xassert(size != 0);
+-    void *alloc = realloc(ptr, size);
+-    return check_alloc(alloc);
++xrealloc(void *ptr, size_t size) {
++    if (unlikely(size == 0))
++        size = 1;
++#if defined(MIMALLOC)
++    return check_alloc(mi_realloc(ptr, size));
++#else
++    return check_alloc(realloc(ptr, size));
++#endif
+ }
+ 
+-void *
+-xreallocarray(void *ptr, size_t n, size_t size)
+-{
+-    xassert(n != 0 && size != 0);
+-    void *alloc = reallocarray(ptr, n, size);
+-    return check_alloc(alloc);
++inline void *
++xreallocarray(void *ptr, size_t n, size_t size) {
++    if (unlikely(n == 0 || size == 0)) {
++        n = 1;
++        size = 1;
++    }
++#if defined(MIMALLOC)
++    return check_alloc(mi_reallocarray(ptr, n, size));
++#else
++    return check_alloc(reallocarray(ptr, n, size));
++#endif
++}
++
++inline void xfree(void *ptr) {
++    if (unlikely(ptr == NULL))
++        return;
++#if defined(MIMALLOC)
++    mi_free(ptr);
++#else
++    free(ptr);
++#endif
+ }
+ 
+ char *
+-xstrdup(const char *str)
+-{
+-    return check_alloc(strdup(str));
++xstrdup(const char *s) {
++#if defined(MIMALLOC)
++    return check_alloc(mi_strdup(s));
++#else
++    return check_alloc(strdup(s));
++#endif
+ }
+ 
+ char *
+-xstrndup(const char *str, size_t n)
+-{
+-    return check_alloc(strndup(str, n));
++xstrndup(const char *s, size_t n) {
++#if defined(MIMALLOC)
++    return check_alloc(mi_strndup(s, n));
++#else
++    return check_alloc(strndup(s, n));
++#endif
+ }
+ 
+-char32_t *
+-xc32dup(const char32_t *str)
+-{
++inline char32_t *
++xc32dup(const char32_t *str) {
+     return check_alloc(c32dup(str));
+ }
+ 
+-static VPRINTF(2) int
+-xvasprintf_(char **strp, const char *format, va_list ap)
+-{
++static VPRINTF(2) int xvasprintf_(char **strp, const char *format, va_list ap) {
+     va_list ap2;
+     va_copy(ap2, ap);
+     int n = vsnprintf(NULL, 0, format, ap2);
+@@ -78,19 +113,26 @@ xvasprintf_(char **strp, const char *format, va_list ap)
+ }
+ 
+ char *
+-xvasprintf(const char *format, va_list ap)
+-{
++xvasprintf(const char *format, va_list ap) {
+     char *str;
+     xvasprintf_(&str, format, ap);
+     return str;
+ }
+ 
+ char *
+-xasprintf(const char *format, ...)
+-{
++xasprintf(const char *format, ...) {
+     va_list ap;
+     va_start(ap, format);
+     char *str = xvasprintf(format, ap);
+     va_end(ap);
+     return str;
+ }
++
++inline void xtrim(void) {
++#if defined(MIMALLOC)
++    mi_collect(true);
++#elif defined(__GLIBC__)
++    if (!malloc_trim(0))
++        LOG_WARN("malloc_trim(0) failed");
++#endif
++}
+diff --git a/xmalloc.h b/xmalloc.h
+index 03e6eb0..e4db3ee 100644
+--- a/xmalloc.h
++++ b/xmalloc.h
+@@ -9,6 +9,11 @@
+ #include "char32.h"
+ #include "macros.h"
+ 
++#define ALLOCATOR_STOCK 0
++#define ALLOCATOR_MIMALLOC 1
++#define ALLOCATOR_JEMALLOC 2
++void xtrim(void);
++void xfree(void *ptr);
+ void *xmalloc(size_t size) XMALLOC;
+ void *xcalloc(size_t nmemb, size_t size) XMALLOC;
+ void *xrealloc(void *ptr, size_t size);
+@@ -20,14 +25,12 @@ char *xvasprintf(const char *format, va_list va) VPRINTF(1) XMALLOC;
+ char32_t *xc32dup(const char32_t *str) XSTRDUP;
+ 
+ static inline void *
+-xmemdup(const void *ptr, size_t size)
+-{
++xmemdup(const void *ptr, size_t size) {
+     return memcpy(xmalloc(size), ptr, size);
+ }
+ 
+ static inline char *
+-xstrjoin(const char *s1, const char *s2)
+-{
++xstrjoin(const char *s1, const char *s2) {
+     size_t n1 = strlen(s1);
+     size_t n2 = strlen(s2);
+     char *joined = xmalloc(n1 + n2 + 1);
+@@ -37,8 +40,7 @@ xstrjoin(const char *s1, const char *s2)
+ }
+ 
+ static inline char *
+-xstrjoin3(const char *s1, const char *s2, const char *s3)
+-{
++xstrjoin3(const char *s1, const char *s2, const char *s3) {
+     size_t n1 = strlen(s1);
+     size_t n2 = strlen(s2);
+     size_t n3 = strlen(s3);
+

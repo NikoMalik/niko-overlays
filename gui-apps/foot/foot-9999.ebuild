@@ -11,7 +11,7 @@ if [[ ${PV} != *9999* ]]; then
 	S="${WORKDIR}/${PN}"
 else
 	inherit git-r3
-	EGIT_REPO_URI="https://github.com/NikoMalik/foot.git"
+	EGIT_REPO_URI="https://codeberg.org/dnkl/foot.git"
 fi
 
 BUILD_DIR="${S}/build"
@@ -81,7 +81,8 @@ pkg_setup() {
 }
 
 src_prepare() {
-	# eapply "${FILESDIR}/rss.patch"
+	eapply "${FILESDIR}/rss.patch"
+	eapply "${FILESDIR}/mimalloc.patch"
 	default
 	python_fix_shebang ./scripts
 }
