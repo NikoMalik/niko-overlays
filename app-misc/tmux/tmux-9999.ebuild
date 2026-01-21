@@ -20,12 +20,12 @@ fi
 
 LICENSE="ISC"
 SLOT="0"
-IUSE="debug jemalloc selinux sixel systemd utempter vim-syntax"
+IUSE="debug +mimalloc selinux sixel systemd utempter vim-syntax"
 
 DEPEND="
 	dev-libs/libevent:=
 	sys-libs/ncurses:=
-	jemalloc? ( dev-libs/jemalloc:= )
+	mimalloc? ( dev-libs/mimalloc:= )
 	systemd? ( sys-apps/systemd:= )
 	utempter? ( sys-libs/libutempter )
 	kernel_Darwin? ( dev-libs/libutf8proc:= )
@@ -51,9 +51,10 @@ QA_CONFIG_IMPL_DECL_SKIP=(
 
 DOCS=( CHANGES README )
 
-# PATCHES=(
-# 	"${FILESDIR}"/${PN}-2.4-flags.patch
-# )
+PATCHES=(
+	"${FILESDIR}"/${PN}-flags.patch
+	"${FILESDIR}"/${PN}-mimalloc.patch
+)
 
 src_prepare() {
 	default
@@ -68,7 +69,7 @@ src_configure() {
 	local myeconfargs=(
 		--sysconfdir="${EPREFIX}"/etc
 		$(use_enable debug)
-		$(use_enable jemalloc)
+		$(use_enable mimalloc)
 		$(use_enable sixel)
 		$(use_enable systemd)
 		$(use_enable utempter)
