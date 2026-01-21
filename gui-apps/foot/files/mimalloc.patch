@@ -1,11 +1,17 @@
 diff --git a/meson.build b/meson.build
-index aa8342a..0e94d75 100644
+index aa8342a..fe7657e 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -151,6 +151,22 @@ if utf8proc.found()
+@@ -146,11 +146,29 @@ wayland_cursor = dependency('wayland-cursor')
+ xkb = dependency('xkbcommon', version: '>=1.0.0')
+ fontconfig = dependency('fontconfig')
+ utf8proc = dependency('libutf8proc', required: get_option('grapheme-clustering'))
+ 
+ if utf8proc.found()
    add_project_arguments('-DFOOT_GRAPHEME_CLUSTERING=1', language: 'c')
  endif
  
++
 +mimalloc_opt = get_option('mimalloc')
 +
 +
@@ -21,10 +27,103 @@ index aa8342a..0e94d75 100644
 +  add_project_arguments('-DMIMALLOC=0', language: 'c')
 +endif
 +
-+
  if pixman.version().version_compare('>=0.46.0')
    add_project_arguments('-DHAVE_PIXMAN_RGBA_16', language: 'c')
  endif
+@@ -179,6 +197,7 @@ wl_proto_xml = [
+   wayland_protocols_datadir / 'unstable/tablet/tablet-unstable-v2.xml',  # required by cursor-shape-v1
+   wayland_protocols_datadir / 'staging/cursor-shape/cursor-shape-v1.xml',
+   wayland_protocols_datadir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
+   wayland_protocols_datadir / 'staging/xdg-toplevel-icon/xdg-toplevel-icon-v1.xml',
+   wayland_protocols_datadir / 'staging/xdg-system-bell/xdg-system-bell-v1.xml',
+   wayland_protocols_datadir / 'staging/color-management/color-management-v1.xml',
+@@ -244,7 +263,7 @@ common = static_library(
+   'macros.h',
+   'xmalloc.c', 'xmalloc.h',
+   'xsnprintf.c', 'xsnprintf.h',
+-  dependencies: [utf8proc]
++  dependencies: [utf8proc,mi_dep]
+ )
+ 
+ misc = static_library(
+@@ -253,7 +272,7 @@ misc = static_library(
+   'macros.h',
+   'misc.c', 'misc.h',
+   'uri.c', 'uri.h',
+-  dependencies: [utf8proc],
++  dependencies: [utf8proc,mi_dep],
+   link_with: [common]
+ )
+ 
+@@ -271,7 +290,7 @@ vtlib = static_library(
+   builtin_terminfo, srgb_funcs,
+   wl_proto_src + wl_proto_headers,
+   version,
+-  dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc],
++  dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc,mi_dep],
+   link_with: [common, misc],
+ )
+ 
+@@ -282,14 +301,14 @@ pgolib = static_library(
+   'terminal.c', 'terminal.h',
+   emoji_variation_sequences,
+   wl_proto_src + wl_proto_headers,
+-  dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc],
++  dependencies: [libepoll, pixman, fcft, tllist, wayland_client, xkb, utf8proc,mi_dep],
+   link_with: vtlib,
+ )
+ 
+ tokenize = static_library(
+   'tokenizelib',
+   'tokenize.c',
+-  dependencies: [utf8proc],
++  dependencies: [utf8proc,mi_dep],
+   link_with: [common],
+ )
+ 
+@@ -298,7 +317,7 @@ if get_option('b_pgo') == 'generate'
+     'pgo',
+     'pgo/pgo.c',
+     wl_proto_src + wl_proto_headers,
+-    dependencies: [math, threads, libepoll, pixman, wayland_client, xkb, utf8proc, fcft, tllist],
++    dependencies: [math, threads, libepoll, pixman, wayland_client, xkb, utf8proc, fcft, tllist,mi_dep],
+     link_with: pgolib,
+   )
+ endif
+@@ -323,6 +342,7 @@ executable(
+   'search.c', 'search.h',
+   'server.c', 'server.h', 'client-protocol.h',
+   'shm.c', 'shm.h',
+   'slave.c', 'slave.h',
+   'spawn.c', 'spawn.h',
+   'tokenize.c', 'tokenize.h',
+@@ -333,7 +353,7 @@ executable(
+   'xkbcommon-vmod.h',
+   srgb_funcs, wl_proto_src + wl_proto_headers, version,
+   dependencies: [math, threads, libepoll, pixman, wayland_client, wayland_cursor, xkb, fontconfig, utf8proc,
+-                 tllist, fcft],
++                 tllist, fcft,mi_dep],
+   link_with: pgolib,
+   install: true)
+ 
+@@ -344,7 +364,7 @@ executable(
+   'macros.h',
+   'util.h',
+   version,
+-  dependencies: [tllist, utf8proc],
++  dependencies: [tllist, utf8proc,mi_dep],
+   link_with: common,
+   install: true)
+ 
+@@ -440,6 +460,8 @@ summary(
+     'Default TERM': get_option('default-terminfo'),
+     'Set TERMINFO': get_option('custom-terminfo-install-location') != '',
+     'Build tests': get_option('tests'),
++    'mimalloc': mi_dep.found() ? 'yes' : 'no (system malloc)',
+   },
+   bool_yn: true
+ )
++
 diff --git a/meson_options.txt b/meson_options.txt
 index ab7a07b..9fd4976 100644
 --- a/meson_options.txt
