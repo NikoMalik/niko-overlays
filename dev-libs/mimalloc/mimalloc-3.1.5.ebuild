@@ -31,6 +31,12 @@ src_configure() {
 		-DMI_OPT_ARCH=OFF
 		-DMI_OSX_ZONE=OFF
 	    -DMI_OSX_INTERPOSE=OFF
+
+		
+        # critical: shut mimalloc up
+        -DMI_VERBOSE=0
+        -DMI_SHOW_STATS=0
+        -DMI_SHOW_ERRORS=0
 	)
 
 	mycmakeargs+=("-DCMAKE_C_FLAGS=-DMI_USE_PTHREADS ${CMAKE_C_FLAGS}")
