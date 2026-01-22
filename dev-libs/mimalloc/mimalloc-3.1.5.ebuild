@@ -33,14 +33,25 @@ src_configure() {
 	    -DMI_OSX_INTERPOSE=OFF
 
 		
-        # critical: shut mimalloc up
-        -DMI_VERBOSE=0
-        -DMI_SHOW_STATS=0
-        -DMI_SHOW_ERRORS=0
 	)
 
-	mycmakeargs+=("-DCMAKE_C_FLAGS=-DMI_USE_PTHREADS ${CMAKE_C_FLAGS}")
-    mycmakeargs+=("-DCMAKE_CXX_FLAGS=-DMI_USE_PTHREADS ${CMAKE_CXX_FLAGS}")
+	   mycmakeargs+=(
+        "-DCMAKE_C_FLAGS=${CMAKE_C_FLAGS} \
+            -DMI_USE_PTHREADS \
+            -DMI_VERBOSE=0 \
+            -DMI_SHOW_STATS=0 \
+            -DMI_SHOW_ERRORS=0"
+    )
+
+    mycmakeargs+=(
+        "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS} \
+            -DMI_USE_PTHREADS \
+            -DMI_VERBOSE=0 \
+            -DMI_SHOW_STATS=0 \
+            -DMI_SHOW_ERRORS=0"
+    )
+
+
 
 	cmake-multilib_src_configure
 }
