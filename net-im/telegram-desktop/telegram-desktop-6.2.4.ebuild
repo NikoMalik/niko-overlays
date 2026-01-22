@@ -17,7 +17,7 @@ S="${WORKDIR}/${MY_P}"
 LICENSE="BSD GPL-3-with-openssl-exception LGPL-2+"
 SLOT="0"
 KEYWORDS="amd64 ~loong"
-IUSE="dbus enchant +fonts +libdispatch screencast wayland webkit +X"
+IUSE="dbus enchant +fonts +libdispatch screencast wayland webkit -X +mimalloc"
 
 CDEPEND="
 	!net-im/telegram-desktop-bin
@@ -54,6 +54,8 @@ CDEPEND="
 		x11-libs/libxcb:=
 		x11-libs/xcb-util-keysyms
 	)
+	mimalloc? ( dev-libs/mimalloc:= )
+
 "
 RDEPEND="${CDEPEND}
 	webkit? ( || ( net-libs/webkit-gtk:4.1 net-libs/webkit-gtk:6 ) )
@@ -202,6 +204,12 @@ src_configure() {
 			-DTDESKTOP_API_ID="611335"
 			-DTDESKTOP_API_HASH="d524b414d21f4d37f08684c1df41ac9c"
 		)
+
+		use mimalloc && mycmakeargs+=(
+		-DCMAKE_EXE_LINKER_FLAGS="-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
+		-DCMAKE_SHARED_LINKER_FLAGS="-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
+	)
+
 	fi
 
 	cmake_src_configure
