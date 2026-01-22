@@ -1,0 +1,13 @@
+diff --git a/Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp b/Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp
+index 00d31d321d..2e9191a9c4 100644
+--- a/Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp
++++ b/Telegram/SourceFiles/inline_bots/bot_attach_web_view.cpp
+@@ -1334,7 +1334,7 @@ void WebViewInstance::maybeChooseAndRequestButton(PeerTypes supported) {
+ 
+ void WebViewInstance::show(ShowArgs &&args) {
+   if (!_bot->isFullLoaded()) {
+-    _botFullWaitingArgs.emplace(std::move(args));
++    _botFullWaitingArgs = ShowArgs{};
+     return;
+   }
+   auto title = args.title.isEmpty()
