@@ -814,6 +814,11 @@ cachy_use_config() {
 	kconf set LRU_GEN_ENABLED
 	einfo "lru was set"
 
+	kconf set AUTOFDO_CLANG
+	einfo "CONFIG_AUTO_FDO enabled"
+	kconf set PROPELLER_CLANG
+	einfo "CONFIG_PROPELLER_CLANG enabled"
+
 }
 
 pkg_pretend() {
