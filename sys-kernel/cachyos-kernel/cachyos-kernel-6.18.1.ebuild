@@ -74,7 +74,7 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="bcachefs cfi clang debug +autofdo +propeller +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="bcachefs cfi clang debug autofdo propeller +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
