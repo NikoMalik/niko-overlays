@@ -20,15 +20,16 @@ fi
 
 LICENSE="ISC"
 SLOT="0"
-IUSE="debug +jemalloc selinux sixel systemd utempter vim-syntax"
+IUSE="debug +mimalloc +utf8proc selinux sixel systemd utempter vim-syntax"
 
 DEPEND="
 	dev-libs/libevent:=
 	sys-libs/ncurses:=
-	jemalloc? ( dev-libs/jemalloc:= )
+	mimalloc? ( dev-libs/mimalloc:= )
 	systemd? ( sys-apps/systemd:= )
 	utempter? ( sys-libs/libutempter )
 	kernel_Darwin? ( dev-libs/libutf8proc:= )
+	utf8proc? ( dev-libs/libutf8proc:= )
 "
 
 BDEPEND="
@@ -53,6 +54,7 @@ DOCS=( CHANGES README )
 
 PATCHES=(
 	"${FILESDIR}"/${PN}-flags.patch
+	"${FILESDIR}"/${PN}-mimalloc.patch
 )
 
 src_prepare() {
@@ -68,10 +70,11 @@ src_configure() {
 	local myeconfargs=(
 		--sysconfdir="${EPREFIX}"/etc
 		$(use_enable debug)
-		$(use_enable jemalloc)
+		$(use_enable mimalloc)
 		$(use_enable sixel)
 		$(use_enable systemd)
 		$(use_enable utempter)
+		$(use_enable utf8proc)
 
 		# For now, we only expose this for macOS, because
 		# upstream strongly encourage it. I'm not sure it's
