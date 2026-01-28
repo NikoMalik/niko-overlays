@@ -74,7 +74,7 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="bcachefs cfi clang debug +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="bcachefs cfi clang debug +autofdo +propeller +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
@@ -82,7 +82,7 @@ REQUIRED_USE="
 	polly? ( clang )
 	clang? ( ${LLVM_REQUIRED_USE} )
 "
-
+RDEPEND="autofdo? ( dev-util/perf[libpfm] )"
 # shellcheck disable=SC2016 # we don't want LLVM_SLOT to expand
 BDEPEND="
 	clang? ( $(llvm_gen_dep '
@@ -814,10 +814,18 @@ cachy_use_config() {
 	kconf set LRU_GEN_ENABLED
 	einfo "lru was set"
 
-	kconf set AUTOFDO_CLANG
-	einfo "CONFIG_AUTO_FDO enabled"
-	kconf set PROPELLER_CLANG
-	einfo "CONFIG_PROPELLER_CLANG enabled"
+	if use autofdo; then
+		kconf set AUTOFDO_CLANG
+		einfo "CONFIG_AUTO_FDO enabled"
+	fi
+
+	if use propeller; then
+		kconf set PROPELLER_CLANG
+		einfo "CONFIG_PROPELLER_CLANG enabled"
+	fi
+
+
+
 
 }
 
@@ -879,6 +887,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-mm-branch.patch"
 	eapply "${FILESDIR}/6.18.1-kcompressed.patch"
 	eapply "${FILESDIR}/6.18.1-polly.patch"
+	eapply "${FILESDIR}/6.18.1-autofdo.patch"
 	einfo "Applying local flags"
 
 
@@ -943,4 +952,6 @@ pkg_postinst() {
 	if has_version media-video/v4l2loopback; then
 		elog "v4l2loopback is included in ${CATEGORY}/${PN} - no need for media-video/v4l2loopback"
 	fi
+
+	(use autofdo || use propeller) && ewarn "AutoFDO support build way: https://cachyos.org/blog/2411-kernel-autofdo, and you can check https://github.com/xz-dev/kernel-autofdo-container as example"
 }
