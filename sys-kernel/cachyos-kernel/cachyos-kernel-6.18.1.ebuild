@@ -887,6 +887,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-mm-branch.patch"
 	eapply "${FILESDIR}/6.18.1-kcompressed.patch"
 	eapply "${FILESDIR}/6.18.1-polly.patch"
+	eapply "${FILESDIR}/6.18.1-int-sqrt.patch"
 	einfo "Applying local flags"
 
 
