@@ -889,6 +889,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-polly.patch"
 	eapply "${FILESDIR}/6.18.1-int-sqrt.patch"
 	eapply "${FILESDIR}/6.18.1-reduce-dcache.patch"
+	eapply "${FILESDIR}/6.18.1-bitmap-syscall-audit.patch"
 	einfo "Applying local flags"
 
 
