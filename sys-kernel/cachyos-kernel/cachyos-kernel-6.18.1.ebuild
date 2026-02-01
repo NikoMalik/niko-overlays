@@ -74,7 +74,7 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="bcachefs cfi clang debug autofdo propeller +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="bcachefs cfi clang debug autofdo propeller +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
@@ -806,6 +806,13 @@ cachy_use_config() {
 	if use polly; then
 		kconf set POLLY_CLANG
     fi
+
+	if use bbr; then
+		kconf set TCP_CONG_ADVANCED
+		kconf set TCP_CONG_BBR
+		kconf set NET_SCH_FQ
+		kconf set NET_SCH_FQ_CODEL
+	fi
 
 
 	kconf unset INIT_ON_ALLOC_DEFAULT_ON
