@@ -563,6 +563,7 @@ cachy_use_config() {
 		: "${_use_llvm_lto:=none}"
 	fi
 
+
 	# print cachy config
 	einfo "Selected cachy-config:"
 	einfo "  _cachy_config=${_cachy_config}"
@@ -761,12 +762,10 @@ cachy_use_config() {
 			kconf unset DEFAULT_CUBIC
 			kconf set TCP_CONG_BBR
 			kconf val DEFAULT_TCP_CONG "\"bbr\""
-			if ! use server; then
-				kconf mod NET_SCH_FQ_CODEL
-				kconf set NET_SCH_FQ
-				kconf unset CONFIG_DEFAULT_FQ_CODEL
-				kconf set CONFIG_DEFAULT_FQ
-			fi
+			kconf mod NET_SCH_FQ_CODEL
+			kconf set NET_SCH_FQ
+			kconf unset CONFIG_DEFAULT_FQ_CODEL
+			kconf set CONFIG_DEFAULT_FQ
 			;;
 		no)	;;
 		*) die "Invalid _tcp_bbr3 value: ${_tcp_bbr3}" ;;
@@ -816,7 +815,12 @@ cachy_use_config() {
 	einfo "SCHED_CLUSTER ENABLED"
 
 	kconf set LRU_GEN_ENABLED
+	kconf set LRU_GEN
 	einfo "LRU_GEN_ENABLED enabled"
+
+	kconf unset SLAB_FREELIST_RANDOM
+	kconf unset SLAB_FREELIST_HARDEN
+	einfo "SLAB_RANDOM DISABLED"
 
 	if use autofdo; then
 		kconf set AUTOFDO_CLANG
@@ -918,6 +922,8 @@ src_prepare() {
 		"${dist_conf_path}/6.12+.config"
 		"${T}/cachy-flavour-defaults.config"
 	)
+
+
 	use debug || merge_configs+=(
 		"${dist_conf_path}/no-debug.config"
 	)
