@@ -466,11 +466,6 @@ kconf() {
 
 # config defaults from CachyOS PKGBUILD
 cachy_use_config() {
-	if use bbr; then
-    _tcp_bbr3=yes
-           else
-    _tcp_bbr3=no
-	fi
 	# cachy config vars (only those that make sense in ebuild)
 	# advanced users can override these with package.env
 	case "$(cachy_flavour)" in
@@ -479,7 +474,7 @@ cachy_use_config() {
 			: "${_cpusched:=cachyos}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
@@ -490,7 +485,7 @@ cachy_use_config() {
 			: "${_cpusched:=bmq}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
@@ -501,7 +496,7 @@ cachy_use_config() {
 			: "${_cpusched:=bore}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
@@ -512,7 +507,7 @@ cachy_use_config() {
 			: "${_cpusched:=cachyos}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
@@ -523,7 +518,7 @@ cachy_use_config() {
 			: "${_cpusched:=eevdf}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
@@ -534,7 +529,7 @@ cachy_use_config() {
 			: "${_cpusched:=rt-bore}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
@@ -545,7 +540,7 @@ cachy_use_config() {
 			: "${_cpusched:=eevdf}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
-			# : "${_tcp_bbr3:=no}"
+			: "${_tcp_bbr3:=yes}"
 			: "${_HZ_ticks:=300}"
 			: "${_tickrate:=idle}"
 			: "${_preempt:=none}"
@@ -817,8 +812,11 @@ cachy_use_config() {
 	kconf unset INIT_ON_ALLOC_DEFAULT_ON
 	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
+	kconf set SCHED_CLUSTER
+	einfo "SCHED_CLUSTER ENABLED"
+
 	kconf set LRU_GEN_ENABLED
-	einfo "lru was set"
+	einfo "LRU_GEN_ENABLED enabled"
 
 	if use autofdo; then
 		kconf set AUTOFDO_CLANG
