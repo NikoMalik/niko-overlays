@@ -902,7 +902,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-sk-packets-sock.patch"
 	eapply "${FILESDIR}/6.18.1-scale-net-alloc.patch"
 	eapply "${FILESDIR}/6.18.1-align-dst.patch"
-	eapply "${FILESDIR}/6.18.1-aligh-slab.patch"
+	eapply "${FILESDIR}/6.18.1-align-slab.patch"
 	eapply "${FILESDIR}/6.18.1-ext4.patch"
 	eapply "${FILESDIR}/6.18.1-elf-optimize.patch"
 	eapply "${FILESDIR}/6.18.1-mem_page.patch"
