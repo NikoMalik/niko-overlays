@@ -1,0 +1,13 @@
+diff --git a/include/net/dst.h b/include/net/dst.h
+index f8aa1239b..9bcfa8c3e 100644
+--- a/include/net/dst.h
++++ b/include/net/dst.h
+@@ -70,6 +70,7 @@ struct dst_entry {
+ 	 */
+ #ifdef CONFIG_64BIT
+ 	rcuref_t		__rcuref;	/* 64-bit offset 64 */
++	int			__pad2[15];
+ #endif
+ 	int			__use;
+ 	unsigned long		lastuse;
+

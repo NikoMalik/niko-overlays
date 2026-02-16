@@ -1,0 +1,14 @@
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index e4653bb99..fc3093dad 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -1301,6 +1301,8 @@ static int load_elf_binary(struct linux_binprm *bprm)
+ 	mm = current->mm;
+ 	mm->end_code = end_code;
+ 	mm->start_code = start_code;
++	if (start_code >= ELF_ET_DYN_BASE)
++		mm->mmap_base = start_code;
+ 	mm->start_data = start_data;
+ 	mm->end_data = end_data;
+ 	mm->start_stack = bprm->p;
+

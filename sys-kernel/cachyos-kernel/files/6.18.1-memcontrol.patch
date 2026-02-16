@@ -1,0 +1,14 @@
+diff --git a/include/linux/memcontrol.h b/include/linux/memcontrol.h
+index 873e510d6..3a74ae66f 100644
+--- a/include/linux/memcontrol.h
++++ b/include/linux/memcontrol.h
+@@ -328,7 +328,7 @@ struct mem_cgroup {
+  * TODO: maybe necessary to use big numbers in big irons or dynamic based of the
+  * workload.
+  */
+-#define MEMCG_CHARGE_BATCH 64U
++#define MEMCG_CHARGE_BATCH 128U
+ 
+ extern struct mem_cgroup *root_mem_cgroup;
+ 
+

@@ -899,7 +899,16 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-reduce-dcache.patch"
 	eapply "${FILESDIR}/6.18.1-bitmap-syscall-audit.patch"
 	eapply "${FILESDIR}/6.18.1-ushare-tcp.patch"
-	einfo "Applying local flags"
+	eapply "${FILESDIR}/6.18.1-sk-packets-sock.patch"
+	eapply "${FILESDIR}/6.18.1-scale-net-alloc.patch"
+	eapply "${FILESDIR}/6.18.1-align-dst.patch"
+	eapply "${FILESDIR}/6.18.1-aligh-slab.patch"
+	eapply "${FILESDIR}/6.18.1-ext4.patch"
+	eapply "${FILESDIR}/6.18.1-elf-optimize.patch"
+	eapply "${FILESDIR}/6.18.1-mem_page.patch"
+	eapply "${FILESDIR}/6.18.1-memcontrol.patch"
+	eapply "${FILESDIR}/6.18.1-sched-limit.patch"
+	einfo "Applying local patches"
 
 
 	eapply_user
