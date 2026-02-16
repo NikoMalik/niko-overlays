@@ -907,6 +907,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-elf-optimize.patch"
 	eapply "${FILESDIR}/6.18.1-mem_page.patch"
 	eapply "${FILESDIR}/6.18.1-sched-limit.patch"
+	eapply "${FILESDIR}/6.18.1-udp-inline.patch"
 	einfo "Applying local patches"
 
 
