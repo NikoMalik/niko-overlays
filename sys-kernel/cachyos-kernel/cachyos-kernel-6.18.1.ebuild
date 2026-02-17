@@ -913,6 +913,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-block.patch"
 	eapply "${FILESDIR}/6.18.1-sbitmap-bits.patch"
 	eapply "${FILESDIR}/6.18.1-rbtree-inline.patch"
+	eapply "${FILESDIR}/6.18.1-tlb-inline.patch"
 	einfo "Applying local patches"
 
 
