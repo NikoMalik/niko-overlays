@@ -1,79 +1,92 @@
-From 9e51ca07dcc9c7ab11de08c7380061d5a099263c Mon Sep 17 00:00:00 2001
-From: Piotr Gorski <lucjan.lucjanov@gmail.com>
-Date: Mon, 1 Dec 2025 08:04:41 +0100
-Subject: [PATCH] crypto-6.18: merge changes from dev tree
+From 4f49eee3bb8854ca783eca894a1eb48fef034cc1 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:10 -0700
+Subject: [PATCH 01/13] crypto: x86/aes-gcm - add VAES+AVX2 optimized code
 
-Signed-off-by: Piotr Gorski <lucjan.lucjanov@gmail.com>
+Add an implementation of AES-GCM that uses 256-bit vectors and the
+following CPU features: Vector AES (VAES), Vector Carryless
+Multiplication (VPCLMULQDQ), and AVX2.
+
+It doesn't require AVX512.  So unlike the existing VAES+AVX512 code, it
+works on CPUs that support VAES but not AVX512, specifically:
+
+    - AMD Zen 3, both client and server
+    - Intel Alder Lake, Raptor Lake, Meteor Lake, Arrow Lake, and Lunar
+      Lake.  (These are client CPUs.)
+    - Intel Sierra Forest.  (This is a server CPU.)
+
+On these CPUs, this VAES+AVX2 code is much faster than the existing
+AES-NI code.  The AES-NI code uses only 128-bit vectors.
+
+These CPUs are widely deployed, making VAES+AVX2 code worthwhile even
+though hopefully future x86_64 CPUs will uniformly support AVX512.
+
+This implementation will also serve as the fallback 256-bit
+implementation for older Intel CPUs (Ice Lake and Tiger Lake) that
+support AVX512 but downclock too eagerly when 512-bit vectors are used.
+Currently, the VAES+AVX10/256 implementation serves that purpose.  A
+later commit will remove that and just use the VAES+AVX2 one.  (Note
+that AES-XTS and AES-CTR already successfully use this approach.)
+
+I originally wrote this AES-GCM implementation for BoringSSL.  It's been
+in BoringSSL for a while now, including in Chromium.  This is a port of
+it to the Linux kernel.  The main changes in the Linux version include:
+
+- Port from "perlasm" to a standard .S file.
+- Align all assembly functions with what aesni-intel_glue.c expects,
+  including adding support for lengths not a multiple of 16 bytes.
+- Rework the en/decryption of the final 1 to 127 bytes.
+
+This commit increases AES-256-GCM throughput on AMD Milan (Zen 3) by up
+to 74%, as shown by the following tables:
+
+Table 1: AES-256-GCM encryption throughput change,
+         CPU vs. message length in bytes:
+
+                      | 16384 |  4096 |  4095 |  1420 |   512 |   500 |
+----------------------+-------+-------+-------+-------+-------+-------+
+AMD Milan (Zen 3)     |   67% |   59% |   61% |   39% |   23% |   27% |
+
+                      |   300 |   200 |    64 |    63 |    16 |
+----------------------+-------+-------+-------+-------+-------+
+AMD Milan (Zen 3)     |   14% |   12% |    7% |    7% |    0% |
+
+Table 2: AES-256-GCM decryption throughput change,
+         CPU vs. message length in bytes:
+
+                      | 16384 |  4096 |  4095 |  1420 |   512 |   500 |
+----------------------+-------+-------+-------+-------+-------+-------+
+AMD Milan (Zen 3)     |   74% |   65% |   65% |   44% |   23% |   26% |
+
+                      |   300 |   200 |    64 |    63 |    16 |
+----------------------+-------+-------+-------+-------+-------+
+AMD Milan (Zen 3)     |   12% |   11% |    3% |    2% |   -3% |
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
 ---
- arch/x86/crypto/Makefile                      |    5 +-
- arch/x86/crypto/aes-gcm-aesni-x86_64.S        |   12 +-
- arch/x86/crypto/aes-gcm-vaes-avx2.S           | 1150 +++++++++++++++++
- ...m-avx10-x86_64.S => aes-gcm-vaes-avx512.S} |  722 +++++------
- arch/x86/crypto/aesni-intel_glue.c            |  264 ++--
- drivers/md/Kconfig                            |    1 +
- drivers/md/dm-verity-fec.c                    |   21 +-
- drivers/md/dm-verity-fec.h                    |    5 +-
- drivers/md/dm-verity-target.c                 |  203 ++-
- drivers/md/dm-verity.h                        |   52 +-
- include/linux/rhashtable.h                    |   70 +-
- 11 files changed, 1921 insertions(+), 584 deletions(-)
+ arch/x86/crypto/Makefile            |    1 +
+ arch/x86/crypto/aes-gcm-vaes-avx2.S | 1150 +++++++++++++++++++++++++++
+ arch/x86/crypto/aesni-intel_glue.c  |  111 ++-
+ 3 files changed, 1260 insertions(+), 2 deletions(-)
  create mode 100644 arch/x86/crypto/aes-gcm-vaes-avx2.S
- rename arch/x86/crypto/{aes-gcm-avx10-x86_64.S => aes-gcm-vaes-avx512.S} (69%)
 
 diff --git a/arch/x86/crypto/Makefile b/arch/x86/crypto/Makefile
-index 2d30d5d36..6409e3009 100644
+index 2d30d5d36..f6f7b2b8b 100644
 --- a/arch/x86/crypto/Makefile
 +++ b/arch/x86/crypto/Makefile
-@@ -46,8 +46,9 @@ obj-$(CONFIG_CRYPTO_AES_NI_INTEL) += aesni-intel.o
+@@ -46,6 +46,7 @@ obj-$(CONFIG_CRYPTO_AES_NI_INTEL) += aesni-intel.o
  aesni-intel-y := aesni-intel_asm.o aesni-intel_glue.o
  aesni-intel-$(CONFIG_64BIT) += aes-ctr-avx-x86_64.o \
  			       aes-gcm-aesni-x86_64.o \
--			       aes-xts-avx-x86_64.o \
--			       aes-gcm-avx10-x86_64.o
 +			       aes-gcm-vaes-avx2.o \
-+			       aes-gcm-vaes-avx512.o \
-+			       aes-xts-avx-x86_64.o
+ 			       aes-xts-avx-x86_64.o \
+ 			       aes-gcm-avx10-x86_64.o
  
- obj-$(CONFIG_CRYPTO_GHASH_CLMUL_NI_INTEL) += ghash-clmulni-intel.o
- ghash-clmulni-intel-y := ghash-clmulni-intel_asm.o ghash-clmulni-intel_glue.o
-diff --git a/arch/x86/crypto/aes-gcm-aesni-x86_64.S b/arch/x86/crypto/aes-gcm-aesni-x86_64.S
-index 45940e288..7c8a8a32b 100644
---- a/arch/x86/crypto/aes-gcm-aesni-x86_64.S
-+++ b/arch/x86/crypto/aes-gcm-aesni-x86_64.S
-@@ -61,15 +61,15 @@
- // for the *_aesni functions or AVX for the *_aesni_avx ones.  (But it seems
- // there are no CPUs that support AES-NI without also PCLMULQDQ and SSE4.1.)
- //
--// The design generally follows that of aes-gcm-avx10-x86_64.S, and that file is
-+// The design generally follows that of aes-gcm-vaes-avx512.S, and that file is
- // more thoroughly commented.  This file has the following notable changes:
- //
- //    - The vector length is fixed at 128-bit, i.e. xmm registers.  This means
- //      there is only one AES block (and GHASH block) per register.
- //
--//    - Without AVX512 / AVX10, only 16 SIMD registers are available instead of
--//      32.  We work around this by being much more careful about using
--//      registers, relying heavily on loads to load values as they are needed.
-+//    - Without AVX512, only 16 SIMD registers are available instead of 32.  We
-+//      work around this by being much more careful about using registers,
-+//      relying heavily on loads to load values as they are needed.
- //
- //    - Masking is not available either.  We work around this by implementing
- //      partial block loads and stores using overlapping scalar loads and stores
-@@ -90,8 +90,8 @@
- //      multiplication instead of schoolbook multiplication.  This saves one
- //      pclmulqdq instruction per block, at the cost of one 64-bit load, one
- //      pshufd, and 0.25 pxors per block.  (This is without the three-argument
--//      XOR support that would be provided by AVX512 / AVX10, which would be
--//      more beneficial to schoolbook than Karatsuba.)
-+//      XOR support that would be provided by AVX512, which would be more
-+//      beneficial to schoolbook than Karatsuba.)
- //
- //      As a rough approximation, we can assume that Karatsuba multiplication is
- //      faster than schoolbook multiplication in this context if one pshufd and
 diff --git a/arch/x86/crypto/aes-gcm-vaes-avx2.S b/arch/x86/crypto/aes-gcm-vaes-avx2.S
 new file mode 100644
-index 000000000..5ccbd8538
+index 000000000..e628dbb33
 --- /dev/null
 +++ b/arch/x86/crypto/aes-gcm-vaes-avx2.S
 @@ -0,0 +1,1150 @@
@@ -128,12 +141,12 @@ index 000000000..5ccbd8538
 +//
 +// -----------------------------------------------------------------------------
 +//
-+// This is similar to aes-gcm-vaes-avx512.S, but it uses AVX2 instead of AVX512.
-+// This means it can only use 16 vector registers instead of 32, the maximum
-+// vector length is 32 bytes, and some instructions such as vpternlogd and
-+// masked loads/stores are unavailable.  However, it is able to run on CPUs that
-+// have VAES without AVX512, namely AMD Zen 3 (including "Milan" server CPUs),
-+// various Intel client CPUs such as Alder Lake, and Intel Sierra Forest.
++// This is similar to aes-gcm-avx10-x86_64.S, but it uses AVX2 instead of
++// AVX512.  This means it can only use 16 vector registers instead of 32, the
++// maximum vector length is 32 bytes, and some instructions such as vpternlogd
++// and masked loads/stores are unavailable.  However, it is able to run on CPUs
++// that have VAES without AVX512, namely AMD Zen 3 (including "Milan" server
++// CPUs), various Intel client CPUs such as Alder Lake, and Intel Sierra Forest.
 +//
 +// This implementation also uses Karatsuba multiplication instead of schoolbook
 +// multiplication for GHASH in its main loop.  This does not help much on Intel,
@@ -1227,11 +1240,609 @@ index 000000000..5ccbd8538
 +SYM_FUNC_START(aes_gcm_dec_final_vaes_avx2)
 +	_aes_gcm_final	0
 +SYM_FUNC_END(aes_gcm_dec_final_vaes_avx2)
+diff --git a/arch/x86/crypto/aesni-intel_glue.c b/arch/x86/crypto/aesni-intel_glue.c
+index d953ac470..e2847d674 100644
+--- a/arch/x86/crypto/aesni-intel_glue.c
++++ b/arch/x86/crypto/aesni-intel_glue.c
+@@ -874,6 +874,36 @@ struct aes_gcm_key_aesni {
+ #define AES_GCM_KEY_AESNI_SIZE	\
+ 	(sizeof(struct aes_gcm_key_aesni) + (15 & ~(CRYPTO_MINALIGN - 1)))
+ 
++/* Key struct used by the VAES + AVX2 implementation of AES-GCM */
++struct aes_gcm_key_vaes_avx2 {
++	/*
++	 * Common part of the key.  The assembly code prefers 16-byte alignment
++	 * for the round keys; we get this by them being located at the start of
++	 * the struct and the whole struct being 32-byte aligned.
++	 */
++	struct aes_gcm_key base;
++
++	/*
++	 * Powers of the hash key H^8 through H^1.  These are 128-bit values.
++	 * They all have an extra factor of x^-1 and are byte-reversed.
++	 * The assembly code prefers 32-byte alignment for this.
++	 */
++	u64 h_powers[8][2] __aligned(32);
++
++	/*
++	 * Each entry in this array contains the two halves of an entry of
++	 * h_powers XOR'd together, in the following order:
++	 * H^8,H^6,H^7,H^5,H^4,H^2,H^3,H^1 i.e. indices 0,2,1,3,4,6,5,7.
++	 * This is used for Karatsuba multiplication.
++	 */
++	u64 h_powers_xored[8];
++};
++
++#define AES_GCM_KEY_VAES_AVX2(key) \
++	container_of((key), struct aes_gcm_key_vaes_avx2, base)
++#define AES_GCM_KEY_VAES_AVX2_SIZE \
++	(sizeof(struct aes_gcm_key_vaes_avx2) + (31 & ~(CRYPTO_MINALIGN - 1)))
++
+ /* Key struct used by the VAES + AVX10 implementations of AES-GCM */
+ struct aes_gcm_key_avx10 {
+ 	/*
+@@ -910,14 +940,17 @@ struct aes_gcm_key_avx10 {
+ #define FLAG_RFC4106	BIT(0)
+ #define FLAG_ENC	BIT(1)
+ #define FLAG_AVX	BIT(2)
+-#define FLAG_AVX10_256	BIT(3)
+-#define FLAG_AVX10_512	BIT(4)
++#define FLAG_VAES_AVX2	BIT(3)
++#define FLAG_AVX10_256	BIT(4)
++#define FLAG_AVX10_512	BIT(5)
+ 
+ static inline struct aes_gcm_key *
+ aes_gcm_key_get(struct crypto_aead *tfm, int flags)
+ {
+ 	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
+ 		return PTR_ALIGN(crypto_aead_ctx(tfm), 64);
++	else if (flags & FLAG_VAES_AVX2)
++		return PTR_ALIGN(crypto_aead_ctx(tfm), 32);
+ 	else
+ 		return PTR_ALIGN(crypto_aead_ctx(tfm), 16);
+ }
+@@ -927,6 +960,8 @@ aes_gcm_precompute_aesni(struct aes_gcm_key_aesni *key);
+ asmlinkage void
+ aes_gcm_precompute_aesni_avx(struct aes_gcm_key_aesni *key);
+ asmlinkage void
++aes_gcm_precompute_vaes_avx2(struct aes_gcm_key_vaes_avx2 *key);
++asmlinkage void
+ aes_gcm_precompute_vaes_avx10_256(struct aes_gcm_key_avx10 *key);
+ asmlinkage void
+ aes_gcm_precompute_vaes_avx10_512(struct aes_gcm_key_avx10 *key);
+@@ -947,6 +982,8 @@ static void aes_gcm_precompute(struct aes_gcm_key *key, int flags)
+ 		aes_gcm_precompute_vaes_avx10_512(AES_GCM_KEY_AVX10(key));
+ 	else if (flags & FLAG_AVX10_256)
+ 		aes_gcm_precompute_vaes_avx10_256(AES_GCM_KEY_AVX10(key));
++	else if (flags & FLAG_VAES_AVX2)
++		aes_gcm_precompute_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key));
+ 	else if (flags & FLAG_AVX)
+ 		aes_gcm_precompute_aesni_avx(AES_GCM_KEY_AESNI(key));
+ 	else
+@@ -960,6 +997,9 @@ asmlinkage void
+ aes_gcm_aad_update_aesni_avx(const struct aes_gcm_key_aesni *key,
+ 			     u8 ghash_acc[16], const u8 *aad, int aadlen);
+ asmlinkage void
++aes_gcm_aad_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
++			     u8 ghash_acc[16], const u8 *aad, int aadlen);
++asmlinkage void
+ aes_gcm_aad_update_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+ 			      u8 ghash_acc[16], const u8 *aad, int aadlen);
+ 
+@@ -969,6 +1009,9 @@ static void aes_gcm_aad_update(const struct aes_gcm_key *key, u8 ghash_acc[16],
+ 	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
+ 		aes_gcm_aad_update_vaes_avx10(AES_GCM_KEY_AVX10(key), ghash_acc,
+ 					      aad, aadlen);
++	else if (flags & FLAG_VAES_AVX2)
++		aes_gcm_aad_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
++					     ghash_acc, aad, aadlen);
+ 	else if (flags & FLAG_AVX)
+ 		aes_gcm_aad_update_aesni_avx(AES_GCM_KEY_AESNI(key), ghash_acc,
+ 					     aad, aadlen);
+@@ -986,6 +1029,10 @@ aes_gcm_enc_update_aesni_avx(const struct aes_gcm_key_aesni *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     const u8 *src, u8 *dst, int datalen);
+ asmlinkage void
++aes_gcm_enc_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
++			     const u32 le_ctr[4], u8 ghash_acc[16],
++			     const u8 *src, u8 *dst, int datalen);
++asmlinkage void
+ aes_gcm_enc_update_vaes_avx10_256(const struct aes_gcm_key_avx10 *key,
+ 				  const u32 le_ctr[4], u8 ghash_acc[16],
+ 				  const u8 *src, u8 *dst, int datalen);
+@@ -1003,6 +1050,10 @@ aes_gcm_dec_update_aesni_avx(const struct aes_gcm_key_aesni *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     const u8 *src, u8 *dst, int datalen);
+ asmlinkage void
++aes_gcm_dec_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
++			     const u32 le_ctr[4], u8 ghash_acc[16],
++			     const u8 *src, u8 *dst, int datalen);
++asmlinkage void
+ aes_gcm_dec_update_vaes_avx10_256(const struct aes_gcm_key_avx10 *key,
+ 				  const u32 le_ctr[4], u8 ghash_acc[16],
+ 				  const u8 *src, u8 *dst, int datalen);
+@@ -1026,6 +1077,10 @@ aes_gcm_update(const struct aes_gcm_key *key,
+ 			aes_gcm_enc_update_vaes_avx10_256(AES_GCM_KEY_AVX10(key),
+ 							  le_ctr, ghash_acc,
+ 							  src, dst, datalen);
++		else if (flags & FLAG_VAES_AVX2)
++			aes_gcm_enc_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
++						     le_ctr, ghash_acc,
++						     src, dst, datalen);
+ 		else if (flags & FLAG_AVX)
+ 			aes_gcm_enc_update_aesni_avx(AES_GCM_KEY_AESNI(key),
+ 						     le_ctr, ghash_acc,
+@@ -1042,6 +1097,10 @@ aes_gcm_update(const struct aes_gcm_key *key,
+ 			aes_gcm_dec_update_vaes_avx10_256(AES_GCM_KEY_AVX10(key),
+ 							  le_ctr, ghash_acc,
+ 							  src, dst, datalen);
++		else if (flags & FLAG_VAES_AVX2)
++			aes_gcm_dec_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
++						     le_ctr, ghash_acc,
++						     src, dst, datalen);
+ 		else if (flags & FLAG_AVX)
+ 			aes_gcm_dec_update_aesni_avx(AES_GCM_KEY_AESNI(key),
+ 						     le_ctr, ghash_acc,
+@@ -1062,6 +1121,10 @@ aes_gcm_enc_final_aesni_avx(const struct aes_gcm_key_aesni *key,
+ 			    const u32 le_ctr[4], u8 ghash_acc[16],
+ 			    u64 total_aadlen, u64 total_datalen);
+ asmlinkage void
++aes_gcm_enc_final_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
++			    const u32 le_ctr[4], u8 ghash_acc[16],
++			    u64 total_aadlen, u64 total_datalen);
++asmlinkage void
+ aes_gcm_enc_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     u64 total_aadlen, u64 total_datalen);
+@@ -1076,6 +1139,10 @@ aes_gcm_enc_final(const struct aes_gcm_key *key,
+ 		aes_gcm_enc_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
+ 					     le_ctr, ghash_acc,
+ 					     total_aadlen, total_datalen);
++	else if (flags & FLAG_VAES_AVX2)
++		aes_gcm_enc_final_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
++					    le_ctr, ghash_acc,
++					    total_aadlen, total_datalen);
+ 	else if (flags & FLAG_AVX)
+ 		aes_gcm_enc_final_aesni_avx(AES_GCM_KEY_AESNI(key),
+ 					    le_ctr, ghash_acc,
+@@ -1097,6 +1164,11 @@ aes_gcm_dec_final_aesni_avx(const struct aes_gcm_key_aesni *key,
+ 			    u64 total_aadlen, u64 total_datalen,
+ 			    const u8 tag[16], int taglen);
+ asmlinkage bool __must_check
++aes_gcm_dec_final_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
++			    const u32 le_ctr[4], const u8 ghash_acc[16],
++			    u64 total_aadlen, u64 total_datalen,
++			    const u8 tag[16], int taglen);
++asmlinkage bool __must_check
+ aes_gcm_dec_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+ 			     const u32 le_ctr[4], const u8 ghash_acc[16],
+ 			     u64 total_aadlen, u64 total_datalen,
+@@ -1113,6 +1185,11 @@ aes_gcm_dec_final(const struct aes_gcm_key *key, const u32 le_ctr[4],
+ 						    le_ctr, ghash_acc,
+ 						    total_aadlen, total_datalen,
+ 						    tag, taglen);
++	else if (flags & FLAG_VAES_AVX2)
++		return aes_gcm_dec_final_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
++						   le_ctr, ghash_acc,
++						   total_aadlen, total_datalen,
++						   tag, taglen);
+ 	else if (flags & FLAG_AVX)
+ 		return aes_gcm_dec_final_aesni_avx(AES_GCM_KEY_AESNI(key),
+ 						   le_ctr, ghash_acc,
+@@ -1195,6 +1272,10 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_aesni, h_powers) != 496);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_aesni, h_powers_xored) != 624);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_aesni, h_times_x64) != 688);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, base.aes_key.key_enc) != 0);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, base.aes_key.key_length) != 480);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, h_powers) != 512);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, h_powers_xored) != 640);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, base.aes_key.key_enc) != 0);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, base.aes_key.key_length) != 480);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, h_powers) != 512);
+@@ -1240,6 +1321,22 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
+ 				gf128mul_lle(&h, &h1);
+ 			}
+ 			memset(k->padding, 0, sizeof(k->padding));
++		} else if (flags & FLAG_VAES_AVX2) {
++			struct aes_gcm_key_vaes_avx2 *k =
++				AES_GCM_KEY_VAES_AVX2(key);
++			static const u8 indices[8] = { 0, 2, 1, 3, 4, 6, 5, 7 };
++
++			for (i = ARRAY_SIZE(k->h_powers) - 1; i >= 0; i--) {
++				k->h_powers[i][0] = be64_to_cpu(h.b);
++				k->h_powers[i][1] = be64_to_cpu(h.a);
++				gf128mul_lle(&h, &h1);
++			}
++			for (i = 0; i < ARRAY_SIZE(k->h_powers_xored); i++) {
++				int j = indices[i];
++
++				k->h_powers_xored[i] = k->h_powers[j][0] ^
++						       k->h_powers[j][1];
++			}
+ 		} else {
+ 			struct aes_gcm_key_aesni *k = AES_GCM_KEY_AESNI(key);
+ 
+@@ -1508,6 +1605,11 @@ DEFINE_GCM_ALGS(aesni_avx, FLAG_AVX,
+ 		"generic-gcm-aesni-avx", "rfc4106-gcm-aesni-avx",
+ 		AES_GCM_KEY_AESNI_SIZE, 500);
+ 
++/* aes_gcm_algs_vaes_avx2 */
++DEFINE_GCM_ALGS(vaes_avx2, FLAG_VAES_AVX2,
++		"generic-gcm-vaes-avx2", "rfc4106-gcm-vaes-avx2",
++		AES_GCM_KEY_VAES_AVX2_SIZE, 600);
++
+ /* aes_gcm_algs_vaes_avx10_256 */
+ DEFINE_GCM_ALGS(vaes_avx10_256, FLAG_AVX10_256,
+ 		"generic-gcm-vaes-avx10_256", "rfc4106-gcm-vaes-avx10_256",
+@@ -1548,6 +1650,10 @@ static int __init register_avx_algs(void)
+ 					ARRAY_SIZE(skcipher_algs_vaes_avx2));
+ 	if (err)
+ 		return err;
++	err = crypto_register_aeads(aes_gcm_algs_vaes_avx2,
++				    ARRAY_SIZE(aes_gcm_algs_vaes_avx2));
++	if (err)
++		return err;
+ 
+ 	if (!boot_cpu_has(X86_FEATURE_AVX512BW) ||
+ 	    !boot_cpu_has(X86_FEATURE_AVX512VL) ||
+@@ -1595,6 +1701,7 @@ static void unregister_avx_algs(void)
+ 	unregister_aeads(aes_gcm_algs_aesni_avx);
+ 	unregister_skciphers(skcipher_algs_vaes_avx2);
+ 	unregister_skciphers(skcipher_algs_vaes_avx512);
++	unregister_aeads(aes_gcm_algs_vaes_avx2);
+ 	unregister_aeads(aes_gcm_algs_vaes_avx10_256);
+ 	unregister_aeads(aes_gcm_algs_vaes_avx10_512);
+ }
+-- 
+2.52.0
+
+
+From 16b382f5e9c376b296de45fe2e0fba21c12d7afc Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:11 -0700
+Subject: [PATCH 02/13] crypto: x86/aes-gcm - remove VAES+AVX10/256 optimized
+ code
+
+Remove the VAES+AVX10/256 optimized implementation of AES-GCM.
+
+It's no longer expected to be useful for future CPUs, since Intel
+changed the AVX10 specification to require 512-bit vectors.
+
+In addition, it's no longer very useful to serve as the 256-bit fallback
+for older Intel CPUs (Ice Lake and Tiger Lake) that downclock too
+eagerly when 512-bit vectors are used.  This is because I ended up
+writing another 256-bit implementation anyway, using VAES+AVX2.  The
+VAES+AVX2 implementation is almost as fast as the VAES+AVX10/256 one, as
+shown by the following tables.  So, let's just use it instead.
+
+Table 1: AES-256-GCM encryption throughput change,
+         CPU vs. message length in bytes:
+
+                      | 16384 |  4096 |  4095 |  1420 |   512 |   500 |
+----------------------+-------+-------+-------+-------+-------+-------+
+Intel Ice Lake Server |   -2% |   -1% |    0% |   -2% |   -2% |    3% |
+
+                      |   300 |   200 |    64 |    63 |    16 |
+----------------------+-------+-------+-------+-------+-------+
+Intel Ice Lake Server |    1% |    0% |    4% |    2% |   -6% |
+
+Table 2: AES-256-GCM decryption throughput change,
+         CPU vs. message length in bytes:
+
+                      | 16384 |  4096 |  4095 |  1420 |   512 |   500 |
+----------------------+-------+-------+-------+-------+-------+-------+
+Intel Ice Lake Server |   -1% |   -1% |    1% |   -2% |    0% |    2% |
+
+                      |   300 |   200 |    64 |    63 |    16 |
+----------------------+-------+-------+-------+-------+-------+
+Intel Ice Lake Server |   -1% |    4% |    1% |    0% |   -5% |
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/aes-gcm-avx10-x86_64.S | 11 ------
+ arch/x86/crypto/aesni-intel_glue.c     | 54 +++-----------------------
+ 2 files changed, 6 insertions(+), 59 deletions(-)
+
+diff --git a/arch/x86/crypto/aes-gcm-avx10-x86_64.S b/arch/x86/crypto/aes-gcm-avx10-x86_64.S
+index 02ee11083..4fb04506d 100644
+--- a/arch/x86/crypto/aes-gcm-avx10-x86_64.S
++++ b/arch/x86/crypto/aes-gcm-avx10-x86_64.S
+@@ -1081,17 +1081,6 @@
+ 	RET
+ .endm
+ 
+-_set_veclen 32
+-SYM_FUNC_START(aes_gcm_precompute_vaes_avx10_256)
+-	_aes_gcm_precompute
+-SYM_FUNC_END(aes_gcm_precompute_vaes_avx10_256)
+-SYM_FUNC_START(aes_gcm_enc_update_vaes_avx10_256)
+-	_aes_gcm_update	1
+-SYM_FUNC_END(aes_gcm_enc_update_vaes_avx10_256)
+-SYM_FUNC_START(aes_gcm_dec_update_vaes_avx10_256)
+-	_aes_gcm_update	0
+-SYM_FUNC_END(aes_gcm_dec_update_vaes_avx10_256)
+-
+ _set_veclen 64
+ SYM_FUNC_START(aes_gcm_precompute_vaes_avx10_512)
+ 	_aes_gcm_precompute
+diff --git a/arch/x86/crypto/aesni-intel_glue.c b/arch/x86/crypto/aesni-intel_glue.c
+index e2847d674..1ed851320 100644
+--- a/arch/x86/crypto/aesni-intel_glue.c
++++ b/arch/x86/crypto/aesni-intel_glue.c
+@@ -941,13 +941,12 @@ struct aes_gcm_key_avx10 {
+ #define FLAG_ENC	BIT(1)
+ #define FLAG_AVX	BIT(2)
+ #define FLAG_VAES_AVX2	BIT(3)
+-#define FLAG_AVX10_256	BIT(4)
+-#define FLAG_AVX10_512	BIT(5)
++#define FLAG_AVX10_512	BIT(4)
+ 
+ static inline struct aes_gcm_key *
+ aes_gcm_key_get(struct crypto_aead *tfm, int flags)
+ {
+-	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
++	if (flags & FLAG_AVX10_512)
+ 		return PTR_ALIGN(crypto_aead_ctx(tfm), 64);
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		return PTR_ALIGN(crypto_aead_ctx(tfm), 32);
+@@ -962,26 +961,12 @@ aes_gcm_precompute_aesni_avx(struct aes_gcm_key_aesni *key);
+ asmlinkage void
+ aes_gcm_precompute_vaes_avx2(struct aes_gcm_key_vaes_avx2 *key);
+ asmlinkage void
+-aes_gcm_precompute_vaes_avx10_256(struct aes_gcm_key_avx10 *key);
+-asmlinkage void
+ aes_gcm_precompute_vaes_avx10_512(struct aes_gcm_key_avx10 *key);
+ 
+ static void aes_gcm_precompute(struct aes_gcm_key *key, int flags)
+ {
+-	/*
+-	 * To make things a bit easier on the assembly side, the AVX10
+-	 * implementations use the same key format.  Therefore, a single
+-	 * function using 256-bit vectors would suffice here.  However, it's
+-	 * straightforward to provide a 512-bit one because of how the assembly
+-	 * code is structured, and it works nicely because the total size of the
+-	 * key powers is a multiple of 512 bits.  So we take advantage of that.
+-	 *
+-	 * A similar situation applies to the AES-NI implementations.
+-	 */
+ 	if (flags & FLAG_AVX10_512)
+ 		aes_gcm_precompute_vaes_avx10_512(AES_GCM_KEY_AVX10(key));
+-	else if (flags & FLAG_AVX10_256)
+-		aes_gcm_precompute_vaes_avx10_256(AES_GCM_KEY_AVX10(key));
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		aes_gcm_precompute_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key));
+ 	else if (flags & FLAG_AVX)
+@@ -1006,7 +991,7 @@ aes_gcm_aad_update_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+ static void aes_gcm_aad_update(const struct aes_gcm_key *key, u8 ghash_acc[16],
+ 			       const u8 *aad, int aadlen, int flags)
+ {
+-	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
++	if (flags & FLAG_AVX10_512)
+ 		aes_gcm_aad_update_vaes_avx10(AES_GCM_KEY_AVX10(key), ghash_acc,
+ 					      aad, aadlen);
+ 	else if (flags & FLAG_VAES_AVX2)
+@@ -1033,10 +1018,6 @@ aes_gcm_enc_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     const u8 *src, u8 *dst, int datalen);
+ asmlinkage void
+-aes_gcm_enc_update_vaes_avx10_256(const struct aes_gcm_key_avx10 *key,
+-				  const u32 le_ctr[4], u8 ghash_acc[16],
+-				  const u8 *src, u8 *dst, int datalen);
+-asmlinkage void
+ aes_gcm_enc_update_vaes_avx10_512(const struct aes_gcm_key_avx10 *key,
+ 				  const u32 le_ctr[4], u8 ghash_acc[16],
+ 				  const u8 *src, u8 *dst, int datalen);
+@@ -1054,10 +1035,6 @@ aes_gcm_dec_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     const u8 *src, u8 *dst, int datalen);
+ asmlinkage void
+-aes_gcm_dec_update_vaes_avx10_256(const struct aes_gcm_key_avx10 *key,
+-				  const u32 le_ctr[4], u8 ghash_acc[16],
+-				  const u8 *src, u8 *dst, int datalen);
+-asmlinkage void
+ aes_gcm_dec_update_vaes_avx10_512(const struct aes_gcm_key_avx10 *key,
+ 				  const u32 le_ctr[4], u8 ghash_acc[16],
+ 				  const u8 *src, u8 *dst, int datalen);
+@@ -1073,10 +1050,6 @@ aes_gcm_update(const struct aes_gcm_key *key,
+ 			aes_gcm_enc_update_vaes_avx10_512(AES_GCM_KEY_AVX10(key),
+ 							  le_ctr, ghash_acc,
+ 							  src, dst, datalen);
+-		else if (flags & FLAG_AVX10_256)
+-			aes_gcm_enc_update_vaes_avx10_256(AES_GCM_KEY_AVX10(key),
+-							  le_ctr, ghash_acc,
+-							  src, dst, datalen);
+ 		else if (flags & FLAG_VAES_AVX2)
+ 			aes_gcm_enc_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 						     le_ctr, ghash_acc,
+@@ -1093,10 +1066,6 @@ aes_gcm_update(const struct aes_gcm_key *key,
+ 			aes_gcm_dec_update_vaes_avx10_512(AES_GCM_KEY_AVX10(key),
+ 							  le_ctr, ghash_acc,
+ 							  src, dst, datalen);
+-		else if (flags & FLAG_AVX10_256)
+-			aes_gcm_dec_update_vaes_avx10_256(AES_GCM_KEY_AVX10(key),
+-							  le_ctr, ghash_acc,
+-							  src, dst, datalen);
+ 		else if (flags & FLAG_VAES_AVX2)
+ 			aes_gcm_dec_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 						     le_ctr, ghash_acc,
+@@ -1135,7 +1104,7 @@ aes_gcm_enc_final(const struct aes_gcm_key *key,
+ 		  const u32 le_ctr[4], u8 ghash_acc[16],
+ 		  u64 total_aadlen, u64 total_datalen, int flags)
+ {
+-	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
++	if (flags & FLAG_AVX10_512)
+ 		aes_gcm_enc_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
+ 					     le_ctr, ghash_acc,
+ 					     total_aadlen, total_datalen);
+@@ -1180,7 +1149,7 @@ aes_gcm_dec_final(const struct aes_gcm_key *key, const u32 le_ctr[4],
+ 		  u8 ghash_acc[16], u64 total_aadlen, u64 total_datalen,
+ 		  u8 tag[16], int taglen, int flags)
+ {
+-	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
++	if (flags & FLAG_AVX10_512)
+ 		return aes_gcm_dec_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
+ 						    le_ctr, ghash_acc,
+ 						    total_aadlen, total_datalen,
+@@ -1312,7 +1281,7 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
+ 		gf128mul_lle(&h, (const be128 *)x_to_the_minus1);
+ 
+ 		/* Compute the needed key powers */
+-		if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512)) {
++		if (flags & FLAG_AVX10_512) {
+ 			struct aes_gcm_key_avx10 *k = AES_GCM_KEY_AVX10(key);
+ 
+ 			for (i = ARRAY_SIZE(k->h_powers) - 1; i >= 0; i--) {
+@@ -1610,11 +1579,6 @@ DEFINE_GCM_ALGS(vaes_avx2, FLAG_VAES_AVX2,
+ 		"generic-gcm-vaes-avx2", "rfc4106-gcm-vaes-avx2",
+ 		AES_GCM_KEY_VAES_AVX2_SIZE, 600);
+ 
+-/* aes_gcm_algs_vaes_avx10_256 */
+-DEFINE_GCM_ALGS(vaes_avx10_256, FLAG_AVX10_256,
+-		"generic-gcm-vaes-avx10_256", "rfc4106-gcm-vaes-avx10_256",
+-		AES_GCM_KEY_AVX10_SIZE, 700);
+-
+ /* aes_gcm_algs_vaes_avx10_512 */
+ DEFINE_GCM_ALGS(vaes_avx10_512, FLAG_AVX10_512,
+ 		"generic-gcm-vaes-avx10_512", "rfc4106-gcm-vaes-avx10_512",
+@@ -1662,11 +1626,6 @@ static int __init register_avx_algs(void)
+ 			       XFEATURE_MASK_AVX512, NULL))
+ 		return 0;
+ 
+-	err = crypto_register_aeads(aes_gcm_algs_vaes_avx10_256,
+-				    ARRAY_SIZE(aes_gcm_algs_vaes_avx10_256));
+-	if (err)
+-		return err;
+-
+ 	if (boot_cpu_has(X86_FEATURE_PREFER_YMM)) {
+ 		int i;
+ 
+@@ -1702,7 +1661,6 @@ static void unregister_avx_algs(void)
+ 	unregister_skciphers(skcipher_algs_vaes_avx2);
+ 	unregister_skciphers(skcipher_algs_vaes_avx512);
+ 	unregister_aeads(aes_gcm_algs_vaes_avx2);
+-	unregister_aeads(aes_gcm_algs_vaes_avx10_256);
+ 	unregister_aeads(aes_gcm_algs_vaes_avx10_512);
+ }
+ #else /* CONFIG_X86_64 */
+-- 
+2.52.0
+
+
+From 60f1fd8e3ea2f3784345824b4474389903baf6be Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:12 -0700
+Subject: [PATCH 03/13] crypto: x86/aes-gcm - rename avx10 and avx10_512 to
+ avx512
+
+With the "avx10_256" code removed and the AVX10 specification having
+been changed to basically just be a re-packaged AVX512, the "avx10_512"
+name no longer makes sense.  Replace it with "avx512".
+
+While doing this, also add the "vaes_" prefix in places that didn't
+already have it.  The result is that the two VAES optimized
+implementations are consistently called vaes_avx2 and vaes_avx512.
+(Also drop the "-x86_64" part of the assembly filename, to keep it from
+getting too long.  There's no 32-bit version of this code, and the fact
+that it's 64-bit is unremarkable; it's the norm for new code.)
+
+Note: although aes_gcm_aad_update_vaes_avx512() (previously called
+aes_gcm_aad_update_vaes_avx10()) uses at most 256-bit vectors, it still
+depends on the AVX512 CPU feature.  So its new name is still accurate.
+Also, a later commit will make it sometimes use 512-bit vectors anyway.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/Makefile                      |   4 +-
+ arch/x86/crypto/aes-gcm-aesni-x86_64.S        |  12 +-
+ arch/x86/crypto/aes-gcm-vaes-avx2.S           |  12 +-
+ ...m-avx10-x86_64.S => aes-gcm-vaes-avx512.S} |  92 +++++--------
+ arch/x86/crypto/aesni-intel_glue.c            | 123 +++++++++---------
+ 5 files changed, 105 insertions(+), 138 deletions(-)
+ rename arch/x86/crypto/{aes-gcm-avx10-x86_64.S => aes-gcm-vaes-avx512.S} (92%)
+
+diff --git a/arch/x86/crypto/Makefile b/arch/x86/crypto/Makefile
+index f6f7b2b8b..6409e3009 100644
+--- a/arch/x86/crypto/Makefile
++++ b/arch/x86/crypto/Makefile
+@@ -47,8 +47,8 @@ aesni-intel-y := aesni-intel_asm.o aesni-intel_glue.o
+ aesni-intel-$(CONFIG_64BIT) += aes-ctr-avx-x86_64.o \
+ 			       aes-gcm-aesni-x86_64.o \
+ 			       aes-gcm-vaes-avx2.o \
+-			       aes-xts-avx-x86_64.o \
+-			       aes-gcm-avx10-x86_64.o
++			       aes-gcm-vaes-avx512.o \
++			       aes-xts-avx-x86_64.o
+ 
+ obj-$(CONFIG_CRYPTO_GHASH_CLMUL_NI_INTEL) += ghash-clmulni-intel.o
+ ghash-clmulni-intel-y := ghash-clmulni-intel_asm.o ghash-clmulni-intel_glue.o
+diff --git a/arch/x86/crypto/aes-gcm-aesni-x86_64.S b/arch/x86/crypto/aes-gcm-aesni-x86_64.S
+index 45940e288..7c8a8a32b 100644
+--- a/arch/x86/crypto/aes-gcm-aesni-x86_64.S
++++ b/arch/x86/crypto/aes-gcm-aesni-x86_64.S
+@@ -61,15 +61,15 @@
+ // for the *_aesni functions or AVX for the *_aesni_avx ones.  (But it seems
+ // there are no CPUs that support AES-NI without also PCLMULQDQ and SSE4.1.)
+ //
+-// The design generally follows that of aes-gcm-avx10-x86_64.S, and that file is
++// The design generally follows that of aes-gcm-vaes-avx512.S, and that file is
+ // more thoroughly commented.  This file has the following notable changes:
+ //
+ //    - The vector length is fixed at 128-bit, i.e. xmm registers.  This means
+ //      there is only one AES block (and GHASH block) per register.
+ //
+-//    - Without AVX512 / AVX10, only 16 SIMD registers are available instead of
+-//      32.  We work around this by being much more careful about using
+-//      registers, relying heavily on loads to load values as they are needed.
++//    - Without AVX512, only 16 SIMD registers are available instead of 32.  We
++//      work around this by being much more careful about using registers,
++//      relying heavily on loads to load values as they are needed.
+ //
+ //    - Masking is not available either.  We work around this by implementing
+ //      partial block loads and stores using overlapping scalar loads and stores
+@@ -90,8 +90,8 @@
+ //      multiplication instead of schoolbook multiplication.  This saves one
+ //      pclmulqdq instruction per block, at the cost of one 64-bit load, one
+ //      pshufd, and 0.25 pxors per block.  (This is without the three-argument
+-//      XOR support that would be provided by AVX512 / AVX10, which would be
+-//      more beneficial to schoolbook than Karatsuba.)
++//      XOR support that would be provided by AVX512, which would be more
++//      beneficial to schoolbook than Karatsuba.)
+ //
+ //      As a rough approximation, we can assume that Karatsuba multiplication is
+ //      faster than schoolbook multiplication in this context if one pshufd and
+diff --git a/arch/x86/crypto/aes-gcm-vaes-avx2.S b/arch/x86/crypto/aes-gcm-vaes-avx2.S
+index e628dbb33..5ccbd8538 100644
+--- a/arch/x86/crypto/aes-gcm-vaes-avx2.S
++++ b/arch/x86/crypto/aes-gcm-vaes-avx2.S
+@@ -49,12 +49,12 @@
+ //
+ // -----------------------------------------------------------------------------
+ //
+-// This is similar to aes-gcm-avx10-x86_64.S, but it uses AVX2 instead of
+-// AVX512.  This means it can only use 16 vector registers instead of 32, the
+-// maximum vector length is 32 bytes, and some instructions such as vpternlogd
+-// and masked loads/stores are unavailable.  However, it is able to run on CPUs
+-// that have VAES without AVX512, namely AMD Zen 3 (including "Milan" server
+-// CPUs), various Intel client CPUs such as Alder Lake, and Intel Sierra Forest.
++// This is similar to aes-gcm-vaes-avx512.S, but it uses AVX2 instead of AVX512.
++// This means it can only use 16 vector registers instead of 32, the maximum
++// vector length is 32 bytes, and some instructions such as vpternlogd and
++// masked loads/stores are unavailable.  However, it is able to run on CPUs that
++// have VAES without AVX512, namely AMD Zen 3 (including "Milan" server CPUs),
++// various Intel client CPUs such as Alder Lake, and Intel Sierra Forest.
+ //
+ // This implementation also uses Karatsuba multiplication instead of schoolbook
+ // multiplication for GHASH in its main loop.  This does not help much on Intel,
 diff --git a/arch/x86/crypto/aes-gcm-avx10-x86_64.S b/arch/x86/crypto/aes-gcm-vaes-avx512.S
-similarity index 69%
+similarity index 92%
 rename from arch/x86/crypto/aes-gcm-avx10-x86_64.S
 rename to arch/x86/crypto/aes-gcm-vaes-avx512.S
-index 02ee11083..06b71314d 100644
+index 4fb04506d..be5c14d33 100644
 --- a/arch/x86/crypto/aes-gcm-avx10-x86_64.S
 +++ b/arch/x86/crypto/aes-gcm-vaes-avx512.S
 @@ -1,6 +1,7 @@
@@ -1285,7 +1896,412 @@ index 02ee11083..06b71314d 100644
  
  #include <linux/linkage.h>
  
-@@ -104,16 +70,14 @@
+@@ -312,7 +278,7 @@
+ 	vpternlogd	$0x96, \t0, \mi, \hi
+ .endm
+ 
+-// void aes_gcm_precompute_##suffix(struct aes_gcm_key_avx10 *key);
++// void aes_gcm_precompute_vaes_avx512(struct aes_gcm_key_vaes_avx512 *key);
+ //
+ // Given the expanded AES key |key->aes_key|, this function derives the GHASH
+ // subkey and initializes |key->ghash_key_powers| with powers of it.
+@@ -588,9 +554,9 @@
+ 	vmovdqu8	GHASHDATA3, 3*VL(DST)
+ .endm
+ 
+-// void aes_gcm_{enc,dec}_update_##suffix(const struct aes_gcm_key_avx10 *key,
+-//					  const u32 le_ctr[4], u8 ghash_acc[16],
+-//					  const u8 *src, u8 *dst, int datalen);
++// void aes_gcm_{enc,dec}_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++//					     const u32 le_ctr[4], u8 ghash_acc[16],
++//					     const u8 *src, u8 *dst, int datalen);
+ //
+ // This macro generates a GCM encryption or decryption update function with the
+ // above prototype (with \enc selecting which one).  This macro supports both
+@@ -944,14 +910,14 @@
+ 	RET
+ .endm
+ 
+-// void aes_gcm_enc_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+-//				     const u32 le_ctr[4], u8 ghash_acc[16],
+-//				     u64 total_aadlen, u64 total_datalen);
+-// bool aes_gcm_dec_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+-//				     const u32 le_ctr[4],
+-//				     const u8 ghash_acc[16],
+-//				     u64 total_aadlen, u64 total_datalen,
+-//				     const u8 tag[16], int taglen);
++// void aes_gcm_enc_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++//				      const u32 le_ctr[4], u8 ghash_acc[16],
++//				      u64 total_aadlen, u64 total_datalen);
++// bool aes_gcm_dec_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++//				      const u32 le_ctr[4],
++//				      const u8 ghash_acc[16],
++//				      u64 total_aadlen, u64 total_datalen,
++//				      const u8 tag[16], int taglen);
+ //
+ // This macro generates one of the above two functions (with \enc selecting
+ // which one).  Both functions finish computing the GCM authentication tag by
+@@ -1082,19 +1048,19 @@
+ .endm
+ 
+ _set_veclen 64
+-SYM_FUNC_START(aes_gcm_precompute_vaes_avx10_512)
++SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
+ 	_aes_gcm_precompute
+-SYM_FUNC_END(aes_gcm_precompute_vaes_avx10_512)
+-SYM_FUNC_START(aes_gcm_enc_update_vaes_avx10_512)
++SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
++SYM_FUNC_START(aes_gcm_enc_update_vaes_avx512)
+ 	_aes_gcm_update	1
+-SYM_FUNC_END(aes_gcm_enc_update_vaes_avx10_512)
+-SYM_FUNC_START(aes_gcm_dec_update_vaes_avx10_512)
++SYM_FUNC_END(aes_gcm_enc_update_vaes_avx512)
++SYM_FUNC_START(aes_gcm_dec_update_vaes_avx512)
+ 	_aes_gcm_update	0
+-SYM_FUNC_END(aes_gcm_dec_update_vaes_avx10_512)
++SYM_FUNC_END(aes_gcm_dec_update_vaes_avx512)
+ 
+-// void aes_gcm_aad_update_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+-//				      u8 ghash_acc[16],
+-//				      const u8 *aad, int aadlen);
++// void aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++//				       u8 ghash_acc[16],
++//				       const u8 *aad, int aadlen);
+ //
+ // This function processes the AAD (Additional Authenticated Data) in GCM.
+ // Using the key |key|, it updates the GHASH accumulator |ghash_acc| with the
+@@ -1110,7 +1076,7 @@ SYM_FUNC_END(aes_gcm_dec_update_vaes_avx10_512)
+ // VEX-coded instructions instead of EVEX-coded to save some instruction bytes.
+ // To optimize for large amounts of AAD, we could implement a 4x-wide loop and
+ // provide a version using 512-bit vectors, but that doesn't seem to be useful.
+-SYM_FUNC_START(aes_gcm_aad_update_vaes_avx10)
++SYM_FUNC_START(aes_gcm_aad_update_vaes_avx512)
+ 
+ 	// Function arguments
+ 	.set	KEY,		%rdi
+@@ -1178,11 +1144,11 @@ SYM_FUNC_START(aes_gcm_aad_update_vaes_avx10)
+ 
+ 	vzeroupper	// This is needed after using ymm or zmm registers.
+ 	RET
+-SYM_FUNC_END(aes_gcm_aad_update_vaes_avx10)
++SYM_FUNC_END(aes_gcm_aad_update_vaes_avx512)
+ 
+-SYM_FUNC_START(aes_gcm_enc_final_vaes_avx10)
++SYM_FUNC_START(aes_gcm_enc_final_vaes_avx512)
+ 	_aes_gcm_final	1
+-SYM_FUNC_END(aes_gcm_enc_final_vaes_avx10)
+-SYM_FUNC_START(aes_gcm_dec_final_vaes_avx10)
++SYM_FUNC_END(aes_gcm_enc_final_vaes_avx512)
++SYM_FUNC_START(aes_gcm_dec_final_vaes_avx512)
+ 	_aes_gcm_final	0
+-SYM_FUNC_END(aes_gcm_dec_final_vaes_avx10)
++SYM_FUNC_END(aes_gcm_dec_final_vaes_avx512)
+diff --git a/arch/x86/crypto/aesni-intel_glue.c b/arch/x86/crypto/aesni-intel_glue.c
+index 1ed851320..bb6e2c47f 100644
+--- a/arch/x86/crypto/aesni-intel_glue.c
++++ b/arch/x86/crypto/aesni-intel_glue.c
+@@ -904,8 +904,8 @@ struct aes_gcm_key_vaes_avx2 {
+ #define AES_GCM_KEY_VAES_AVX2_SIZE \
+ 	(sizeof(struct aes_gcm_key_vaes_avx2) + (31 & ~(CRYPTO_MINALIGN - 1)))
+ 
+-/* Key struct used by the VAES + AVX10 implementations of AES-GCM */
+-struct aes_gcm_key_avx10 {
++/* Key struct used by the VAES + AVX512 implementation of AES-GCM */
++struct aes_gcm_key_vaes_avx512 {
+ 	/*
+ 	 * Common part of the key.  The assembly code prefers 16-byte alignment
+ 	 * for the round keys; we get this by them being located at the start of
+@@ -925,10 +925,10 @@ struct aes_gcm_key_avx10 {
+ 	/* Three padding blocks required by the assembly code */
+ 	u64 padding[3][2];
+ };
+-#define AES_GCM_KEY_AVX10(key)	\
+-	container_of((key), struct aes_gcm_key_avx10, base)
+-#define AES_GCM_KEY_AVX10_SIZE	\
+-	(sizeof(struct aes_gcm_key_avx10) + (63 & ~(CRYPTO_MINALIGN - 1)))
++#define AES_GCM_KEY_VAES_AVX512(key) \
++	container_of((key), struct aes_gcm_key_vaes_avx512, base)
++#define AES_GCM_KEY_VAES_AVX512_SIZE \
++	(sizeof(struct aes_gcm_key_vaes_avx512) + (63 & ~(CRYPTO_MINALIGN - 1)))
+ 
+ /*
+  * These flags are passed to the AES-GCM helper functions to specify the
+@@ -941,12 +941,12 @@ struct aes_gcm_key_avx10 {
+ #define FLAG_ENC	BIT(1)
+ #define FLAG_AVX	BIT(2)
+ #define FLAG_VAES_AVX2	BIT(3)
+-#define FLAG_AVX10_512	BIT(4)
++#define FLAG_VAES_AVX512 BIT(4)
+ 
+ static inline struct aes_gcm_key *
+ aes_gcm_key_get(struct crypto_aead *tfm, int flags)
+ {
+-	if (flags & FLAG_AVX10_512)
++	if (flags & FLAG_VAES_AVX512)
+ 		return PTR_ALIGN(crypto_aead_ctx(tfm), 64);
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		return PTR_ALIGN(crypto_aead_ctx(tfm), 32);
+@@ -961,12 +961,12 @@ aes_gcm_precompute_aesni_avx(struct aes_gcm_key_aesni *key);
+ asmlinkage void
+ aes_gcm_precompute_vaes_avx2(struct aes_gcm_key_vaes_avx2 *key);
+ asmlinkage void
+-aes_gcm_precompute_vaes_avx10_512(struct aes_gcm_key_avx10 *key);
++aes_gcm_precompute_vaes_avx512(struct aes_gcm_key_vaes_avx512 *key);
+ 
+ static void aes_gcm_precompute(struct aes_gcm_key *key, int flags)
+ {
+-	if (flags & FLAG_AVX10_512)
+-		aes_gcm_precompute_vaes_avx10_512(AES_GCM_KEY_AVX10(key));
++	if (flags & FLAG_VAES_AVX512)
++		aes_gcm_precompute_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key));
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		aes_gcm_precompute_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key));
+ 	else if (flags & FLAG_AVX)
+@@ -985,15 +985,15 @@ asmlinkage void
+ aes_gcm_aad_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			     u8 ghash_acc[16], const u8 *aad, int aadlen);
+ asmlinkage void
+-aes_gcm_aad_update_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+-			      u8 ghash_acc[16], const u8 *aad, int aadlen);
++aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++			       u8 ghash_acc[16], const u8 *aad, int aadlen);
+ 
+ static void aes_gcm_aad_update(const struct aes_gcm_key *key, u8 ghash_acc[16],
+ 			       const u8 *aad, int aadlen, int flags)
+ {
+-	if (flags & FLAG_AVX10_512)
+-		aes_gcm_aad_update_vaes_avx10(AES_GCM_KEY_AVX10(key), ghash_acc,
+-					      aad, aadlen);
++	if (flags & FLAG_VAES_AVX512)
++		aes_gcm_aad_update_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
++					       ghash_acc, aad, aadlen);
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		aes_gcm_aad_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 					     ghash_acc, aad, aadlen);
+@@ -1018,9 +1018,9 @@ aes_gcm_enc_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     const u8 *src, u8 *dst, int datalen);
+ asmlinkage void
+-aes_gcm_enc_update_vaes_avx10_512(const struct aes_gcm_key_avx10 *key,
+-				  const u32 le_ctr[4], u8 ghash_acc[16],
+-				  const u8 *src, u8 *dst, int datalen);
++aes_gcm_enc_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++			       const u32 le_ctr[4], u8 ghash_acc[16],
++			       const u8 *src, u8 *dst, int datalen);
+ 
+ asmlinkage void
+ aes_gcm_dec_update_aesni(const struct aes_gcm_key_aesni *key,
+@@ -1035,9 +1035,9 @@ aes_gcm_dec_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			     const u32 le_ctr[4], u8 ghash_acc[16],
+ 			     const u8 *src, u8 *dst, int datalen);
+ asmlinkage void
+-aes_gcm_dec_update_vaes_avx10_512(const struct aes_gcm_key_avx10 *key,
+-				  const u32 le_ctr[4], u8 ghash_acc[16],
+-				  const u8 *src, u8 *dst, int datalen);
++aes_gcm_dec_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++			       const u32 le_ctr[4], u8 ghash_acc[16],
++			       const u8 *src, u8 *dst, int datalen);
+ 
+ /* __always_inline to optimize out the branches based on @flags */
+ static __always_inline void
+@@ -1046,10 +1046,10 @@ aes_gcm_update(const struct aes_gcm_key *key,
+ 	       const u8 *src, u8 *dst, int datalen, int flags)
+ {
+ 	if (flags & FLAG_ENC) {
+-		if (flags & FLAG_AVX10_512)
+-			aes_gcm_enc_update_vaes_avx10_512(AES_GCM_KEY_AVX10(key),
+-							  le_ctr, ghash_acc,
+-							  src, dst, datalen);
++		if (flags & FLAG_VAES_AVX512)
++			aes_gcm_enc_update_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
++						       le_ctr, ghash_acc,
++						       src, dst, datalen);
+ 		else if (flags & FLAG_VAES_AVX2)
+ 			aes_gcm_enc_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 						     le_ctr, ghash_acc,
+@@ -1062,10 +1062,10 @@ aes_gcm_update(const struct aes_gcm_key *key,
+ 			aes_gcm_enc_update_aesni(AES_GCM_KEY_AESNI(key), le_ctr,
+ 						 ghash_acc, src, dst, datalen);
+ 	} else {
+-		if (flags & FLAG_AVX10_512)
+-			aes_gcm_dec_update_vaes_avx10_512(AES_GCM_KEY_AVX10(key),
+-							  le_ctr, ghash_acc,
+-							  src, dst, datalen);
++		if (flags & FLAG_VAES_AVX512)
++			aes_gcm_dec_update_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
++						       le_ctr, ghash_acc,
++						       src, dst, datalen);
+ 		else if (flags & FLAG_VAES_AVX2)
+ 			aes_gcm_dec_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 						     le_ctr, ghash_acc,
+@@ -1094,9 +1094,9 @@ aes_gcm_enc_final_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			    const u32 le_ctr[4], u8 ghash_acc[16],
+ 			    u64 total_aadlen, u64 total_datalen);
+ asmlinkage void
+-aes_gcm_enc_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+-			     const u32 le_ctr[4], u8 ghash_acc[16],
+-			     u64 total_aadlen, u64 total_datalen);
++aes_gcm_enc_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++			      const u32 le_ctr[4], u8 ghash_acc[16],
++			      u64 total_aadlen, u64 total_datalen);
+ 
+ /* __always_inline to optimize out the branches based on @flags */
+ static __always_inline void
+@@ -1104,10 +1104,10 @@ aes_gcm_enc_final(const struct aes_gcm_key *key,
+ 		  const u32 le_ctr[4], u8 ghash_acc[16],
+ 		  u64 total_aadlen, u64 total_datalen, int flags)
+ {
+-	if (flags & FLAG_AVX10_512)
+-		aes_gcm_enc_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
+-					     le_ctr, ghash_acc,
+-					     total_aadlen, total_datalen);
++	if (flags & FLAG_VAES_AVX512)
++		aes_gcm_enc_final_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
++					      le_ctr, ghash_acc,
++					      total_aadlen, total_datalen);
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		aes_gcm_enc_final_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 					    le_ctr, ghash_acc,
+@@ -1138,10 +1138,10 @@ aes_gcm_dec_final_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
+ 			    u64 total_aadlen, u64 total_datalen,
+ 			    const u8 tag[16], int taglen);
+ asmlinkage bool __must_check
+-aes_gcm_dec_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
+-			     const u32 le_ctr[4], const u8 ghash_acc[16],
+-			     u64 total_aadlen, u64 total_datalen,
+-			     const u8 tag[16], int taglen);
++aes_gcm_dec_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++			      const u32 le_ctr[4], const u8 ghash_acc[16],
++			      u64 total_aadlen, u64 total_datalen,
++			      const u8 tag[16], int taglen);
+ 
+ /* __always_inline to optimize out the branches based on @flags */
+ static __always_inline bool __must_check
+@@ -1149,11 +1149,11 @@ aes_gcm_dec_final(const struct aes_gcm_key *key, const u32 le_ctr[4],
+ 		  u8 ghash_acc[16], u64 total_aadlen, u64 total_datalen,
+ 		  u8 tag[16], int taglen, int flags)
+ {
+-	if (flags & FLAG_AVX10_512)
+-		return aes_gcm_dec_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
+-						    le_ctr, ghash_acc,
+-						    total_aadlen, total_datalen,
+-						    tag, taglen);
++	if (flags & FLAG_VAES_AVX512)
++		return aes_gcm_dec_final_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
++						     le_ctr, ghash_acc,
++						     total_aadlen, total_datalen,
++						     tag, taglen);
+ 	else if (flags & FLAG_VAES_AVX2)
+ 		return aes_gcm_dec_final_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
+ 						   le_ctr, ghash_acc,
+@@ -1245,10 +1245,10 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, base.aes_key.key_length) != 480);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, h_powers) != 512);
+ 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, h_powers_xored) != 640);
+-	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, base.aes_key.key_enc) != 0);
+-	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, base.aes_key.key_length) != 480);
+-	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, h_powers) != 512);
+-	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, padding) != 768);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, base.aes_key.key_enc) != 0);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, base.aes_key.key_length) != 480);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, h_powers) != 512);
++	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, padding) != 768);
+ 
+ 	if (likely(crypto_simd_usable())) {
+ 		err = aes_check_keylen(keylen);
+@@ -1281,8 +1281,9 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
+ 		gf128mul_lle(&h, (const be128 *)x_to_the_minus1);
+ 
+ 		/* Compute the needed key powers */
+-		if (flags & FLAG_AVX10_512) {
+-			struct aes_gcm_key_avx10 *k = AES_GCM_KEY_AVX10(key);
++		if (flags & FLAG_VAES_AVX512) {
++			struct aes_gcm_key_vaes_avx512 *k =
++				AES_GCM_KEY_VAES_AVX512(key);
+ 
+ 			for (i = ARRAY_SIZE(k->h_powers) - 1; i >= 0; i--) {
+ 				k->h_powers[i][0] = be64_to_cpu(h.b);
+@@ -1579,10 +1580,10 @@ DEFINE_GCM_ALGS(vaes_avx2, FLAG_VAES_AVX2,
+ 		"generic-gcm-vaes-avx2", "rfc4106-gcm-vaes-avx2",
+ 		AES_GCM_KEY_VAES_AVX2_SIZE, 600);
+ 
+-/* aes_gcm_algs_vaes_avx10_512 */
+-DEFINE_GCM_ALGS(vaes_avx10_512, FLAG_AVX10_512,
+-		"generic-gcm-vaes-avx10_512", "rfc4106-gcm-vaes-avx10_512",
+-		AES_GCM_KEY_AVX10_SIZE, 800);
++/* aes_gcm_algs_vaes_avx512 */
++DEFINE_GCM_ALGS(vaes_avx512, FLAG_VAES_AVX512,
++		"generic-gcm-vaes-avx512", "rfc4106-gcm-vaes-avx512",
++		AES_GCM_KEY_VAES_AVX512_SIZE, 800);
+ 
+ static int __init register_avx_algs(void)
+ {
+@@ -1631,16 +1632,16 @@ static int __init register_avx_algs(void)
+ 
+ 		for (i = 0; i < ARRAY_SIZE(skcipher_algs_vaes_avx512); i++)
+ 			skcipher_algs_vaes_avx512[i].base.cra_priority = 1;
+-		for (i = 0; i < ARRAY_SIZE(aes_gcm_algs_vaes_avx10_512); i++)
+-			aes_gcm_algs_vaes_avx10_512[i].base.cra_priority = 1;
++		for (i = 0; i < ARRAY_SIZE(aes_gcm_algs_vaes_avx512); i++)
++			aes_gcm_algs_vaes_avx512[i].base.cra_priority = 1;
+ 	}
+ 
+ 	err = crypto_register_skciphers(skcipher_algs_vaes_avx512,
+ 					ARRAY_SIZE(skcipher_algs_vaes_avx512));
+ 	if (err)
+ 		return err;
+-	err = crypto_register_aeads(aes_gcm_algs_vaes_avx10_512,
+-				    ARRAY_SIZE(aes_gcm_algs_vaes_avx10_512));
++	err = crypto_register_aeads(aes_gcm_algs_vaes_avx512,
++				    ARRAY_SIZE(aes_gcm_algs_vaes_avx512));
+ 	if (err)
+ 		return err;
+ 
+@@ -1661,7 +1662,7 @@ static void unregister_avx_algs(void)
+ 	unregister_skciphers(skcipher_algs_vaes_avx2);
+ 	unregister_skciphers(skcipher_algs_vaes_avx512);
+ 	unregister_aeads(aes_gcm_algs_vaes_avx2);
+-	unregister_aeads(aes_gcm_algs_vaes_avx10_512);
++	unregister_aeads(aes_gcm_algs_vaes_avx512);
+ }
+ #else /* CONFIG_X86_64 */
+ static struct aead_alg aes_gcm_algs_aesni[0];
+-- 
+2.52.0
+
+
+From ccf1f4745ebd4d1e853a694967c04aca5bfde9f8 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:13 -0700
+Subject: [PATCH 04/13] crypto: x86/aes-gcm - clean up AVX512 code to assume
+ 512-bit vectors
+
+aes-gcm-vaes-avx512.S (originally aes-gcm-avx10-x86_64.S) was designed
+to support multiple maximum vector lengths, while still utilizing AVX512
+/ AVX10 features such as the increased number of vector registers.
+However, the support for multiple maximum vector lengths turned out to
+not be useful.  Support for maximum vector lengths other than 512 bits
+was removed from the AVX10 specification, which leaves "avoiding
+overly-eager downclocking" as the only remaining use case for limiting
+AVX512 / AVX10 code to 256-bit vectors.  But this issue has gone away in
+new CPUs, and the separate VAES+AVX2 code which I ended up having to
+write anyway provides nearly as good 256-bit support.
+
+Therefore, clean up this code to not be written in terms of a generic
+vector length, but rather just assume 512-bit vectors.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/aes-gcm-vaes-avx512.S | 353 +++++++++++---------------
+ 1 file changed, 153 insertions(+), 200 deletions(-)
+
+diff --git a/arch/x86/crypto/aes-gcm-vaes-avx512.S b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+index be5c14d33..3edf829c2 100644
+--- a/arch/x86/crypto/aes-gcm-vaes-avx512.S
++++ b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+@@ -70,16 +70,14 @@
  .Lgfpoly_and_internal_carrybit:
  	.octa	0xc2000000000000010000000000000001
  
@@ -1305,7 +2321,7 @@ index 02ee11083..06b71314d 100644
  .Linc_4blocks:
  	.octa	4
  
-@@ -130,29 +94,13 @@
+@@ -96,29 +94,13 @@
  // Offset to end of hash key powers array in the key struct.
  //
  // This is immediately followed by three zeroized padding blocks, which are
@@ -1338,41 +2354,16 @@ index 02ee11083..06b71314d 100644
  // The _ghash_mul_step macro does one step of GHASH multiplication of the
  // 128-bit lanes of \a by the corresponding 128-bit lanes of \b and storing the
  // reduced products in \dst.  \t0, \t1, and \t2 are temporary registers of the
-@@ -312,39 +260,44 @@
- 	vpternlogd	$0x96, \t0, \mi, \hi
- .endm
- 
--// void aes_gcm_precompute_##suffix(struct aes_gcm_key_avx10 *key);
-+// This is a specialized version of _ghash_mul that computes \a * \a, i.e. it
-+// squares \a.  It skips computing MI = (a_L * a_H) + (a_H * a_L) = 0.
-+.macro	_ghash_square	a, dst, gfpoly, t0, t1
-+	vpclmulqdq	$0x00, \a, \a, \t0	  // LO = a_L * a_L
-+	vpclmulqdq	$0x11, \a, \a, \dst	  // HI = a_H * a_H
-+	vpclmulqdq	$0x01, \t0, \gfpoly, \t1  // LO_L*(x^63 + x^62 + x^57)
-+	vpshufd		$0x4e, \t0, \t0		  // Swap halves of LO
-+	vpxord		\t0, \t1, \t1		  // Fold LO into MI
-+	vpclmulqdq	$0x01, \t1, \gfpoly, \t0  // MI_L*(x^63 + x^62 + x^57)
-+	vpshufd		$0x4e, \t1, \t1		  // Swap halves of MI
-+	vpternlogd	$0x96, \t0, \t1, \dst	  // Fold MI into HI
-+.endm
-+
-+// void aes_gcm_precompute_vaes_avx512(struct aes_gcm_key_vaes_avx512 *key);
- //
--// Given the expanded AES key |key->aes_key|, this function derives the GHASH
--// subkey and initializes |key->ghash_key_powers| with powers of it.
--//
--// The number of key powers initialized is NUM_H_POWERS, and they are stored in
--// the order H^NUM_H_POWERS to H^1.  The zeroized padding blocks after the key
--// powers themselves are also initialized.
+@@ -286,31 +268,27 @@
+ // The number of key powers initialized is NUM_H_POWERS, and they are stored in
+ // the order H^NUM_H_POWERS to H^1.  The zeroized padding blocks after the key
+ // powers themselves are also initialized.
 -//
 -// This macro supports both VL=32 and VL=64.  _set_veclen must have been invoked
 -// with the desired length.  In the VL=32 case, the function computes twice as
 -// many key powers than are actually used by the VL=32 GCM update functions.
 -// This is done to keep the key format the same regardless of vector length.
--.macro	_aes_gcm_precompute
-+// Given the expanded AES key |key->base.aes_key|, derive the GHASH subkey and
-+// initialize |key->h_powers| and |key->padding|.
-+SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
+ .macro	_aes_gcm_precompute
  
  	// Function arguments
  	.set	KEY,		%rdi
@@ -1401,7 +2392,7 @@ index 02ee11083..06b71314d 100644
  
  	// Encrypt an all-zeroes block to get the raw hash subkey.
  	movl		OFFSETOF_AESKEYLEN(KEY), %eax
-@@ -363,8 +316,8 @@
+@@ -329,8 +307,8 @@
  
  	// Zeroize the padding blocks.
  	vpxor		%xmm0, %xmm0, %xmm0
@@ -1412,15 +2403,7 @@ index 02ee11083..06b71314d 100644
  
  	// Finish preprocessing the first key power, H^1.  Since this GHASH
  	// implementation operates directly on values with the backwards bit
-@@ -397,54 +350,44 @@
- 	// special needs to be done to make this happen, though: H^1 * H^1 would
- 	// end up with two factors of x^-1, but the multiplication consumes one.
- 	// So the product H^2 ends up with the desired one factor of x^-1.
--	_ghash_mul	H_CUR_XMM, H_CUR_XMM, H_INC_XMM, GFPOLY_XMM, \
--			%xmm0, %xmm1, %xmm2
-+	_ghash_square	H_CUR_XMM, H_INC_XMM, GFPOLY_XMM, %xmm0, %xmm1
- 
- 	// Create H_CUR_YMM = [H^2, H^1] and H_INC_YMM = [H^2, H^2].
+@@ -370,25 +348,22 @@
  	vinserti128	$1, H_CUR_XMM, H_INC_YMM, H_CUR_YMM
  	vinserti128	$1, H_INC_XMM, H_INC_YMM, H_INC_YMM
  
@@ -1442,24 +2425,16 @@ index 02ee11083..06b71314d 100644
 +	// Repeatedly multiply [H^(i+3), H^(i+2), H^(i+1), H^i] by
  	// [H^4, H^4, H^4, H^4] to get [H^(i+7), H^(i+6), H^(i+5), H^(i+4)].
 -	mov		$(NUM_H_POWERS*16/VL) - 1, %eax
--.Lprecompute_next\@:
++	mov		$3, %eax
+ .Lprecompute_next\@:
 -	sub		$VL, POWERS_PTR
 -	_ghash_mul	H_INC, H_CUR, H_CUR, GFPOLY, V0, V1, V2
-+	mov		$3, %eax
-+.Lprecompute_next:
 +	sub		$64, POWERS_PTR
 +	_ghash_mul	H_INC, H_CUR, H_CUR, GFPOLY, %zmm0, %zmm1, %zmm2
  	vmovdqu8	H_CUR, (POWERS_PTR)
  	dec		%eax
--	jnz		.Lprecompute_next\@
-+	jnz		.Lprecompute_next
- 
- 	vzeroupper	// This is needed after using ymm or zmm registers.
- 	RET
--.endm
-+SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
- 
- // XOR together the 128-bit lanes of \src (whose low lane is \src_xmm) and store
+ 	jnz		.Lprecompute_next\@
+@@ -401,16 +376,10 @@
  // the result in \dst_xmm.  This implicitly zeroizes the other lanes of dst.
  .macro	_horizontal_xor	src, src_xmm, dst_xmm, t0_xmm, t1_xmm, t2_xmm
  	vextracti32x4	$1, \src, \t0_xmm
@@ -1476,7 +2451,7 @@ index 02ee11083..06b71314d 100644
  .endm
  
  // Do one step of the GHASH update of the data blocks given in the vector
-@@ -458,25 +401,21 @@
+@@ -424,25 +393,21 @@
  //
  // The GHASH update does: GHASH_ACC = H_POW4*(GHASHDATA0 + GHASH_ACC) +
  // H_POW3*GHASHDATA1 + H_POW2*GHASHDATA2 + H_POW1*GHASHDATA3, where the
@@ -1511,153 +2486,12 @@ index 02ee11083..06b71314d 100644
  //   - Sum (XOR) these values and store the 128-bit result in GHASH_ACC_XMM.
  //
  // See _ghash_mul_step for the full explanation of the operations performed for
-@@ -532,85 +471,224 @@
+@@ -498,60 +463,60 @@
  .endif
  .endm
  
 -// Do one non-last round of AES encryption on the counter blocks in V0-V3 using
 -// the round key that has been broadcast to all 128-bit lanes of \round_key.
-+// Update GHASH with four vectors of data blocks.  See _ghash_step_4x for full
-+// explanation.
-+.macro	_ghash_4x
-+.irp i, 0,1,2,3,4,5,6,7,8,9
-+	_ghash_step_4x	\i
-+.endr
-+.endm
-+
-+// void aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+//				       u8 ghash_acc[16],
-+//				       const u8 *aad, int aadlen);
-+//
-+// This function processes the AAD (Additional Authenticated Data) in GCM.
-+// Using the key |key|, it updates the GHASH accumulator |ghash_acc| with the
-+// data given by |aad| and |aadlen|.  On the first call, |ghash_acc| must be all
-+// zeroes.  |aadlen| must be a multiple of 16, except on the last call where it
-+// can be any length.  The caller must do any buffering needed to ensure this.
-+//
-+// This handles large amounts of AAD efficiently, while also keeping overhead
-+// low for small amounts which is the common case.  TLS and IPsec use less than
-+// one block of AAD, but (uncommonly) other use cases may use much more.
-+SYM_FUNC_START(aes_gcm_aad_update_vaes_avx512)
-+
-+	// Function arguments
-+	.set	KEY,		%rdi
-+	.set	GHASH_ACC_PTR,	%rsi
-+	.set	AAD,		%rdx
-+	.set	AADLEN,		%ecx
-+	.set	AADLEN64,	%rcx	// Zero-extend AADLEN before using!
-+
-+	// Additional local variables.
-+	// %rax and %k1 are used as temporary registers.
-+	.set	GHASHDATA0,	%zmm0
-+	.set	GHASHDATA0_XMM,	%xmm0
-+	.set	GHASHDATA1,	%zmm1
-+	.set	GHASHDATA1_XMM,	%xmm1
-+	.set	GHASHDATA2,	%zmm2
-+	.set	GHASHDATA2_XMM,	%xmm2
-+	.set	GHASHDATA3,	%zmm3
-+	.set	BSWAP_MASK,	%zmm4
-+	.set	BSWAP_MASK_XMM,	%xmm4
-+	.set	GHASH_ACC,	%zmm5
-+	.set	GHASH_ACC_XMM,	%xmm5
-+	.set	H_POW4,		%zmm6
-+	.set	H_POW3,		%zmm7
-+	.set	H_POW2,		%zmm8
-+	.set	H_POW1,		%zmm9
-+	.set	H_POW1_XMM,	%xmm9
-+	.set	GFPOLY,		%zmm10
-+	.set	GFPOLY_XMM,	%xmm10
-+	.set	GHASHTMP0,	%zmm11
-+	.set	GHASHTMP1,	%zmm12
-+	.set	GHASHTMP2,	%zmm13
-+
-+	// Load the GHASH accumulator.
-+	vmovdqu		(GHASH_ACC_PTR), GHASH_ACC_XMM
-+
-+	// Check for the common case of AADLEN <= 16, as well as AADLEN == 0.
-+	cmp		$16, AADLEN
-+	jg		.Laad_more_than_16bytes
-+	test		AADLEN, AADLEN
-+	jz		.Laad_done
-+
-+	// Fast path: update GHASH with 1 <= AADLEN <= 16 bytes of AAD.
-+	vmovdqu		.Lbswap_mask(%rip), BSWAP_MASK_XMM
-+	vmovdqu		.Lgfpoly(%rip), GFPOLY_XMM
-+	mov		$-1, %eax
-+	bzhi		AADLEN, %eax, %eax
-+	kmovd		%eax, %k1
-+	vmovdqu8	(AAD), GHASHDATA0_XMM{%k1}{z}
-+	vmovdqu		OFFSETOFEND_H_POWERS-16(KEY), H_POW1_XMM
-+	vpshufb		BSWAP_MASK_XMM, GHASHDATA0_XMM, GHASHDATA0_XMM
-+	vpxor		GHASHDATA0_XMM, GHASH_ACC_XMM, GHASH_ACC_XMM
-+	_ghash_mul	H_POW1_XMM, GHASH_ACC_XMM, GHASH_ACC_XMM, GFPOLY_XMM, \
-+			GHASHDATA0_XMM, GHASHDATA1_XMM, GHASHDATA2_XMM
-+	jmp		.Laad_done
-+
-+.Laad_more_than_16bytes:
-+	vbroadcasti32x4	.Lbswap_mask(%rip), BSWAP_MASK
-+	vbroadcasti32x4	.Lgfpoly(%rip), GFPOLY
-+
-+	// If AADLEN >= 256, update GHASH with 256 bytes of AAD at a time.
-+	sub		$256, AADLEN
-+	jl		.Laad_loop_4x_done
-+	vmovdqu8	OFFSETOFEND_H_POWERS-4*64(KEY), H_POW4
-+	vmovdqu8	OFFSETOFEND_H_POWERS-3*64(KEY), H_POW3
-+	vmovdqu8	OFFSETOFEND_H_POWERS-2*64(KEY), H_POW2
-+	vmovdqu8	OFFSETOFEND_H_POWERS-1*64(KEY), H_POW1
-+.Laad_loop_4x:
-+	vmovdqu8	0*64(AAD), GHASHDATA0
-+	vmovdqu8	1*64(AAD), GHASHDATA1
-+	vmovdqu8	2*64(AAD), GHASHDATA2
-+	vmovdqu8	3*64(AAD), GHASHDATA3
-+	_ghash_4x
-+	add		$256, AAD
-+	sub		$256, AADLEN
-+	jge		.Laad_loop_4x
-+.Laad_loop_4x_done:
-+
-+	// If AADLEN >= 64, update GHASH with 64 bytes of AAD at a time.
-+	add		$192, AADLEN
-+	jl		.Laad_loop_1x_done
-+	vmovdqu8	OFFSETOFEND_H_POWERS-1*64(KEY), H_POW1
-+.Laad_loop_1x:
-+	vmovdqu8	(AAD), GHASHDATA0
-+	vpshufb		BSWAP_MASK, GHASHDATA0, GHASHDATA0
-+	vpxord		GHASHDATA0, GHASH_ACC, GHASH_ACC
-+	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
-+			GHASHDATA0, GHASHDATA1, GHASHDATA2
-+	_horizontal_xor GHASH_ACC, GHASH_ACC_XMM, GHASH_ACC_XMM, \
-+			GHASHDATA0_XMM, GHASHDATA1_XMM, GHASHDATA2_XMM
-+	add		$64, AAD
-+	sub		$64, AADLEN
-+	jge		.Laad_loop_1x
-+.Laad_loop_1x_done:
-+
-+	// Update GHASH with the remaining 0 <= AADLEN < 64 bytes of AAD.
-+	add		$64, AADLEN
-+	jz		.Laad_done
-+	mov		$-1, %rax
-+	bzhi		AADLEN64, %rax, %rax
-+	kmovq		%rax, %k1
-+	vmovdqu8	(AAD), GHASHDATA0{%k1}{z}
-+	neg		AADLEN64
-+	and		$~15, AADLEN64  // -round_up(AADLEN, 16)
-+	vmovdqu8	OFFSETOFEND_H_POWERS(KEY,AADLEN64), H_POW1
-+	vpshufb		BSWAP_MASK, GHASHDATA0, GHASHDATA0
-+	vpxord		GHASHDATA0, GHASH_ACC, GHASH_ACC
-+	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
-+			GHASHDATA0, GHASHDATA1, GHASHDATA2
-+	_horizontal_xor GHASH_ACC, GHASH_ACC_XMM, GHASH_ACC_XMM, \
-+			GHASHDATA0_XMM, GHASHDATA1_XMM, GHASHDATA2_XMM
-+
-+.Laad_done:
-+	// Store the updated GHASH accumulator back to memory.
-+	vmovdqu		GHASH_ACC_XMM, (GHASH_ACC_PTR)
-+
-+	vzeroupper	// This is needed after using ymm or zmm registers.
-+	RET
-+SYM_FUNC_END(aes_gcm_aad_update_vaes_avx512)
-+
 +// Do one non-last round of AES encryption on the blocks in %zmm[0-3] using the
 +// round key that has been broadcast to all 128-bit lanes of \round_key.
  .macro	_vaesenc_4x	round_key
@@ -1741,12 +2575,9 @@ index 02ee11083..06b71314d 100644
 +	vmovdqu8	GHASHDATA3, 3*64(DST)
  .endm
  
--// void aes_gcm_{enc,dec}_update_##suffix(const struct aes_gcm_key_avx10 *key,
--//					  const u32 le_ctr[4], u8 ghash_acc[16],
--//					  const u8 *src, u8 *dst, int datalen);
-+// void aes_gcm_{enc,dec}_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+//					     const u32 le_ctr[4], u8 ghash_acc[16],
-+//					     const u8 *src, u8 *dst, int datalen);
+ // void aes_gcm_{enc,dec}_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
+@@ -559,13 +524,11 @@
+ //					     const u8 *src, u8 *dst, int datalen);
  //
  // This macro generates a GCM encryption or decryption update function with the
 -// above prototype (with \enc selecting which one).  This macro supports both
@@ -1764,24 +2595,7 @@ index 02ee11083..06b71314d 100644
  //
  // |datalen| must be a multiple of 16, except on the last call where it can be
  // any length.  The caller must do any buffering needed to ensure this.  Both
- // in-place and out-of-place en/decryption are supported.
- //
--// |le_ctr| must give the current counter in little-endian format.  For a new
--// message, the low word of the counter must be 2.  This function loads the
--// counter from |le_ctr| and increments the loaded counter as needed, but it
--// does *not* store the updated counter back to |le_ctr|.  The caller must
--// update |le_ctr| if any more data segments follow.  Internally, only the low
--// 32-bit word of the counter is incremented, following the GCM standard.
-+// |le_ctr| must give the current counter in little-endian format.  This
-+// function loads the counter from |le_ctr| and increments the loaded counter as
-+// needed, but it does *not* store the updated counter back to |le_ctr|.  The
-+// caller must update |le_ctr| if any more data segments follow.  Internally,
-+// only the low 32-bit word of the counter is incremented, following the GCM
-+// standard.
- .macro	_aes_gcm_update	enc
- 
- 	// Function arguments
-@@ -634,69 +712,69 @@
+@@ -600,69 +563,69 @@
  	// Pointer to the last AES round key for the chosen AES variant
  	.set	RNDKEYLAST_PTR,	%r11
  
@@ -1882,7 +2696,7 @@ index 02ee11083..06b71314d 100644
  
  	// Load some constants.
  	vbroadcasti32x4	.Lbswap_mask(%rip), BSWAP_MASK
-@@ -719,29 +797,23 @@
+@@ -685,29 +648,23 @@
  	// Finish initializing LE_CTR by adding [0, 1, ...] to its low words.
  	vpaddd		.Lctr_pattern(%rip), LE_CTR, LE_CTR
  
@@ -1921,7 +2735,7 @@ index 02ee11083..06b71314d 100644
  
  	// Main loop: en/decrypt and hash 4 vectors at a time.
  	//
-@@ -770,9 +842,9 @@
+@@ -736,9 +693,9 @@
  	cmp		%rax, RNDKEYLAST_PTR
  	jne		1b
  	_aesenclast_and_xor_4x
@@ -1934,7 +2748,7 @@ index 02ee11083..06b71314d 100644
  	jl		.Lghash_last_ciphertext_4x\@
  .endif
  
-@@ -786,10 +858,10 @@
+@@ -752,10 +709,10 @@
  	// If decrypting, load more ciphertext blocks into GHASHDATA[0-3].  If
  	// encrypting, GHASHDATA[0-3] already contain the previous ciphertext.
  .if !\enc
@@ -1949,7 +2763,7 @@ index 02ee11083..06b71314d 100644
  .endif
  
  	// Start the AES encryption of the counter blocks.
-@@ -809,44 +881,44 @@
+@@ -775,17 +732,18 @@
  	_vaesenc_4x	RNDKEY
  128:
  
@@ -1973,13 +2787,7 @@ index 02ee11083..06b71314d 100644
  	jge		.Lcrypt_loop_4x\@
  
  .if \enc
- .Lghash_last_ciphertext_4x\@:
- 	// Update GHASH with the last set of ciphertext blocks.
--.irp i, 0,1,2,3,4,5,6,7,8,9
--	_ghash_step_4x	\i
--.endr
-+	_ghash_4x
- .endif
+@@ -798,21 +756,22 @@
  
  .Lcrypt_loop_4x_done\@:
  
@@ -2014,7 +2822,7 @@ index 02ee11083..06b71314d 100644
  	//
  	// Since there are enough key powers available for all remaining data,
  	// there is no need to do a GHASH reduction after each iteration.
-@@ -875,65 +947,60 @@
+@@ -841,65 +800,60 @@
  .Lcrypt_loop_1x\@:
  
  	// Select the appropriate mask for this iteration: all 1's if
@@ -2105,62 +2913,185 @@ index 02ee11083..06b71314d 100644
  	_horizontal_xor	HI, HI_XMM, GHASH_ACC_XMM, %xmm0, %xmm1, %xmm2
  
  .Ldone\@:
-@@ -944,14 +1011,14 @@
+@@ -1047,7 +1001,6 @@
  	RET
  .endm
- 
--// void aes_gcm_enc_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
--//				     const u32 le_ctr[4], u8 ghash_acc[16],
--//				     u64 total_aadlen, u64 total_datalen);
--// bool aes_gcm_dec_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
--//				     const u32 le_ctr[4],
--//				     const u8 ghash_acc[16],
--//				     u64 total_aadlen, u64 total_datalen,
--//				     const u8 tag[16], int taglen);
-+// void aes_gcm_enc_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+//				      const u32 le_ctr[4], u8 ghash_acc[16],
-+//				      u64 total_aadlen, u64 total_datalen);
-+// bool aes_gcm_dec_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+//				      const u32 le_ctr[4],
-+//				      const u8 ghash_acc[16],
-+//				      u64 total_aadlen, u64 total_datalen,
-+//				      const u8 tag[16], int taglen);
- //
- // This macro generates one of the above two functions (with \enc selecting
- // which one).  Both functions finish computing the GCM authentication tag by
-@@ -1081,119 +1148,16 @@
- 	RET
- .endm
- 
--_set_veclen 32
--SYM_FUNC_START(aes_gcm_precompute_vaes_avx10_256)
--	_aes_gcm_precompute
--SYM_FUNC_END(aes_gcm_precompute_vaes_avx10_256)
--SYM_FUNC_START(aes_gcm_enc_update_vaes_avx10_256)
-+SYM_FUNC_START(aes_gcm_enc_update_vaes_avx512)
- 	_aes_gcm_update	1
--SYM_FUNC_END(aes_gcm_enc_update_vaes_avx10_256)
--SYM_FUNC_START(aes_gcm_dec_update_vaes_avx10_256)
-+SYM_FUNC_END(aes_gcm_enc_update_vaes_avx512)
-+SYM_FUNC_START(aes_gcm_dec_update_vaes_avx512)
- 	_aes_gcm_update	0
--SYM_FUNC_END(aes_gcm_dec_update_vaes_avx10_256)
-+SYM_FUNC_END(aes_gcm_dec_update_vaes_avx512)
  
 -_set_veclen 64
--SYM_FUNC_START(aes_gcm_precompute_vaes_avx10_512)
+ SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
+ 	_aes_gcm_precompute
+ SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
+-- 
+2.52.0
+
+
+From 19565ace5fda375910297151309a2021b66fc920 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:14 -0700
+Subject: [PATCH 05/13] crypto: x86/aes-gcm - reorder AVX512 precompute and
+ aad_update functions
+
+Now that the _aes_gcm_precompute macro is instantiated only once,
+replace it directly with a function definition.
+
+Also, move aes_gcm_aad_update_vaes_avx512() to a different location in
+the file so that it's consistent with aes-gcm-vaes-avx2.S and also the
+BoringSSL port of this code.
+
+No functional changes.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/aes-gcm-vaes-avx512.S | 187 +++++++++++++-------------
+ 1 file changed, 92 insertions(+), 95 deletions(-)
+
+diff --git a/arch/x86/crypto/aes-gcm-vaes-avx512.S b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+index 3edf829c2..81a8a027c 100644
+--- a/arch/x86/crypto/aes-gcm-vaes-avx512.S
++++ b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+@@ -268,7 +268,7 @@
+ // The number of key powers initialized is NUM_H_POWERS, and they are stored in
+ // the order H^NUM_H_POWERS to H^1.  The zeroized padding blocks after the key
+ // powers themselves are also initialized.
+-.macro	_aes_gcm_precompute
++SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
+ 
+ 	// Function arguments
+ 	.set	KEY,		%rdi
+@@ -361,16 +361,16 @@
+ 	// Repeatedly multiply [H^(i+3), H^(i+2), H^(i+1), H^i] by
+ 	// [H^4, H^4, H^4, H^4] to get [H^(i+7), H^(i+6), H^(i+5), H^(i+4)].
+ 	mov		$3, %eax
+-.Lprecompute_next\@:
++.Lprecompute_next:
+ 	sub		$64, POWERS_PTR
+ 	_ghash_mul	H_INC, H_CUR, H_CUR, GFPOLY, %zmm0, %zmm1, %zmm2
+ 	vmovdqu8	H_CUR, (POWERS_PTR)
+ 	dec		%eax
+-	jnz		.Lprecompute_next\@
++	jnz		.Lprecompute_next
+ 
+ 	vzeroupper	// This is needed after using ymm or zmm registers.
+ 	RET
+-.endm
++SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
+ 
+ // XOR together the 128-bit lanes of \src (whose low lane is \src_xmm) and store
+ // the result in \dst_xmm.  This implicitly zeroizes the other lanes of dst.
+@@ -463,6 +463,94 @@
+ .endif
+ .endm
+ 
++// void aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
++//				       u8 ghash_acc[16],
++//				       const u8 *aad, int aadlen);
++//
++// This function processes the AAD (Additional Authenticated Data) in GCM.
++// Using the key |key|, it updates the GHASH accumulator |ghash_acc| with the
++// data given by |aad| and |aadlen|.  |key->ghash_key_powers| must have been
++// initialized.  On the first call, |ghash_acc| must be all zeroes.  |aadlen|
++// must be a multiple of 16, except on the last call where it can be any length.
++// The caller must do any buffering needed to ensure this.
++//
++// AES-GCM is almost always used with small amounts of AAD, less than 32 bytes.
++// Therefore, for AAD processing we currently only provide this implementation
++// which uses 256-bit vectors (ymm registers) and only has a 1x-wide loop.  This
++// keeps the code size down, and it enables some micro-optimizations, e.g. using
++// VEX-coded instructions instead of EVEX-coded to save some instruction bytes.
++// To optimize for large amounts of AAD, we could implement a 4x-wide loop and
++// provide a version using 512-bit vectors, but that doesn't seem to be useful.
++SYM_FUNC_START(aes_gcm_aad_update_vaes_avx512)
++
++	// Function arguments
++	.set	KEY,		%rdi
++	.set	GHASH_ACC_PTR,	%rsi
++	.set	AAD,		%rdx
++	.set	AADLEN,		%ecx
++	.set	AADLEN64,	%rcx	// Zero-extend AADLEN before using!
++
++	// Additional local variables.
++	// %rax, %ymm0-%ymm3, and %k1 are used as temporary registers.
++	.set	BSWAP_MASK,	%ymm4
++	.set	GFPOLY,		%ymm5
++	.set	GHASH_ACC,	%ymm6
++	.set	GHASH_ACC_XMM,	%xmm6
++	.set	H_POW1,		%ymm7
++
++	// Load some constants.
++	vbroadcasti128	.Lbswap_mask(%rip), BSWAP_MASK
++	vbroadcasti128	.Lgfpoly(%rip), GFPOLY
++
++	// Load the GHASH accumulator.
++	vmovdqu		(GHASH_ACC_PTR), GHASH_ACC_XMM
++
++	// Update GHASH with 32 bytes of AAD at a time.
++	//
++	// Pre-subtracting 32 from AADLEN saves an instruction from the loop and
++	// also ensures that at least one write always occurs to AADLEN,
++	// zero-extending it and allowing AADLEN64 to be used later.
++	sub		$32, AADLEN
++	jl		.Laad_loop_1x_done
++	vmovdqu8	OFFSETOFEND_H_POWERS-32(KEY), H_POW1	// [H^2, H^1]
++.Laad_loop_1x:
++	vmovdqu		(AAD), %ymm0
++	vpshufb		BSWAP_MASK, %ymm0, %ymm0
++	vpxor		%ymm0, GHASH_ACC, GHASH_ACC
++	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
++			%ymm0, %ymm1, %ymm2
++	vextracti128	$1, GHASH_ACC, %xmm0
++	vpxor		%xmm0, GHASH_ACC_XMM, GHASH_ACC_XMM
++	add		$32, AAD
++	sub		$32, AADLEN
++	jge		.Laad_loop_1x
++.Laad_loop_1x_done:
++	add		$32, AADLEN
++	jz		.Laad_done
++
++	// Update GHASH with the remaining 1 <= AADLEN < 32 bytes of AAD.
++	mov		$-1, %eax
++	bzhi		AADLEN, %eax, %eax
++	kmovd		%eax, %k1
++	vmovdqu8	(AAD), %ymm0{%k1}{z}
++	neg		AADLEN64
++	and		$~15, AADLEN64  // -round_up(AADLEN, 16)
++	vmovdqu8	OFFSETOFEND_H_POWERS(KEY,AADLEN64), H_POW1
++	vpshufb		BSWAP_MASK, %ymm0, %ymm0
++	vpxor		%ymm0, GHASH_ACC, GHASH_ACC
++	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
++			%ymm0, %ymm1, %ymm2
++	vextracti128	$1, GHASH_ACC, %xmm0
++	vpxor		%xmm0, GHASH_ACC_XMM, GHASH_ACC_XMM
++
++.Laad_done:
++	// Store the updated GHASH accumulator back to memory.
++	vmovdqu		GHASH_ACC_XMM, (GHASH_ACC_PTR)
++
++	vzeroupper	// This is needed after using ymm or zmm registers.
++	RET
++SYM_FUNC_END(aes_gcm_aad_update_vaes_avx512)
++
+ // Do one non-last round of AES encryption on the blocks in %zmm[0-3] using the
+ // round key that has been broadcast to all 128-bit lanes of \round_key.
+ .macro	_vaesenc_4x	round_key
+@@ -1001,9 +1089,6 @@
+ 	RET
+ .endm
+ 
+-SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
 -	_aes_gcm_precompute
--SYM_FUNC_END(aes_gcm_precompute_vaes_avx10_512)
--SYM_FUNC_START(aes_gcm_enc_update_vaes_avx10_512)
--	_aes_gcm_update	1
--SYM_FUNC_END(aes_gcm_enc_update_vaes_avx10_512)
--SYM_FUNC_START(aes_gcm_dec_update_vaes_avx10_512)
--	_aes_gcm_update	0
--SYM_FUNC_END(aes_gcm_dec_update_vaes_avx10_512)
--
--// void aes_gcm_aad_update_vaes_avx10(const struct aes_gcm_key_avx10 *key,
--//				      u8 ghash_acc[16],
--//				      const u8 *aad, int aadlen);
+-SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
+ SYM_FUNC_START(aes_gcm_enc_update_vaes_avx512)
+ 	_aes_gcm_update	1
+ SYM_FUNC_END(aes_gcm_enc_update_vaes_avx512)
+@@ -1011,94 +1096,6 @@ SYM_FUNC_START(aes_gcm_dec_update_vaes_avx512)
+ 	_aes_gcm_update	0
+ SYM_FUNC_END(aes_gcm_dec_update_vaes_avx512)
+ 
+-// void aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
+-//				       u8 ghash_acc[16],
+-//				       const u8 *aad, int aadlen);
 -//
 -// This function processes the AAD (Additional Authenticated Data) in GCM.
 -// Using the key |key|, it updates the GHASH accumulator |ghash_acc| with the
@@ -2176,7 +3107,7 @@ index 02ee11083..06b71314d 100644
 -// VEX-coded instructions instead of EVEX-coded to save some instruction bytes.
 -// To optimize for large amounts of AAD, we could implement a 4x-wide loop and
 -// provide a version using 512-bit vectors, but that doesn't seem to be useful.
--SYM_FUNC_START(aes_gcm_aad_update_vaes_avx10)
+-SYM_FUNC_START(aes_gcm_aad_update_vaes_avx512)
 -
 -	// Function arguments
 -	.set	KEY,		%rdi
@@ -2244,453 +3175,451 @@ index 02ee11083..06b71314d 100644
 -
 -	vzeroupper	// This is needed after using ymm or zmm registers.
 -	RET
--SYM_FUNC_END(aes_gcm_aad_update_vaes_avx10)
+-SYM_FUNC_END(aes_gcm_aad_update_vaes_avx512)
 -
--SYM_FUNC_START(aes_gcm_enc_final_vaes_avx10)
-+SYM_FUNC_START(aes_gcm_enc_final_vaes_avx512)
+ SYM_FUNC_START(aes_gcm_enc_final_vaes_avx512)
  	_aes_gcm_final	1
--SYM_FUNC_END(aes_gcm_enc_final_vaes_avx10)
--SYM_FUNC_START(aes_gcm_dec_final_vaes_avx10)
-+SYM_FUNC_END(aes_gcm_enc_final_vaes_avx512)
-+SYM_FUNC_START(aes_gcm_dec_final_vaes_avx512)
- 	_aes_gcm_final	0
--SYM_FUNC_END(aes_gcm_dec_final_vaes_avx10)
-+SYM_FUNC_END(aes_gcm_dec_final_vaes_avx512)
-diff --git a/arch/x86/crypto/aesni-intel_glue.c b/arch/x86/crypto/aesni-intel_glue.c
-index d953ac470..bb6e2c47f 100644
---- a/arch/x86/crypto/aesni-intel_glue.c
-+++ b/arch/x86/crypto/aesni-intel_glue.c
-@@ -874,8 +874,38 @@ struct aes_gcm_key_aesni {
- #define AES_GCM_KEY_AESNI_SIZE	\
- 	(sizeof(struct aes_gcm_key_aesni) + (15 & ~(CRYPTO_MINALIGN - 1)))
+ SYM_FUNC_END(aes_gcm_enc_final_vaes_avx512)
+-- 
+2.52.0
+
+
+From 804c01f1705a4db2f804c8731f0a75fc4fe4b9cb Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:15 -0700
+Subject: [PATCH 06/13] crypto: x86/aes-gcm - revise some comments in AVX512
+ code
+
+- Fix some references to field names in struct aes_gcm_key_vaes_avx512.
+
+- Remove the mention of the counter having to start at 2.  The assembly
+  code doesn't actually assume that it does.
+
+Note that these changes improve consistency with aes-gcm-vaes-avx2.S.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/aes-gcm-vaes-avx512.S | 27 +++++++++++----------------
+ 1 file changed, 11 insertions(+), 16 deletions(-)
+
+diff --git a/arch/x86/crypto/aes-gcm-vaes-avx512.S b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+index 81a8a027c..3cf0945a2 100644
+--- a/arch/x86/crypto/aes-gcm-vaes-avx512.S
++++ b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+@@ -262,12 +262,8 @@
  
--/* Key struct used by the VAES + AVX10 implementations of AES-GCM */
--struct aes_gcm_key_avx10 {
-+/* Key struct used by the VAES + AVX2 implementation of AES-GCM */
-+struct aes_gcm_key_vaes_avx2 {
-+	/*
-+	 * Common part of the key.  The assembly code prefers 16-byte alignment
-+	 * for the round keys; we get this by them being located at the start of
-+	 * the struct and the whole struct being 32-byte aligned.
-+	 */
-+	struct aes_gcm_key base;
+ // void aes_gcm_precompute_vaes_avx512(struct aes_gcm_key_vaes_avx512 *key);
+ //
+-// Given the expanded AES key |key->aes_key|, this function derives the GHASH
+-// subkey and initializes |key->ghash_key_powers| with powers of it.
+-//
+-// The number of key powers initialized is NUM_H_POWERS, and they are stored in
+-// the order H^NUM_H_POWERS to H^1.  The zeroized padding blocks after the key
+-// powers themselves are also initialized.
++// Given the expanded AES key |key->base.aes_key|, derive the GHASH subkey and
++// initialize |key->h_powers| and |key->padding|.
+ SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
+ 
+ 	// Function arguments
+@@ -469,10 +465,9 @@ SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
+ //
+ // This function processes the AAD (Additional Authenticated Data) in GCM.
+ // Using the key |key|, it updates the GHASH accumulator |ghash_acc| with the
+-// data given by |aad| and |aadlen|.  |key->ghash_key_powers| must have been
+-// initialized.  On the first call, |ghash_acc| must be all zeroes.  |aadlen|
+-// must be a multiple of 16, except on the last call where it can be any length.
+-// The caller must do any buffering needed to ensure this.
++// data given by |aad| and |aadlen|.  On the first call, |ghash_acc| must be all
++// zeroes.  |aadlen| must be a multiple of 16, except on the last call where it
++// can be any length.  The caller must do any buffering needed to ensure this.
+ //
+ // AES-GCM is almost always used with small amounts of AAD, less than 32 bytes.
+ // Therefore, for AAD processing we currently only provide this implementation
+@@ -622,12 +617,12 @@ SYM_FUNC_END(aes_gcm_aad_update_vaes_avx512)
+ // any length.  The caller must do any buffering needed to ensure this.  Both
+ // in-place and out-of-place en/decryption are supported.
+ //
+-// |le_ctr| must give the current counter in little-endian format.  For a new
+-// message, the low word of the counter must be 2.  This function loads the
+-// counter from |le_ctr| and increments the loaded counter as needed, but it
+-// does *not* store the updated counter back to |le_ctr|.  The caller must
+-// update |le_ctr| if any more data segments follow.  Internally, only the low
+-// 32-bit word of the counter is incremented, following the GCM standard.
++// |le_ctr| must give the current counter in little-endian format.  This
++// function loads the counter from |le_ctr| and increments the loaded counter as
++// needed, but it does *not* store the updated counter back to |le_ctr|.  The
++// caller must update |le_ctr| if any more data segments follow.  Internally,
++// only the low 32-bit word of the counter is incremented, following the GCM
++// standard.
+ .macro	_aes_gcm_update	enc
+ 
+ 	// Function arguments
+-- 
+2.52.0
+
+
+From e6a8a9bb60d16920a5c640ff00c27b1bb98bf4a5 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:16 -0700
+Subject: [PATCH 07/13] crypto: x86/aes-gcm - optimize AVX512 precomputation of
+ H^2 from H^1
+
+Squaring in GF(2^128) requires fewer instructions than a generic
+multiplication in GF(2^128).  Take advantage of this when computing H^2
+from H^1 in aes_gcm_precompute_vaes_avx512().
+
+Note that aes_gcm_precompute_vaes_avx2() already uses this optimization.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/aes-gcm-vaes-avx512.S | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/crypto/aes-gcm-vaes-avx512.S b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+index 3cf0945a2..5c8301d27 100644
+--- a/arch/x86/crypto/aes-gcm-vaes-avx512.S
++++ b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+@@ -260,6 +260,19 @@
+ 	vpternlogd	$0x96, \t0, \mi, \hi
+ .endm
+ 
++// This is a specialized version of _ghash_mul that computes \a * \a, i.e. it
++// squares \a.  It skips computing MI = (a_L * a_H) + (a_H * a_L) = 0.
++.macro	_ghash_square	a, dst, gfpoly, t0, t1
++	vpclmulqdq	$0x00, \a, \a, \t0	  // LO = a_L * a_L
++	vpclmulqdq	$0x11, \a, \a, \dst	  // HI = a_H * a_H
++	vpclmulqdq	$0x01, \t0, \gfpoly, \t1  // LO_L*(x^63 + x^62 + x^57)
++	vpshufd		$0x4e, \t0, \t0		  // Swap halves of LO
++	vpxord		\t0, \t1, \t1		  // Fold LO into MI
++	vpclmulqdq	$0x01, \t1, \gfpoly, \t0  // MI_L*(x^63 + x^62 + x^57)
++	vpshufd		$0x4e, \t1, \t1		  // Swap halves of MI
++	vpternlogd	$0x96, \t0, \t1, \dst	  // Fold MI into HI
++.endm
 +
-+	/*
-+	 * Powers of the hash key H^8 through H^1.  These are 128-bit values.
-+	 * They all have an extra factor of x^-1 and are byte-reversed.
-+	 * The assembly code prefers 32-byte alignment for this.
-+	 */
-+	u64 h_powers[8][2] __aligned(32);
+ // void aes_gcm_precompute_vaes_avx512(struct aes_gcm_key_vaes_avx512 *key);
+ //
+ // Given the expanded AES key |key->base.aes_key|, derive the GHASH subkey and
+@@ -337,8 +350,7 @@ SYM_FUNC_START(aes_gcm_precompute_vaes_avx512)
+ 	// special needs to be done to make this happen, though: H^1 * H^1 would
+ 	// end up with two factors of x^-1, but the multiplication consumes one.
+ 	// So the product H^2 ends up with the desired one factor of x^-1.
+-	_ghash_mul	H_CUR_XMM, H_CUR_XMM, H_INC_XMM, GFPOLY_XMM, \
+-			%xmm0, %xmm1, %xmm2
++	_ghash_square	H_CUR_XMM, H_INC_XMM, GFPOLY_XMM, %xmm0, %xmm1
+ 
+ 	// Create H_CUR_YMM = [H^2, H^1] and H_INC_YMM = [H^2, H^2].
+ 	vinserti128	$1, H_CUR_XMM, H_INC_YMM, H_CUR_YMM
+-- 
+2.52.0
+
+
+From 9a3a58b35815e7df69b6a11d3236c8fdaa4eb53f Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Wed, 1 Oct 2025 19:31:17 -0700
+Subject: [PATCH 08/13] crypto: x86/aes-gcm - optimize long AAD processing with
+ AVX512
+
+Improve the performance of aes_gcm_aad_update_vaes_avx512() on large AAD
+(additional authenticated data) lengths by 4-8 times by making it use up
+to 512-bit vectors and a 4-vector-wide loop.  Previously, it used only
+256-bit vectors and a 1-vector-wide loop.
+
+Originally, I assumed that the case of large AADLEN was unimportant.
+When reviewing the users of BoringSSL's AES-GCM code, I found that some
+callers use BoringSSL's AES-GCM API to just compute GMAC, using large
+amounts of AAD with zero bytes en/decrypted.  Thus, I included a similar
+optimization in the BoringSSL port of this code.  I believe it's wise to
+include this optimization in the kernel port too for similar reasons,
+and to align it more closely with the BoringSSL port.
+
+Another reason this function originally used 256-bit vectors was so that
+separate *_avx10_256 and *_avx10_512 versions of it wouldn't be needed.
+However, that's no longer applicable.
+
+To avoid a slight performance regression in the common case of AADLEN <=
+16, also add a fast path for that case which uses 128-bit vectors.  In
+fact, this case actually gets slightly faster too, since it saves a
+couple instructions over the original 256-bit code.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Ard Biesheuvel <ardb@kernel.org>
+Tested-by: Ard Biesheuvel <ardb@kernel.org>
+---
+ arch/x86/crypto/aes-gcm-vaes-avx512.S | 148 +++++++++++++++++---------
+ 1 file changed, 100 insertions(+), 48 deletions(-)
+
+diff --git a/arch/x86/crypto/aes-gcm-vaes-avx512.S b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+index 5c8301d27..06b71314d 100644
+--- a/arch/x86/crypto/aes-gcm-vaes-avx512.S
++++ b/arch/x86/crypto/aes-gcm-vaes-avx512.S
+@@ -471,6 +471,14 @@ SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
+ .endif
+ .endm
+ 
++// Update GHASH with four vectors of data blocks.  See _ghash_step_4x for full
++// explanation.
++.macro	_ghash_4x
++.irp i, 0,1,2,3,4,5,6,7,8,9
++	_ghash_step_4x	\i
++.endr
++.endm
 +
-+	/*
-+	 * Each entry in this array contains the two halves of an entry of
-+	 * h_powers XOR'd together, in the following order:
-+	 * H^8,H^6,H^7,H^5,H^4,H^2,H^3,H^1 i.e. indices 0,2,1,3,4,6,5,7.
-+	 * This is used for Karatsuba multiplication.
-+	 */
-+	u64 h_powers_xored[8];
-+};
-+
-+#define AES_GCM_KEY_VAES_AVX2(key) \
-+	container_of((key), struct aes_gcm_key_vaes_avx2, base)
-+#define AES_GCM_KEY_VAES_AVX2_SIZE \
-+	(sizeof(struct aes_gcm_key_vaes_avx2) + (31 & ~(CRYPTO_MINALIGN - 1)))
-+
-+/* Key struct used by the VAES + AVX512 implementation of AES-GCM */
-+struct aes_gcm_key_vaes_avx512 {
- 	/*
- 	 * Common part of the key.  The assembly code prefers 16-byte alignment
- 	 * for the round keys; we get this by them being located at the start of
-@@ -895,10 +925,10 @@ struct aes_gcm_key_avx10 {
- 	/* Three padding blocks required by the assembly code */
- 	u64 padding[3][2];
- };
--#define AES_GCM_KEY_AVX10(key)	\
--	container_of((key), struct aes_gcm_key_avx10, base)
--#define AES_GCM_KEY_AVX10_SIZE	\
--	(sizeof(struct aes_gcm_key_avx10) + (63 & ~(CRYPTO_MINALIGN - 1)))
-+#define AES_GCM_KEY_VAES_AVX512(key) \
-+	container_of((key), struct aes_gcm_key_vaes_avx512, base)
-+#define AES_GCM_KEY_VAES_AVX512_SIZE \
-+	(sizeof(struct aes_gcm_key_vaes_avx512) + (63 & ~(CRYPTO_MINALIGN - 1)))
+ // void aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
+ //				       u8 ghash_acc[16],
+ //				       const u8 *aad, int aadlen);
+@@ -481,13 +489,9 @@ SYM_FUNC_END(aes_gcm_precompute_vaes_avx512)
+ // zeroes.  |aadlen| must be a multiple of 16, except on the last call where it
+ // can be any length.  The caller must do any buffering needed to ensure this.
+ //
+-// AES-GCM is almost always used with small amounts of AAD, less than 32 bytes.
+-// Therefore, for AAD processing we currently only provide this implementation
+-// which uses 256-bit vectors (ymm registers) and only has a 1x-wide loop.  This
+-// keeps the code size down, and it enables some micro-optimizations, e.g. using
+-// VEX-coded instructions instead of EVEX-coded to save some instruction bytes.
+-// To optimize for large amounts of AAD, we could implement a 4x-wide loop and
+-// provide a version using 512-bit vectors, but that doesn't seem to be useful.
++// This handles large amounts of AAD efficiently, while also keeping overhead
++// low for small amounts which is the common case.  TLS and IPsec use less than
++// one block of AAD, but (uncommonly) other use cases may use much more.
+ SYM_FUNC_START(aes_gcm_aad_update_vaes_avx512)
  
- /*
-  * These flags are passed to the AES-GCM helper functions to specify the
-@@ -910,14 +940,16 @@ struct aes_gcm_key_avx10 {
- #define FLAG_RFC4106	BIT(0)
- #define FLAG_ENC	BIT(1)
- #define FLAG_AVX	BIT(2)
--#define FLAG_AVX10_256	BIT(3)
--#define FLAG_AVX10_512	BIT(4)
-+#define FLAG_VAES_AVX2	BIT(3)
-+#define FLAG_VAES_AVX512 BIT(4)
+ 	// Function arguments
+@@ -498,57 +502,107 @@ SYM_FUNC_START(aes_gcm_aad_update_vaes_avx512)
+ 	.set	AADLEN64,	%rcx	// Zero-extend AADLEN before using!
  
- static inline struct aes_gcm_key *
- aes_gcm_key_get(struct crypto_aead *tfm, int flags)
- {
--	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
-+	if (flags & FLAG_VAES_AVX512)
- 		return PTR_ALIGN(crypto_aead_ctx(tfm), 64);
-+	else if (flags & FLAG_VAES_AVX2)
-+		return PTR_ALIGN(crypto_aead_ctx(tfm), 32);
- 	else
- 		return PTR_ALIGN(crypto_aead_ctx(tfm), 16);
- }
-@@ -927,26 +959,16 @@ aes_gcm_precompute_aesni(struct aes_gcm_key_aesni *key);
- asmlinkage void
- aes_gcm_precompute_aesni_avx(struct aes_gcm_key_aesni *key);
- asmlinkage void
--aes_gcm_precompute_vaes_avx10_256(struct aes_gcm_key_avx10 *key);
-+aes_gcm_precompute_vaes_avx2(struct aes_gcm_key_vaes_avx2 *key);
- asmlinkage void
--aes_gcm_precompute_vaes_avx10_512(struct aes_gcm_key_avx10 *key);
-+aes_gcm_precompute_vaes_avx512(struct aes_gcm_key_vaes_avx512 *key);
- 
- static void aes_gcm_precompute(struct aes_gcm_key *key, int flags)
- {
--	/*
--	 * To make things a bit easier on the assembly side, the AVX10
--	 * implementations use the same key format.  Therefore, a single
--	 * function using 256-bit vectors would suffice here.  However, it's
--	 * straightforward to provide a 512-bit one because of how the assembly
--	 * code is structured, and it works nicely because the total size of the
--	 * key powers is a multiple of 512 bits.  So we take advantage of that.
--	 *
--	 * A similar situation applies to the AES-NI implementations.
--	 */
--	if (flags & FLAG_AVX10_512)
--		aes_gcm_precompute_vaes_avx10_512(AES_GCM_KEY_AVX10(key));
--	else if (flags & FLAG_AVX10_256)
--		aes_gcm_precompute_vaes_avx10_256(AES_GCM_KEY_AVX10(key));
-+	if (flags & FLAG_VAES_AVX512)
-+		aes_gcm_precompute_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key));
-+	else if (flags & FLAG_VAES_AVX2)
-+		aes_gcm_precompute_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key));
- 	else if (flags & FLAG_AVX)
- 		aes_gcm_precompute_aesni_avx(AES_GCM_KEY_AESNI(key));
- 	else
-@@ -960,15 +982,21 @@ asmlinkage void
- aes_gcm_aad_update_aesni_avx(const struct aes_gcm_key_aesni *key,
- 			     u8 ghash_acc[16], const u8 *aad, int aadlen);
- asmlinkage void
--aes_gcm_aad_update_vaes_avx10(const struct aes_gcm_key_avx10 *key,
--			      u8 ghash_acc[16], const u8 *aad, int aadlen);
-+aes_gcm_aad_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
-+			     u8 ghash_acc[16], const u8 *aad, int aadlen);
-+asmlinkage void
-+aes_gcm_aad_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+			       u8 ghash_acc[16], const u8 *aad, int aadlen);
- 
- static void aes_gcm_aad_update(const struct aes_gcm_key *key, u8 ghash_acc[16],
- 			       const u8 *aad, int aadlen, int flags)
- {
--	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
--		aes_gcm_aad_update_vaes_avx10(AES_GCM_KEY_AVX10(key), ghash_acc,
--					      aad, aadlen);
-+	if (flags & FLAG_VAES_AVX512)
-+		aes_gcm_aad_update_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
-+					       ghash_acc, aad, aadlen);
-+	else if (flags & FLAG_VAES_AVX2)
-+		aes_gcm_aad_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
-+					     ghash_acc, aad, aadlen);
- 	else if (flags & FLAG_AVX)
- 		aes_gcm_aad_update_aesni_avx(AES_GCM_KEY_AESNI(key), ghash_acc,
- 					     aad, aadlen);
-@@ -986,13 +1014,13 @@ aes_gcm_enc_update_aesni_avx(const struct aes_gcm_key_aesni *key,
- 			     const u32 le_ctr[4], u8 ghash_acc[16],
- 			     const u8 *src, u8 *dst, int datalen);
- asmlinkage void
--aes_gcm_enc_update_vaes_avx10_256(const struct aes_gcm_key_avx10 *key,
--				  const u32 le_ctr[4], u8 ghash_acc[16],
--				  const u8 *src, u8 *dst, int datalen);
-+aes_gcm_enc_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
-+			     const u32 le_ctr[4], u8 ghash_acc[16],
-+			     const u8 *src, u8 *dst, int datalen);
- asmlinkage void
--aes_gcm_enc_update_vaes_avx10_512(const struct aes_gcm_key_avx10 *key,
--				  const u32 le_ctr[4], u8 ghash_acc[16],
--				  const u8 *src, u8 *dst, int datalen);
-+aes_gcm_enc_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+			       const u32 le_ctr[4], u8 ghash_acc[16],
-+			       const u8 *src, u8 *dst, int datalen);
- 
- asmlinkage void
- aes_gcm_dec_update_aesni(const struct aes_gcm_key_aesni *key,
-@@ -1003,13 +1031,13 @@ aes_gcm_dec_update_aesni_avx(const struct aes_gcm_key_aesni *key,
- 			     const u32 le_ctr[4], u8 ghash_acc[16],
- 			     const u8 *src, u8 *dst, int datalen);
- asmlinkage void
--aes_gcm_dec_update_vaes_avx10_256(const struct aes_gcm_key_avx10 *key,
--				  const u32 le_ctr[4], u8 ghash_acc[16],
--				  const u8 *src, u8 *dst, int datalen);
-+aes_gcm_dec_update_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
-+			     const u32 le_ctr[4], u8 ghash_acc[16],
-+			     const u8 *src, u8 *dst, int datalen);
- asmlinkage void
--aes_gcm_dec_update_vaes_avx10_512(const struct aes_gcm_key_avx10 *key,
--				  const u32 le_ctr[4], u8 ghash_acc[16],
--				  const u8 *src, u8 *dst, int datalen);
-+aes_gcm_dec_update_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+			       const u32 le_ctr[4], u8 ghash_acc[16],
-+			       const u8 *src, u8 *dst, int datalen);
- 
- /* __always_inline to optimize out the branches based on @flags */
- static __always_inline void
-@@ -1018,14 +1046,14 @@ aes_gcm_update(const struct aes_gcm_key *key,
- 	       const u8 *src, u8 *dst, int datalen, int flags)
- {
- 	if (flags & FLAG_ENC) {
--		if (flags & FLAG_AVX10_512)
--			aes_gcm_enc_update_vaes_avx10_512(AES_GCM_KEY_AVX10(key),
--							  le_ctr, ghash_acc,
--							  src, dst, datalen);
--		else if (flags & FLAG_AVX10_256)
--			aes_gcm_enc_update_vaes_avx10_256(AES_GCM_KEY_AVX10(key),
--							  le_ctr, ghash_acc,
--							  src, dst, datalen);
-+		if (flags & FLAG_VAES_AVX512)
-+			aes_gcm_enc_update_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
-+						       le_ctr, ghash_acc,
-+						       src, dst, datalen);
-+		else if (flags & FLAG_VAES_AVX2)
-+			aes_gcm_enc_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
-+						     le_ctr, ghash_acc,
-+						     src, dst, datalen);
- 		else if (flags & FLAG_AVX)
- 			aes_gcm_enc_update_aesni_avx(AES_GCM_KEY_AESNI(key),
- 						     le_ctr, ghash_acc,
-@@ -1034,14 +1062,14 @@ aes_gcm_update(const struct aes_gcm_key *key,
- 			aes_gcm_enc_update_aesni(AES_GCM_KEY_AESNI(key), le_ctr,
- 						 ghash_acc, src, dst, datalen);
- 	} else {
--		if (flags & FLAG_AVX10_512)
--			aes_gcm_dec_update_vaes_avx10_512(AES_GCM_KEY_AVX10(key),
--							  le_ctr, ghash_acc,
--							  src, dst, datalen);
--		else if (flags & FLAG_AVX10_256)
--			aes_gcm_dec_update_vaes_avx10_256(AES_GCM_KEY_AVX10(key),
--							  le_ctr, ghash_acc,
--							  src, dst, datalen);
-+		if (flags & FLAG_VAES_AVX512)
-+			aes_gcm_dec_update_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
-+						       le_ctr, ghash_acc,
-+						       src, dst, datalen);
-+		else if (flags & FLAG_VAES_AVX2)
-+			aes_gcm_dec_update_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
-+						     le_ctr, ghash_acc,
-+						     src, dst, datalen);
- 		else if (flags & FLAG_AVX)
- 			aes_gcm_dec_update_aesni_avx(AES_GCM_KEY_AESNI(key),
- 						     le_ctr, ghash_acc,
-@@ -1062,9 +1090,13 @@ aes_gcm_enc_final_aesni_avx(const struct aes_gcm_key_aesni *key,
- 			    const u32 le_ctr[4], u8 ghash_acc[16],
- 			    u64 total_aadlen, u64 total_datalen);
- asmlinkage void
--aes_gcm_enc_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
--			     const u32 le_ctr[4], u8 ghash_acc[16],
--			     u64 total_aadlen, u64 total_datalen);
-+aes_gcm_enc_final_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
-+			    const u32 le_ctr[4], u8 ghash_acc[16],
-+			    u64 total_aadlen, u64 total_datalen);
-+asmlinkage void
-+aes_gcm_enc_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+			      const u32 le_ctr[4], u8 ghash_acc[16],
-+			      u64 total_aadlen, u64 total_datalen);
- 
- /* __always_inline to optimize out the branches based on @flags */
- static __always_inline void
-@@ -1072,10 +1104,14 @@ aes_gcm_enc_final(const struct aes_gcm_key *key,
- 		  const u32 le_ctr[4], u8 ghash_acc[16],
- 		  u64 total_aadlen, u64 total_datalen, int flags)
- {
--	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
--		aes_gcm_enc_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
--					     le_ctr, ghash_acc,
--					     total_aadlen, total_datalen);
-+	if (flags & FLAG_VAES_AVX512)
-+		aes_gcm_enc_final_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
-+					      le_ctr, ghash_acc,
-+					      total_aadlen, total_datalen);
-+	else if (flags & FLAG_VAES_AVX2)
-+		aes_gcm_enc_final_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
-+					    le_ctr, ghash_acc,
-+					    total_aadlen, total_datalen);
- 	else if (flags & FLAG_AVX)
- 		aes_gcm_enc_final_aesni_avx(AES_GCM_KEY_AESNI(key),
- 					    le_ctr, ghash_acc,
-@@ -1097,10 +1133,15 @@ aes_gcm_dec_final_aesni_avx(const struct aes_gcm_key_aesni *key,
- 			    u64 total_aadlen, u64 total_datalen,
- 			    const u8 tag[16], int taglen);
- asmlinkage bool __must_check
--aes_gcm_dec_final_vaes_avx10(const struct aes_gcm_key_avx10 *key,
--			     const u32 le_ctr[4], const u8 ghash_acc[16],
--			     u64 total_aadlen, u64 total_datalen,
--			     const u8 tag[16], int taglen);
-+aes_gcm_dec_final_vaes_avx2(const struct aes_gcm_key_vaes_avx2 *key,
-+			    const u32 le_ctr[4], const u8 ghash_acc[16],
-+			    u64 total_aadlen, u64 total_datalen,
-+			    const u8 tag[16], int taglen);
-+asmlinkage bool __must_check
-+aes_gcm_dec_final_vaes_avx512(const struct aes_gcm_key_vaes_avx512 *key,
-+			      const u32 le_ctr[4], const u8 ghash_acc[16],
-+			      u64 total_aadlen, u64 total_datalen,
-+			      const u8 tag[16], int taglen);
- 
- /* __always_inline to optimize out the branches based on @flags */
- static __always_inline bool __must_check
-@@ -1108,11 +1149,16 @@ aes_gcm_dec_final(const struct aes_gcm_key *key, const u32 le_ctr[4],
- 		  u8 ghash_acc[16], u64 total_aadlen, u64 total_datalen,
- 		  u8 tag[16], int taglen, int flags)
- {
--	if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512))
--		return aes_gcm_dec_final_vaes_avx10(AES_GCM_KEY_AVX10(key),
--						    le_ctr, ghash_acc,
--						    total_aadlen, total_datalen,
--						    tag, taglen);
-+	if (flags & FLAG_VAES_AVX512)
-+		return aes_gcm_dec_final_vaes_avx512(AES_GCM_KEY_VAES_AVX512(key),
-+						     le_ctr, ghash_acc,
-+						     total_aadlen, total_datalen,
-+						     tag, taglen);
-+	else if (flags & FLAG_VAES_AVX2)
-+		return aes_gcm_dec_final_vaes_avx2(AES_GCM_KEY_VAES_AVX2(key),
-+						   le_ctr, ghash_acc,
-+						   total_aadlen, total_datalen,
-+						   tag, taglen);
- 	else if (flags & FLAG_AVX)
- 		return aes_gcm_dec_final_aesni_avx(AES_GCM_KEY_AESNI(key),
- 						   le_ctr, ghash_acc,
-@@ -1195,10 +1241,14 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
- 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_aesni, h_powers) != 496);
- 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_aesni, h_powers_xored) != 624);
- 	BUILD_BUG_ON(offsetof(struct aes_gcm_key_aesni, h_times_x64) != 688);
--	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, base.aes_key.key_enc) != 0);
--	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, base.aes_key.key_length) != 480);
--	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, h_powers) != 512);
--	BUILD_BUG_ON(offsetof(struct aes_gcm_key_avx10, padding) != 768);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, base.aes_key.key_enc) != 0);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, base.aes_key.key_length) != 480);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, h_powers) != 512);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx2, h_powers_xored) != 640);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, base.aes_key.key_enc) != 0);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, base.aes_key.key_length) != 480);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, h_powers) != 512);
-+	BUILD_BUG_ON(offsetof(struct aes_gcm_key_vaes_avx512, padding) != 768);
- 
- 	if (likely(crypto_simd_usable())) {
- 		err = aes_check_keylen(keylen);
-@@ -1231,8 +1281,9 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
- 		gf128mul_lle(&h, (const be128 *)x_to_the_minus1);
- 
- 		/* Compute the needed key powers */
--		if (flags & (FLAG_AVX10_256 | FLAG_AVX10_512)) {
--			struct aes_gcm_key_avx10 *k = AES_GCM_KEY_AVX10(key);
-+		if (flags & FLAG_VAES_AVX512) {
-+			struct aes_gcm_key_vaes_avx512 *k =
-+				AES_GCM_KEY_VAES_AVX512(key);
- 
- 			for (i = ARRAY_SIZE(k->h_powers) - 1; i >= 0; i--) {
- 				k->h_powers[i][0] = be64_to_cpu(h.b);
-@@ -1240,6 +1291,22 @@ static int gcm_setkey(struct crypto_aead *tfm, const u8 *raw_key,
- 				gf128mul_lle(&h, &h1);
- 			}
- 			memset(k->padding, 0, sizeof(k->padding));
-+		} else if (flags & FLAG_VAES_AVX2) {
-+			struct aes_gcm_key_vaes_avx2 *k =
-+				AES_GCM_KEY_VAES_AVX2(key);
-+			static const u8 indices[8] = { 0, 2, 1, 3, 4, 6, 5, 7 };
-+
-+			for (i = ARRAY_SIZE(k->h_powers) - 1; i >= 0; i--) {
-+				k->h_powers[i][0] = be64_to_cpu(h.b);
-+				k->h_powers[i][1] = be64_to_cpu(h.a);
-+				gf128mul_lle(&h, &h1);
-+			}
-+			for (i = 0; i < ARRAY_SIZE(k->h_powers_xored); i++) {
-+				int j = indices[i];
-+
-+				k->h_powers_xored[i] = k->h_powers[j][0] ^
-+						       k->h_powers[j][1];
-+			}
- 		} else {
- 			struct aes_gcm_key_aesni *k = AES_GCM_KEY_AESNI(key);
- 
-@@ -1508,15 +1575,15 @@ DEFINE_GCM_ALGS(aesni_avx, FLAG_AVX,
- 		"generic-gcm-aesni-avx", "rfc4106-gcm-aesni-avx",
- 		AES_GCM_KEY_AESNI_SIZE, 500);
- 
--/* aes_gcm_algs_vaes_avx10_256 */
--DEFINE_GCM_ALGS(vaes_avx10_256, FLAG_AVX10_256,
--		"generic-gcm-vaes-avx10_256", "rfc4106-gcm-vaes-avx10_256",
--		AES_GCM_KEY_AVX10_SIZE, 700);
-+/* aes_gcm_algs_vaes_avx2 */
-+DEFINE_GCM_ALGS(vaes_avx2, FLAG_VAES_AVX2,
-+		"generic-gcm-vaes-avx2", "rfc4106-gcm-vaes-avx2",
-+		AES_GCM_KEY_VAES_AVX2_SIZE, 600);
- 
--/* aes_gcm_algs_vaes_avx10_512 */
--DEFINE_GCM_ALGS(vaes_avx10_512, FLAG_AVX10_512,
--		"generic-gcm-vaes-avx10_512", "rfc4106-gcm-vaes-avx10_512",
--		AES_GCM_KEY_AVX10_SIZE, 800);
-+/* aes_gcm_algs_vaes_avx512 */
-+DEFINE_GCM_ALGS(vaes_avx512, FLAG_VAES_AVX512,
-+		"generic-gcm-vaes-avx512", "rfc4106-gcm-vaes-avx512",
-+		AES_GCM_KEY_VAES_AVX512_SIZE, 800);
- 
- static int __init register_avx_algs(void)
- {
-@@ -1548,6 +1615,10 @@ static int __init register_avx_algs(void)
- 					ARRAY_SIZE(skcipher_algs_vaes_avx2));
- 	if (err)
- 		return err;
-+	err = crypto_register_aeads(aes_gcm_algs_vaes_avx2,
-+				    ARRAY_SIZE(aes_gcm_algs_vaes_avx2));
-+	if (err)
-+		return err;
- 
- 	if (!boot_cpu_has(X86_FEATURE_AVX512BW) ||
- 	    !boot_cpu_has(X86_FEATURE_AVX512VL) ||
-@@ -1556,26 +1627,21 @@ static int __init register_avx_algs(void)
- 			       XFEATURE_MASK_AVX512, NULL))
- 		return 0;
- 
--	err = crypto_register_aeads(aes_gcm_algs_vaes_avx10_256,
--				    ARRAY_SIZE(aes_gcm_algs_vaes_avx10_256));
--	if (err)
--		return err;
+ 	// Additional local variables.
+-	// %rax, %ymm0-%ymm3, and %k1 are used as temporary registers.
+-	.set	BSWAP_MASK,	%ymm4
+-	.set	GFPOLY,		%ymm5
+-	.set	GHASH_ACC,	%ymm6
+-	.set	GHASH_ACC_XMM,	%xmm6
+-	.set	H_POW1,		%ymm7
 -
- 	if (boot_cpu_has(X86_FEATURE_PREFER_YMM)) {
- 		int i;
+-	// Load some constants.
+-	vbroadcasti128	.Lbswap_mask(%rip), BSWAP_MASK
+-	vbroadcasti128	.Lgfpoly(%rip), GFPOLY
++	// %rax and %k1 are used as temporary registers.
++	.set	GHASHDATA0,	%zmm0
++	.set	GHASHDATA0_XMM,	%xmm0
++	.set	GHASHDATA1,	%zmm1
++	.set	GHASHDATA1_XMM,	%xmm1
++	.set	GHASHDATA2,	%zmm2
++	.set	GHASHDATA2_XMM,	%xmm2
++	.set	GHASHDATA3,	%zmm3
++	.set	BSWAP_MASK,	%zmm4
++	.set	BSWAP_MASK_XMM,	%xmm4
++	.set	GHASH_ACC,	%zmm5
++	.set	GHASH_ACC_XMM,	%xmm5
++	.set	H_POW4,		%zmm6
++	.set	H_POW3,		%zmm7
++	.set	H_POW2,		%zmm8
++	.set	H_POW1,		%zmm9
++	.set	H_POW1_XMM,	%xmm9
++	.set	GFPOLY,		%zmm10
++	.set	GFPOLY_XMM,	%xmm10
++	.set	GHASHTMP0,	%zmm11
++	.set	GHASHTMP1,	%zmm12
++	.set	GHASHTMP2,	%zmm13
  
- 		for (i = 0; i < ARRAY_SIZE(skcipher_algs_vaes_avx512); i++)
- 			skcipher_algs_vaes_avx512[i].base.cra_priority = 1;
--		for (i = 0; i < ARRAY_SIZE(aes_gcm_algs_vaes_avx10_512); i++)
--			aes_gcm_algs_vaes_avx10_512[i].base.cra_priority = 1;
-+		for (i = 0; i < ARRAY_SIZE(aes_gcm_algs_vaes_avx512); i++)
-+			aes_gcm_algs_vaes_avx512[i].base.cra_priority = 1;
+ 	// Load the GHASH accumulator.
+ 	vmovdqu		(GHASH_ACC_PTR), GHASH_ACC_XMM
+ 
+-	// Update GHASH with 32 bytes of AAD at a time.
+-	//
+-	// Pre-subtracting 32 from AADLEN saves an instruction from the loop and
+-	// also ensures that at least one write always occurs to AADLEN,
+-	// zero-extending it and allowing AADLEN64 to be used later.
+-	sub		$32, AADLEN
+-	jl		.Laad_loop_1x_done
+-	vmovdqu8	OFFSETOFEND_H_POWERS-32(KEY), H_POW1	// [H^2, H^1]
+-.Laad_loop_1x:
+-	vmovdqu		(AAD), %ymm0
+-	vpshufb		BSWAP_MASK, %ymm0, %ymm0
+-	vpxor		%ymm0, GHASH_ACC, GHASH_ACC
+-	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
+-			%ymm0, %ymm1, %ymm2
+-	vextracti128	$1, GHASH_ACC, %xmm0
+-	vpxor		%xmm0, GHASH_ACC_XMM, GHASH_ACC_XMM
+-	add		$32, AAD
+-	sub		$32, AADLEN
+-	jge		.Laad_loop_1x
+-.Laad_loop_1x_done:
+-	add		$32, AADLEN
++	// Check for the common case of AADLEN <= 16, as well as AADLEN == 0.
++	cmp		$16, AADLEN
++	jg		.Laad_more_than_16bytes
++	test		AADLEN, AADLEN
+ 	jz		.Laad_done
+ 
+-	// Update GHASH with the remaining 1 <= AADLEN < 32 bytes of AAD.
++	// Fast path: update GHASH with 1 <= AADLEN <= 16 bytes of AAD.
++	vmovdqu		.Lbswap_mask(%rip), BSWAP_MASK_XMM
++	vmovdqu		.Lgfpoly(%rip), GFPOLY_XMM
+ 	mov		$-1, %eax
+ 	bzhi		AADLEN, %eax, %eax
+ 	kmovd		%eax, %k1
+-	vmovdqu8	(AAD), %ymm0{%k1}{z}
++	vmovdqu8	(AAD), GHASHDATA0_XMM{%k1}{z}
++	vmovdqu		OFFSETOFEND_H_POWERS-16(KEY), H_POW1_XMM
++	vpshufb		BSWAP_MASK_XMM, GHASHDATA0_XMM, GHASHDATA0_XMM
++	vpxor		GHASHDATA0_XMM, GHASH_ACC_XMM, GHASH_ACC_XMM
++	_ghash_mul	H_POW1_XMM, GHASH_ACC_XMM, GHASH_ACC_XMM, GFPOLY_XMM, \
++			GHASHDATA0_XMM, GHASHDATA1_XMM, GHASHDATA2_XMM
++	jmp		.Laad_done
++
++.Laad_more_than_16bytes:
++	vbroadcasti32x4	.Lbswap_mask(%rip), BSWAP_MASK
++	vbroadcasti32x4	.Lgfpoly(%rip), GFPOLY
++
++	// If AADLEN >= 256, update GHASH with 256 bytes of AAD at a time.
++	sub		$256, AADLEN
++	jl		.Laad_loop_4x_done
++	vmovdqu8	OFFSETOFEND_H_POWERS-4*64(KEY), H_POW4
++	vmovdqu8	OFFSETOFEND_H_POWERS-3*64(KEY), H_POW3
++	vmovdqu8	OFFSETOFEND_H_POWERS-2*64(KEY), H_POW2
++	vmovdqu8	OFFSETOFEND_H_POWERS-1*64(KEY), H_POW1
++.Laad_loop_4x:
++	vmovdqu8	0*64(AAD), GHASHDATA0
++	vmovdqu8	1*64(AAD), GHASHDATA1
++	vmovdqu8	2*64(AAD), GHASHDATA2
++	vmovdqu8	3*64(AAD), GHASHDATA3
++	_ghash_4x
++	add		$256, AAD
++	sub		$256, AADLEN
++	jge		.Laad_loop_4x
++.Laad_loop_4x_done:
++
++	// If AADLEN >= 64, update GHASH with 64 bytes of AAD at a time.
++	add		$192, AADLEN
++	jl		.Laad_loop_1x_done
++	vmovdqu8	OFFSETOFEND_H_POWERS-1*64(KEY), H_POW1
++.Laad_loop_1x:
++	vmovdqu8	(AAD), GHASHDATA0
++	vpshufb		BSWAP_MASK, GHASHDATA0, GHASHDATA0
++	vpxord		GHASHDATA0, GHASH_ACC, GHASH_ACC
++	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
++			GHASHDATA0, GHASHDATA1, GHASHDATA2
++	_horizontal_xor GHASH_ACC, GHASH_ACC_XMM, GHASH_ACC_XMM, \
++			GHASHDATA0_XMM, GHASHDATA1_XMM, GHASHDATA2_XMM
++	add		$64, AAD
++	sub		$64, AADLEN
++	jge		.Laad_loop_1x
++.Laad_loop_1x_done:
++
++	// Update GHASH with the remaining 0 <= AADLEN < 64 bytes of AAD.
++	add		$64, AADLEN
++	jz		.Laad_done
++	mov		$-1, %rax
++	bzhi		AADLEN64, %rax, %rax
++	kmovq		%rax, %k1
++	vmovdqu8	(AAD), GHASHDATA0{%k1}{z}
+ 	neg		AADLEN64
+ 	and		$~15, AADLEN64  // -round_up(AADLEN, 16)
+ 	vmovdqu8	OFFSETOFEND_H_POWERS(KEY,AADLEN64), H_POW1
+-	vpshufb		BSWAP_MASK, %ymm0, %ymm0
+-	vpxor		%ymm0, GHASH_ACC, GHASH_ACC
++	vpshufb		BSWAP_MASK, GHASHDATA0, GHASHDATA0
++	vpxord		GHASHDATA0, GHASH_ACC, GHASH_ACC
+ 	_ghash_mul	H_POW1, GHASH_ACC, GHASH_ACC, GFPOLY, \
+-			%ymm0, %ymm1, %ymm2
+-	vextracti128	$1, GHASH_ACC, %xmm0
+-	vpxor		%xmm0, GHASH_ACC_XMM, GHASH_ACC_XMM
++			GHASHDATA0, GHASHDATA1, GHASHDATA2
++	_horizontal_xor GHASH_ACC, GHASH_ACC_XMM, GHASH_ACC_XMM, \
++			GHASHDATA0_XMM, GHASHDATA1_XMM, GHASHDATA2_XMM
+ 
+ .Laad_done:
+ 	// Store the updated GHASH accumulator back to memory.
+@@ -844,9 +898,7 @@ SYM_FUNC_END(aes_gcm_aad_update_vaes_avx512)
+ .if \enc
+ .Lghash_last_ciphertext_4x\@:
+ 	// Update GHASH with the last set of ciphertext blocks.
+-.irp i, 0,1,2,3,4,5,6,7,8,9
+-	_ghash_step_4x	\i
+-.endr
++	_ghash_4x
+ .endif
+ 
+ .Lcrypt_loop_4x_done\@:
+-- 
+2.52.0
+
+
+From f9f55cce3828fa5d821fb5a81b2fad70425309f8 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Tue, 14 Oct 2025 14:16:54 -0700
+Subject: [PATCH 09/13] dm-verity: remove log message with shash driver name
+
+I added this log message in commit bbf6a566920e ("dm verity: log the
+hash algorithm implementation"), to help people debug issues where they
+forgot to enable the architecture-optimized SHA-256 code in their
+kconfig or accidentally enabled a slow hardware offload driver (such as
+QCE) that overrode the faster CPU-accelerated code.  However:
+
+- The crypto layer now always enables the architecture-optimized SHA-1,
+  SHA-256, and SHA-512 code.  Moreover, for simplicity the driver name
+  is now fixed at "sha1-lib", "sha256-lib", etc.
+
+- dm-verity now uses crypto_shash instead of crypto_ahash, preventing
+  the mistake of accidentally using a slow driver such as QCE.
+
+Therefore, this log message generally no longer provides useful
+information.  Remove it.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+---
+ drivers/md/dm-verity-target.c | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/md/dm-verity-target.c b/drivers/md/dm-verity-target.c
+index 66a00a8cc..20ddf560d 100644
+--- a/drivers/md/dm-verity-target.c
++++ b/drivers/md/dm-verity-target.c
+@@ -1252,7 +1252,6 @@ static int verity_setup_hash_alg(struct dm_verity *v, const char *alg_name)
  	}
- 
- 	err = crypto_register_skciphers(skcipher_algs_vaes_avx512,
- 					ARRAY_SIZE(skcipher_algs_vaes_avx512));
- 	if (err)
- 		return err;
--	err = crypto_register_aeads(aes_gcm_algs_vaes_avx10_512,
--				    ARRAY_SIZE(aes_gcm_algs_vaes_avx10_512));
-+	err = crypto_register_aeads(aes_gcm_algs_vaes_avx512,
-+				    ARRAY_SIZE(aes_gcm_algs_vaes_avx512));
- 	if (err)
- 		return err;
- 
-@@ -1595,8 +1661,8 @@ static void unregister_avx_algs(void)
- 	unregister_aeads(aes_gcm_algs_aesni_avx);
- 	unregister_skciphers(skcipher_algs_vaes_avx2);
- 	unregister_skciphers(skcipher_algs_vaes_avx512);
--	unregister_aeads(aes_gcm_algs_vaes_avx10_256);
--	unregister_aeads(aes_gcm_algs_vaes_avx10_512);
-+	unregister_aeads(aes_gcm_algs_vaes_avx2);
-+	unregister_aeads(aes_gcm_algs_vaes_avx512);
- }
- #else /* CONFIG_X86_64 */
- static struct aead_alg aes_gcm_algs_aesni[0];
+ 	v->shash_tfm = shash;
+ 	v->digest_size = crypto_shash_digestsize(shash);
+-	DMINFO("%s using \"%s\"", alg_name, crypto_shash_driver_name(shash));
+ 	if ((1 << v->hash_dev_block_bits) < v->digest_size * 2) {
+ 		ti->error = "Digest size too big";
+ 		return -EINVAL;
+-- 
+2.52.0
+
+
+From 7f40e4886293aeb82fbad007e94bee431383136d Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Tue, 14 Oct 2025 14:16:55 -0700
+Subject: [PATCH 10/13] dm-verity: use SHA-256 library for SHA-256
+
+When the hash algorithm is SHA-256 and the verity version is not 0, use
+the SHA-256 library instead of crypto_shash.
+
+This is a prerequisite for making dm-verity interleave the computation
+of SHA-256 hashes for increased performance.  That optimization is
+available in the SHA-256 library but not in crypto_shash.
+
+Even without interleaved hashing, switching to the library also slightly
+improves performance by itself because it avoids the overhead of
+crypto_shash, including indirect calls and other API overhead.
+(Benchmark on x86_64, AMD Zen 5: hashing 4K blocks gets 2.1% faster.)
+
+SHA-256 is by far the most common hash algorithm used with dm-verity.
+It makes sense to optimize for the common case and fall back to the
+generic crypto layer for uncommon cases, as suggested by Linus:
+https://lore.kernel.org/r/CAHk-=wgp-fOSsZsYrbyzqCAfEvrt5jQs1jL-97Wc4seMNTUyng@mail.gmail.com
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+---
+ drivers/md/Kconfig            |  1 +
+ drivers/md/dm-verity-target.c | 61 +++++++++++++++++++++++++++--------
+ drivers/md/dm-verity.h        | 20 +++++++++---
+ 3 files changed, 64 insertions(+), 18 deletions(-)
+
 diff --git a/drivers/md/Kconfig b/drivers/md/Kconfig
 index 104aa5355..cac4926fc 100644
 --- a/drivers/md/Kconfig
@@ -2703,6 +3632,221 @@ index 104aa5355..cac4926fc 100644
  	select DM_BUFIO
  	help
  	  This device-mapper target creates a read-only device that
+diff --git a/drivers/md/dm-verity-target.c b/drivers/md/dm-verity-target.c
+index 20ddf560d..bba981080 100644
+--- a/drivers/md/dm-verity-target.c
++++ b/drivers/md/dm-verity-target.c
+@@ -117,11 +117,25 @@ static sector_t verity_position_at_level(struct dm_verity *v, sector_t block,
+ int verity_hash(struct dm_verity *v, struct dm_verity_io *io,
+ 		const u8 *data, size_t len, u8 *digest)
+ {
+-	struct shash_desc *desc = &io->hash_desc;
++	struct shash_desc *desc;
+ 	int r;
+ 
++	if (likely(v->use_sha256_lib)) {
++		struct sha256_ctx *ctx = &io->hash_ctx.sha256;
++
++		/*
++		 * Fast path using SHA-256 library.  This is enabled only for
++		 * verity version 1, where the salt is at the beginning.
++		 */
++		*ctx = *v->initial_hashstate.sha256;
++		sha256_update(ctx, data, len);
++		sha256_final(ctx, digest);
++		return 0;
++	}
++
++	desc = &io->hash_ctx.shash;
+ 	desc->tfm = v->shash_tfm;
+-	if (unlikely(v->initial_hashstate == NULL)) {
++	if (unlikely(v->initial_hashstate.shash == NULL)) {
+ 		/* Version 0: salt at end */
+ 		r = crypto_shash_init(desc) ?:
+ 		    crypto_shash_update(desc, data, len) ?:
+@@ -129,7 +143,7 @@ int verity_hash(struct dm_verity *v, struct dm_verity_io *io,
+ 		    crypto_shash_final(desc, digest);
+ 	} else {
+ 		/* Version 1: salt at beginning */
+-		r = crypto_shash_import(desc, v->initial_hashstate) ?:
++		r = crypto_shash_import(desc, v->initial_hashstate.shash) ?:
+ 		    crypto_shash_finup(desc, data, len, digest);
+ 	}
+ 	if (unlikely(r))
+@@ -1004,7 +1018,7 @@ static void verity_dtr(struct dm_target *ti)
+ 
+ 	kvfree(v->validated_blocks);
+ 	kfree(v->salt);
+-	kfree(v->initial_hashstate);
++	kfree(v->initial_hashstate.shash);
+ 	kfree(v->root_digest);
+ 	kfree(v->zero_digest);
+ 	verity_free_sig(v);
+@@ -1069,8 +1083,7 @@ static int verity_alloc_zero_digest(struct dm_verity *v)
+ 	if (!v->zero_digest)
+ 		return r;
+ 
+-	io = kmalloc(sizeof(*io) + crypto_shash_descsize(v->shash_tfm),
+-		     GFP_KERNEL);
++	io = kmalloc(v->ti->per_io_data_size, GFP_KERNEL);
+ 
+ 	if (!io)
+ 		return r; /* verity_dtr will free zero_digest */
+@@ -1256,6 +1269,20 @@ static int verity_setup_hash_alg(struct dm_verity *v, const char *alg_name)
+ 		ti->error = "Digest size too big";
+ 		return -EINVAL;
+ 	}
++	if (likely(v->version && strcmp(alg_name, "sha256") == 0)) {
++		/*
++		 * Fast path: use the library API for reduced overhead and
++		 * interleaved hashing support.
++		 */
++		v->use_sha256_lib = true;
++		ti->per_io_data_size =
++			offsetofend(struct dm_verity_io, hash_ctx.sha256);
++	} else {
++		/* Fallback case: use the generic crypto API. */
++		ti->per_io_data_size =
++			offsetofend(struct dm_verity_io, hash_ctx.shash) +
++			crypto_shash_descsize(shash);
++	}
+ 	return 0;
+ }
+ 
+@@ -1276,7 +1303,18 @@ static int verity_setup_salt_and_hashstate(struct dm_verity *v, const char *arg)
+ 			return -EINVAL;
+ 		}
+ 	}
+-	if (v->version) { /* Version 1: salt at beginning */
++	if (likely(v->use_sha256_lib)) {
++		/* Implies version 1: salt at beginning */
++		v->initial_hashstate.sha256 =
++			kmalloc(sizeof(struct sha256_ctx), GFP_KERNEL);
++		if (!v->initial_hashstate.sha256) {
++			ti->error = "Cannot allocate initial hash state";
++			return -ENOMEM;
++		}
++		sha256_init(v->initial_hashstate.sha256);
++		sha256_update(v->initial_hashstate.sha256,
++			      v->salt, v->salt_size);
++	} else if (v->version) { /* Version 1: salt at beginning */
+ 		SHASH_DESC_ON_STACK(desc, v->shash_tfm);
+ 		int r;
+ 
+@@ -1284,16 +1322,16 @@ static int verity_setup_salt_and_hashstate(struct dm_verity *v, const char *arg)
+ 		 * Compute the pre-salted hash state that can be passed to
+ 		 * crypto_shash_import() for each block later.
+ 		 */
+-		v->initial_hashstate = kmalloc(
++		v->initial_hashstate.shash = kmalloc(
+ 			crypto_shash_statesize(v->shash_tfm), GFP_KERNEL);
+-		if (!v->initial_hashstate) {
++		if (!v->initial_hashstate.shash) {
+ 			ti->error = "Cannot allocate initial hash state";
+ 			return -ENOMEM;
+ 		}
+ 		desc->tfm = v->shash_tfm;
+ 		r = crypto_shash_init(desc) ?:
+ 		    crypto_shash_update(desc, v->salt, v->salt_size) ?:
+-		    crypto_shash_export(desc, v->initial_hashstate);
++		    crypto_shash_export(desc, v->initial_hashstate.shash);
+ 		if (r) {
+ 			ti->error = "Cannot set up initial hash state";
+ 			return r;
+@@ -1555,9 +1593,6 @@ static int verity_ctr(struct dm_target *ti, unsigned int argc, char **argv)
+ 		goto bad;
+ 	}
+ 
+-	ti->per_io_data_size = sizeof(struct dm_verity_io) +
+-			       crypto_shash_descsize(v->shash_tfm);
+-
+ 	r = verity_fec_ctr(v);
+ 	if (r)
+ 		goto bad;
+diff --git a/drivers/md/dm-verity.h b/drivers/md/dm-verity.h
+index 6d141abd9..cdcee68a4 100644
+--- a/drivers/md/dm-verity.h
++++ b/drivers/md/dm-verity.h
+@@ -16,6 +16,7 @@
+ #include <linux/device-mapper.h>
+ #include <linux/interrupt.h>
+ #include <crypto/hash.h>
++#include <crypto/sha2.h>
+ 
+ #define DM_VERITY_MAX_LEVELS		63
+ 
+@@ -42,7 +43,10 @@ struct dm_verity {
+ 	struct crypto_shash *shash_tfm;
+ 	u8 *root_digest;	/* digest of the root block */
+ 	u8 *salt;		/* salt: its size is salt_size */
+-	u8 *initial_hashstate;	/* salted initial state, if version >= 1 */
++	union {
++		struct sha256_ctx *sha256;	/* for use_sha256_lib=1 */
++		u8 *shash;			/* for use_sha256_lib=0 */
++	} initial_hashstate; /* salted initial state, if version >= 1 */
+ 	u8 *zero_digest;	/* digest for a zero block */
+ #ifdef CONFIG_SECURITY
+ 	u8 *root_digest_sig;	/* signature of the root digest */
+@@ -59,6 +63,7 @@ struct dm_verity {
+ 	unsigned char version;
+ 	bool hash_failed:1;	/* set if hash of any block failed */
+ 	bool use_bh_wq:1;	/* try to verify in BH wq before normal work-queue */
++	bool use_sha256_lib:1;	/* use SHA-256 library instead of generic crypto API */
+ 	unsigned int digest_size;	/* digest size for the current hash algorithm */
+ 	enum verity_mode mode;	/* mode for handling verification errors */
+ 	enum verity_mode error_mode;/* mode for handling I/O errors */
+@@ -98,11 +103,16 @@ struct dm_verity_io {
+ 	u8 want_digest[HASH_MAX_DIGESTSIZE];
+ 
+ 	/*
+-	 * Temporary space for hashing.  This is variable-length and must be at
+-	 * the end of the struct.  struct shash_desc is just the fixed part;
+-	 * it's followed by a context of size crypto_shash_descsize(shash_tfm).
++	 * Temporary space for hashing.  Either sha256 or shash is used,
++	 * depending on the value of use_sha256_lib.  If shash is used,
++	 * then this field is variable-length, with total size
++	 * sizeof(struct shash_desc) + crypto_shash_descsize(shash_tfm).
++	 * For this reason, this field must be the end of the struct.
+ 	 */
+-	struct shash_desc hash_desc;
++	union {
++		struct sha256_ctx sha256;
++		struct shash_desc shash;
++	} hash_ctx;
+ };
+ 
+ static inline u8 *verity_io_real_digest(struct dm_verity *v,
+-- 
+2.52.0
+
+
+From baefc0692a3a85778215e22394bb7b9d77f1ea05 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Tue, 14 Oct 2025 14:16:56 -0700
+Subject: [PATCH 11/13] dm-verity: reduce scope of real and wanted digests
+
+In preparation for supporting interleaved hashing where dm-verity will
+need to keep track of the real and wanted digests for multiple data
+blocks simultaneously, stop using the want_digest and real_digest fields
+of struct dm_verity_io from so many different places.  Specifically:
+
+- Make various functions take want_digest as a parameter rather than
+  having it be implicitly passed via the struct dm_verity_io.
+
+- Add a new tmp_digest field, and use this instead of real_digest when
+  computing a digest solely for the purpose of immediately checking it.
+
+The result is that real_digest and want_digest are used only by
+verity_verify_io().
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+---
+ drivers/md/dm-verity-fec.c    | 21 +++++++++----------
+ drivers/md/dm-verity-fec.h    |  5 +++--
+ drivers/md/dm-verity-target.c | 38 ++++++++++++++++++-----------------
+ drivers/md/dm-verity.h        |  1 +
+ 4 files changed, 34 insertions(+), 31 deletions(-)
+
 diff --git a/drivers/md/dm-verity-fec.c b/drivers/md/dm-verity-fec.c
 index 72047b47a..0c858b9ee 100644
 --- a/drivers/md/dm-verity-fec.c
@@ -2795,47 +3939,10 @@ index 09123a612..a6689cdc4 100644
  {
  	return -EOPNOTSUPP;
 diff --git a/drivers/md/dm-verity-target.c b/drivers/md/dm-verity-target.c
-index 66a00a8cc..bf0aee73b 100644
+index bba981080..af9f1544a 100644
 --- a/drivers/md/dm-verity-target.c
 +++ b/drivers/md/dm-verity-target.c
-@@ -117,11 +117,25 @@ static sector_t verity_position_at_level(struct dm_verity *v, sector_t block,
- int verity_hash(struct dm_verity *v, struct dm_verity_io *io,
- 		const u8 *data, size_t len, u8 *digest)
- {
--	struct shash_desc *desc = &io->hash_desc;
-+	struct shash_desc *desc;
- 	int r;
- 
-+	if (likely(v->use_sha256_lib)) {
-+		struct sha256_ctx *ctx = &io->hash_ctx.sha256;
-+
-+		/*
-+		 * Fast path using SHA-256 library.  This is enabled only for
-+		 * verity version 1, where the salt is at the beginning.
-+		 */
-+		*ctx = *v->initial_hashstate.sha256;
-+		sha256_update(ctx, data, len);
-+		sha256_final(ctx, digest);
-+		return 0;
-+	}
-+
-+	desc = &io->hash_ctx.shash;
- 	desc->tfm = v->shash_tfm;
--	if (unlikely(v->initial_hashstate == NULL)) {
-+	if (unlikely(v->initial_hashstate.shash == NULL)) {
- 		/* Version 0: salt at end */
- 		r = crypto_shash_init(desc) ?:
- 		    crypto_shash_update(desc, data, len) ?:
-@@ -129,7 +143,7 @@ int verity_hash(struct dm_verity *v, struct dm_verity_io *io,
- 		    crypto_shash_final(desc, digest);
- 	} else {
- 		/* Version 1: salt at beginning */
--		r = crypto_shash_import(desc, v->initial_hashstate) ?:
-+		r = crypto_shash_import(desc, v->initial_hashstate.shash) ?:
- 		    crypto_shash_finup(desc, data, len, digest);
- 	}
- 	if (unlikely(r))
-@@ -215,12 +229,12 @@ static int verity_handle_err(struct dm_verity *v, enum verity_block_type type,
+@@ -229,12 +229,12 @@ static int verity_handle_err(struct dm_verity *v, enum verity_block_type type,
   * Verify hash of a metadata block pertaining to the specified data block
   * ("block" argument) at a specified level ("level" argument).
   *
@@ -2851,7 +3958,7 @@ index 66a00a8cc..bf0aee73b 100644
   */
  static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
  			       sector_t block, int level, bool skip_unverified,
-@@ -259,7 +273,7 @@ static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
+@@ -273,7 +273,7 @@ static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
  		if (IS_ERR(data))
  			return r;
  		if (verity_fec_decode(v, io, DM_VERITY_BLOCK_TYPE_METADATA,
@@ -2860,7 +3967,7 @@ index 66a00a8cc..bf0aee73b 100644
  			aux = dm_bufio_get_aux_data(buf);
  			aux->hash_verified = 1;
  			goto release_ok;
-@@ -279,11 +293,11 @@ static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
+@@ -293,11 +293,11 @@ static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
  		}
  
  		r = verity_hash(v, io, data, 1 << v->hash_dev_block_bits,
@@ -2874,7 +3981,7 @@ index 66a00a8cc..bf0aee73b 100644
  				  v->digest_size) == 0))
  			aux->hash_verified = 1;
  		else if (static_branch_unlikely(&use_bh_wq_enabled) && io->in_bh) {
-@@ -294,7 +308,7 @@ static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
+@@ -308,7 +308,7 @@ static int verity_verify_level(struct dm_verity *v, struct dm_verity_io *io,
  			r = -EAGAIN;
  			goto release_ret_r;
  		} else if (verity_fec_decode(v, io, DM_VERITY_BLOCK_TYPE_METADATA,
@@ -2883,7 +3990,7 @@ index 66a00a8cc..bf0aee73b 100644
  			aux->hash_verified = 1;
  		else if (verity_handle_err(v,
  					   DM_VERITY_BLOCK_TYPE_METADATA,
-@@ -358,7 +372,8 @@ int verity_hash_for_block(struct dm_verity *v, struct dm_verity_io *io,
+@@ -372,7 +372,8 @@ int verity_hash_for_block(struct dm_verity *v, struct dm_verity_io *io,
  }
  
  static noinline int verity_recheck(struct dm_verity *v, struct dm_verity_io *io,
@@ -2893,7 +4000,7 @@ index 66a00a8cc..bf0aee73b 100644
  {
  	struct page *page;
  	void *buffer;
-@@ -382,12 +397,11 @@ static noinline int verity_recheck(struct dm_verity *v, struct dm_verity_io *io,
+@@ -396,12 +397,11 @@ static noinline int verity_recheck(struct dm_verity *v, struct dm_verity_io *io,
  		goto free_ret;
  
  	r = verity_hash(v, io, buffer, 1 << v->data_dev_block_bits,
@@ -2908,23 +4015,19 @@ index 66a00a8cc..bf0aee73b 100644
  		r = -EIO;
  		goto free_ret;
  	}
-@@ -402,9 +416,13 @@ static noinline int verity_recheck(struct dm_verity *v, struct dm_verity_io *io,
+@@ -416,8 +416,9 @@ static noinline int verity_recheck(struct dm_verity *v, struct dm_verity_io *io,
  
  static int verity_handle_data_hash_mismatch(struct dm_verity *v,
  					    struct dm_verity_io *io,
 -					    struct bio *bio, sector_t blkno,
 -					    u8 *data)
 +					    struct bio *bio,
-+					    struct pending_block *block)
++					    const u8 *want_digest,
++					    sector_t blkno, u8 *data)
  {
-+	const u8 *want_digest = block->want_digest;
-+	sector_t blkno = block->blkno;
-+	u8 *data = block->data;
-+
  	if (static_branch_unlikely(&use_bh_wq_enabled) && io->in_bh) {
  		/*
- 		 * Error handling code (FEC included) cannot be run in the
-@@ -412,14 +430,14 @@ static int verity_handle_data_hash_mismatch(struct dm_verity *v,
+@@ -426,14 +427,14 @@ static int verity_handle_data_hash_mismatch(struct dm_verity *v,
  		 */
  		return -EAGAIN;
  	}
@@ -2942,7 +4045,78 @@ index 66a00a8cc..bf0aee73b 100644
  		return 0;
  #endif
  	if (bio->bi_status)
-@@ -433,6 +451,58 @@ static int verity_handle_data_hash_mismatch(struct dm_verity *v,
+@@ -525,8 +526,9 @@ static int verity_verify_io(struct dm_verity_io *io)
+ 			kunmap_local(data);
+ 			continue;
+ 		}
+-		r = verity_handle_data_hash_mismatch(v, io, bio, cur_block,
+-						     data);
++		r = verity_handle_data_hash_mismatch(v, io, bio,
++						     verity_io_want_digest(v, io),
++						     cur_block, data);
+ 		kunmap_local(data);
+ 		if (unlikely(r))
+ 			return r;
+diff --git a/drivers/md/dm-verity.h b/drivers/md/dm-verity.h
+index cdcee68a4..cf7973ed3 100644
+--- a/drivers/md/dm-verity.h
++++ b/drivers/md/dm-verity.h
+@@ -99,6 +99,7 @@ struct dm_verity_io {
+ 	struct work_struct work;
+ 	struct work_struct bh_work;
+ 
++	u8 tmp_digest[HASH_MAX_DIGESTSIZE];
+ 	u8 real_digest[HASH_MAX_DIGESTSIZE];
+ 	u8 want_digest[HASH_MAX_DIGESTSIZE];
+ 
+-- 
+2.52.0
+
+
+From 82d32cd3cd2328c5a61cde8b4a008184f2504967 Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Tue, 14 Oct 2025 14:16:57 -0700
+Subject: [PATCH 12/13] dm-verity: use 2-way interleaved SHA-256 hashing when
+ supported
+
+When the crypto library provides an optimized implementation of
+sha256_finup_2x(), use it to interleave the hashing of pairs of data
+blocks.  On some CPUs this nearly doubles hashing performance.  The
+increase in overall throughput of cold-cache dm-verity reads that I'm
+seeing on arm64 and x86_64 is roughly 35% (though this metric is hard to
+measure as it jumps around a lot).
+
+For now this is done only on data blocks, not Merkle tree blocks.  We
+could use sha256_finup_2x() on Merkle tree blocks too, but that is less
+important as there aren't as many Merkle tree blocks as data blocks, and
+that would require some additional code restructuring.
+
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+---
+ drivers/md/dm-verity-target.c | 113 ++++++++++++++++++++++++++--------
+ drivers/md/dm-verity.h        |  31 +++++-----
+ 2 files changed, 103 insertions(+), 41 deletions(-)
+
+diff --git a/drivers/md/dm-verity-target.c b/drivers/md/dm-verity-target.c
+index af9f1544a..bf0aee73b 100644
+--- a/drivers/md/dm-verity-target.c
++++ b/drivers/md/dm-verity-target.c
+@@ -417,9 +417,12 @@ static noinline int verity_recheck(struct dm_verity *v, struct dm_verity_io *io,
+ static int verity_handle_data_hash_mismatch(struct dm_verity *v,
+ 					    struct dm_verity_io *io,
+ 					    struct bio *bio,
+-					    const u8 *want_digest,
+-					    sector_t blkno, u8 *data)
++					    struct pending_block *block)
+ {
++	const u8 *want_digest = block->want_digest;
++	sector_t blkno = block->blkno;
++	u8 *data = block->data;
++
+ 	if (static_branch_unlikely(&use_bh_wq_enabled) && io->in_bh) {
+ 		/*
+ 		 * Error handling code (FEC included) cannot be run in the
+@@ -448,6 +451,58 @@ static int verity_handle_data_hash_mismatch(struct dm_verity *v,
  	return 0;
  }
  
@@ -3001,7 +4175,7 @@ index 66a00a8cc..bf0aee73b 100644
  /*
   * Verify one "dm_verity_io" structure.
   */
-@@ -440,10 +510,14 @@ static int verity_verify_io(struct dm_verity_io *io)
+@@ -455,10 +510,14 @@ static int verity_verify_io(struct dm_verity_io *io)
  {
  	struct dm_verity *v = io->v;
  	const unsigned int block_size = 1 << v->data_dev_block_bits;
@@ -3016,7 +4190,7 @@ index 66a00a8cc..bf0aee73b 100644
  
  	if (static_branch_unlikely(&use_bh_wq_enabled) && io->in_bh) {
  		/*
-@@ -457,21 +531,22 @@ static int verity_verify_io(struct dm_verity_io *io)
+@@ -472,21 +531,22 @@ static int verity_verify_io(struct dm_verity_io *io)
  
  	for (b = 0; b < io->n_blocks;
  	     b++, bio_advance_iter(bio, iter, block_size)) {
@@ -3045,7 +4219,7 @@ index 66a00a8cc..bf0aee73b 100644
  
  		bv = bio_iter_iovec(bio, *iter);
  		if (unlikely(bv.bv_len < block_size)) {
-@@ -482,7 +557,8 @@ static int verity_verify_io(struct dm_verity_io *io)
+@@ -497,7 +557,8 @@ static int verity_verify_io(struct dm_verity_io *io)
  			 * data block size to be greater than PAGE_SIZE.
  			 */
  			DMERR_LIMIT("unaligned io (data block spans pages)");
@@ -3055,7 +4229,7 @@ index 66a00a8cc..bf0aee73b 100644
  		}
  
  		data = bvec_kmap_local(&bv);
-@@ -496,29 +572,26 @@ static int verity_verify_io(struct dm_verity_io *io)
+@@ -511,30 +572,26 @@ static int verity_verify_io(struct dm_verity_io *io)
  			kunmap_local(data);
  			continue;
  		}
@@ -3081,8 +4255,9 @@ index 66a00a8cc..bf0aee73b 100644
 -			kunmap_local(data);
 -			continue;
 -		}
--		r = verity_handle_data_hash_mismatch(v, io, bio, cur_block,
--						     data);
+-		r = verity_handle_data_hash_mismatch(v, io, bio,
+-						     verity_io_want_digest(v, io),
+-						     cur_block, data);
 -		kunmap_local(data);
 +	if (io->num_pending) {
 +		r = verity_verify_pending_blocks(v, io, bio);
@@ -3099,137 +4274,28 @@ index 66a00a8cc..bf0aee73b 100644
  }
  
  /*
-@@ -1004,7 +1077,7 @@ static void verity_dtr(struct dm_target *ti)
- 
- 	kvfree(v->validated_blocks);
- 	kfree(v->salt);
--	kfree(v->initial_hashstate);
-+	kfree(v->initial_hashstate.shash);
- 	kfree(v->root_digest);
- 	kfree(v->zero_digest);
- 	verity_free_sig(v);
-@@ -1069,8 +1142,7 @@ static int verity_alloc_zero_digest(struct dm_verity *v)
- 	if (!v->zero_digest)
- 		return r;
- 
--	io = kmalloc(sizeof(*io) + crypto_shash_descsize(v->shash_tfm),
--		     GFP_KERNEL);
-+	io = kmalloc(v->ti->per_io_data_size, GFP_KERNEL);
- 
- 	if (!io)
- 		return r; /* verity_dtr will free zero_digest */
-@@ -1252,11 +1324,26 @@ static int verity_setup_hash_alg(struct dm_verity *v, const char *alg_name)
- 	}
- 	v->shash_tfm = shash;
- 	v->digest_size = crypto_shash_digestsize(shash);
--	DMINFO("%s using \"%s\"", alg_name, crypto_shash_driver_name(shash));
- 	if ((1 << v->hash_dev_block_bits) < v->digest_size * 2) {
- 		ti->error = "Digest size too big";
- 		return -EINVAL;
- 	}
-+	if (likely(v->version && strcmp(alg_name, "sha256") == 0)) {
-+		/*
-+		 * Fast path: use the library API for reduced overhead and
-+		 * interleaved hashing support.
-+		 */
-+		v->use_sha256_lib = true;
+@@ -1277,6 +1334,8 @@ static int verity_setup_hash_alg(struct dm_verity *v, const char *alg_name)
+ 		 * interleaved hashing support.
+ 		 */
+ 		v->use_sha256_lib = true;
 +		if (sha256_finup_2x_is_optimized())
 +			v->use_sha256_finup_2x = true;
-+		ti->per_io_data_size =
-+			offsetofend(struct dm_verity_io, hash_ctx.sha256);
-+	} else {
-+		/* Fallback case: use the generic crypto API. */
-+		ti->per_io_data_size =
-+			offsetofend(struct dm_verity_io, hash_ctx.shash) +
-+			crypto_shash_descsize(shash);
-+	}
- 	return 0;
- }
- 
-@@ -1277,7 +1364,18 @@ static int verity_setup_salt_and_hashstate(struct dm_verity *v, const char *arg)
- 			return -EINVAL;
- 		}
- 	}
--	if (v->version) { /* Version 1: salt at beginning */
-+	if (likely(v->use_sha256_lib)) {
-+		/* Implies version 1: salt at beginning */
-+		v->initial_hashstate.sha256 =
-+			kmalloc(sizeof(struct sha256_ctx), GFP_KERNEL);
-+		if (!v->initial_hashstate.sha256) {
-+			ti->error = "Cannot allocate initial hash state";
-+			return -ENOMEM;
-+		}
-+		sha256_init(v->initial_hashstate.sha256);
-+		sha256_update(v->initial_hashstate.sha256,
-+			      v->salt, v->salt_size);
-+	} else if (v->version) { /* Version 1: salt at beginning */
- 		SHASH_DESC_ON_STACK(desc, v->shash_tfm);
- 		int r;
- 
-@@ -1285,16 +1383,16 @@ static int verity_setup_salt_and_hashstate(struct dm_verity *v, const char *arg)
- 		 * Compute the pre-salted hash state that can be passed to
- 		 * crypto_shash_import() for each block later.
- 		 */
--		v->initial_hashstate = kmalloc(
-+		v->initial_hashstate.shash = kmalloc(
- 			crypto_shash_statesize(v->shash_tfm), GFP_KERNEL);
--		if (!v->initial_hashstate) {
-+		if (!v->initial_hashstate.shash) {
- 			ti->error = "Cannot allocate initial hash state";
- 			return -ENOMEM;
- 		}
- 		desc->tfm = v->shash_tfm;
- 		r = crypto_shash_init(desc) ?:
- 		    crypto_shash_update(desc, v->salt, v->salt_size) ?:
--		    crypto_shash_export(desc, v->initial_hashstate);
-+		    crypto_shash_export(desc, v->initial_hashstate.shash);
- 		if (r) {
- 			ti->error = "Cannot set up initial hash state";
- 			return r;
-@@ -1556,9 +1654,6 @@ static int verity_ctr(struct dm_target *ti, unsigned int argc, char **argv)
- 		goto bad;
- 	}
- 
--	ti->per_io_data_size = sizeof(struct dm_verity_io) +
--			       crypto_shash_descsize(v->shash_tfm);
--
- 	r = verity_fec_ctr(v);
- 	if (r)
- 		goto bad;
+ 		ti->per_io_data_size =
+ 			offsetofend(struct dm_verity_io, hash_ctx.sha256);
+ 	} else {
 diff --git a/drivers/md/dm-verity.h b/drivers/md/dm-verity.h
-index 6d141abd9..f975a9e5c 100644
+index cf7973ed3..f975a9e5c 100644
 --- a/drivers/md/dm-verity.h
 +++ b/drivers/md/dm-verity.h
-@@ -16,6 +16,7 @@
- #include <linux/device-mapper.h>
- #include <linux/interrupt.h>
- #include <crypto/hash.h>
-+#include <crypto/sha2.h>
- 
- #define DM_VERITY_MAX_LEVELS		63
- 
-@@ -42,7 +43,10 @@ struct dm_verity {
- 	struct crypto_shash *shash_tfm;
- 	u8 *root_digest;	/* digest of the root block */
- 	u8 *salt;		/* salt: its size is salt_size */
--	u8 *initial_hashstate;	/* salted initial state, if version >= 1 */
-+	union {
-+		struct sha256_ctx *sha256;	/* for use_sha256_lib=1 */
-+		u8 *shash;			/* for use_sha256_lib=0 */
-+	} initial_hashstate; /* salted initial state, if version >= 1 */
- 	u8 *zero_digest;	/* digest for a zero block */
- #ifdef CONFIG_SECURITY
- 	u8 *root_digest_sig;	/* signature of the root digest */
-@@ -59,6 +63,8 @@ struct dm_verity {
- 	unsigned char version;
+@@ -64,6 +64,7 @@ struct dm_verity {
  	bool hash_failed:1;	/* set if hash of any block failed */
  	bool use_bh_wq:1;	/* try to verify in BH wq before normal work-queue */
-+	bool use_sha256_lib:1;	/* use SHA-256 library instead of generic crypto API */
+ 	bool use_sha256_lib:1;	/* use SHA-256 library instead of generic crypto API */
 +	bool use_sha256_finup_2x:1; /* use interleaved hashing optimization */
  	unsigned int digest_size;	/* digest size for the current hash algorithm */
  	enum verity_mode mode;	/* mode for handling verification errors */
  	enum verity_mode error_mode;/* mode for handling I/O errors */
-@@ -78,6 +84,13 @@ struct dm_verity {
+@@ -83,6 +84,13 @@ struct dm_verity {
  	mempool_t recheck_pool;
  };
  
@@ -3243,38 +4309,26 @@ index 6d141abd9..f975a9e5c 100644
  struct dm_verity_io {
  	struct dm_verity *v;
  
-@@ -94,29 +107,30 @@ struct dm_verity_io {
- 	struct work_struct work;
+@@ -100,8 +108,15 @@ struct dm_verity_io {
  	struct work_struct bh_work;
  
+ 	u8 tmp_digest[HASH_MAX_DIGESTSIZE];
 -	u8 real_digest[HASH_MAX_DIGESTSIZE];
 -	u8 want_digest[HASH_MAX_DIGESTSIZE];
-+	u8 tmp_digest[HASH_MAX_DIGESTSIZE];
- 
- 	/*
--	 * Temporary space for hashing.  This is variable-length and must be at
--	 * the end of the struct.  struct shash_desc is just the fixed part;
--	 * it's followed by a context of size crypto_shash_descsize(shash_tfm).
++
++	/*
 +	 * This is the queue of data blocks that are pending verification.  When
 +	 * the crypto layer supports interleaved hashing, we allow multiple
 +	 * blocks to be queued up in order to utilize it.  This can improve
 +	 * performance significantly vs. sequential hashing of each block.
- 	 */
--	struct shash_desc hash_desc;
++	 */
 +	int num_pending;
 +	struct pending_block pending_blocks[2];
-+
-+	/*
-+	 * Temporary space for hashing.  Either sha256 or shash is used,
-+	 * depending on the value of use_sha256_lib.  If shash is used,
-+	 * then this field is variable-length, with total size
-+	 * sizeof(struct shash_desc) + crypto_shash_descsize(shash_tfm).
-+	 * For this reason, this field must be the end of the struct.
-+	 */
-+	union {
-+		struct sha256_ctx sha256;
-+		struct shash_desc shash;
-+	} hash_ctx;
+ 
+ 	/*
+ 	 * Temporary space for hashing.  Either sha256 or shash is used,
+@@ -116,18 +131,6 @@ struct dm_verity_io {
+ 	} hash_ctx;
  };
  
 -static inline u8 *verity_io_real_digest(struct dm_verity *v,
@@ -3292,6 +4346,33 @@ index 6d141abd9..f975a9e5c 100644
  extern int verity_hash(struct dm_verity *v, struct dm_verity_io *io,
  		       const u8 *data, size_t len, u8 *digest);
  
+-- 
+2.52.0
+
+
+From 8fe3ec316fa3a74d8f6a300722b8374534f9a0b8 Mon Sep 17 00:00:00 2001
+From: Menglong Dong <menglong8.dong@gmail.com>
+Date: Sat, 11 Oct 2025 09:48:55 +0800
+Subject: [PATCH 13/13] rhashtable: use likely for rhashtable lookup
+
+Sometimes, the result of the rhashtable_lookup() is expected to be found.
+Therefore, we can use likely() for such cases.
+
+Following new functions are introduced, which will use likely or unlikely
+during the lookup:
+
+ rhashtable_lookup_likely
+ rhltable_lookup_likely
+
+A micro-benchmark is made for these new functions: lookup a existed entry
+repeatedly for 100000000 times, and rhashtable_lookup_likely() gets ~30%
+speedup.
+
+Signed-off-by: Menglong Dong <dongml2@chinatelecom.cn>
+---
+ include/linux/rhashtable.h | 70 +++++++++++++++++++++++++++++++-------
+ 1 file changed, 58 insertions(+), 12 deletions(-)
+
 diff --git a/include/linux/rhashtable.h b/include/linux/rhashtable.h
 index 05a221ce7..b87a768b9 100644
 --- a/include/linux/rhashtable.h
