@@ -898,7 +898,6 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-int-sqrt.patch"
 	eapply "${FILESDIR}/6.18.1-reduce-dcache.patch"
 	eapply "${FILESDIR}/6.18.1-bitmap-syscall-audit.patch"
-	eapply "${FILESDIR}/6.18.1-ushare-tcp.patch"
 	eapply "${FILESDIR}/6.18.1-sk-packets-sock.patch"
 	eapply "${FILESDIR}/6.18.1-scale-net-alloc.patch"
 	eapply "${FILESDIR}/6.18.1-align-dst.patch"
@@ -908,6 +907,8 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-mem_page.patch"
 	eapply "${FILESDIR}/6.18.1-sched-limit.patch"
 	eapply "${FILESDIR}/6.18.1-udp-inline.patch"
+	eapply "${FILESDIR}/6.18.1-readdir-hint.patch"
+	eapply "${FILESDIR}/6.18.1-poc-selector.patch"
 	einfo "Applying local patches"
 
 
