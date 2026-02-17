@@ -909,6 +909,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-udp-inline.patch"
 	eapply "${FILESDIR}/6.18.1-readdir-hint.patch"
 	eapply "${FILESDIR}/6.18.1-poc-selector.patch"
+	eapply "${FILESDIR}/6.18.1-lrng.patch"
 	einfo "Applying local patches"
 
 
