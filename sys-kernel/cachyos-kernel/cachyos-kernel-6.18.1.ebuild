@@ -910,7 +910,6 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-readdir-hint.patch"
 	eapply "${FILESDIR}/6.18.1-poc-selector.patch"
 	eapply "${FILESDIR}/6.18.1-lrng.patch"
-	eapply "${FILESDIR}/6.18.1-crypto.patch"
 	einfo "Applying local patches"
 
 
