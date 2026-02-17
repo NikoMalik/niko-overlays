@@ -911,7 +911,9 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-poc-selector.patch"
 	eapply "${FILESDIR}/6.18.1-lrng.patch"
 	eapply "${FILESDIR}/6.18.1-block.patch"
+	eapply "${FILESDIR}/6.18.1-sbitmap-bits.patch"
 	einfo "Applying local patches"
+
 
 
 	eapply_user
