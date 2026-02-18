@@ -914,7 +914,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-sbitmap-bits.patch"
 	eapply "${FILESDIR}/6.18.1-rbtree-inline.patch"
 	eapply "${FILESDIR}/6.18.1-zstd.patch"
-	eapply "${FILESDIR}/6.18.1-rss-stat.patch"
+	eapply "${FILESDIR}/6.18.1-rss-stat-optimization.patch"
 	einfo "Applying local patches"
 
 
