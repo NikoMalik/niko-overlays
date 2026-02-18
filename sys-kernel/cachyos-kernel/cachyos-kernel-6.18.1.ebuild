@@ -822,6 +822,10 @@ cachy_use_config() {
 	kconf unset SLAB_FREELIST_HARDEN
 	einfo "SLAB_RANDOM DISABLED"
 
+
+	kconf set CPU_FREQ_GOV_REFLEX
+
+
 	if use autofdo; then
 		kconf set AUTOFDO_CLANG
 		einfo "CONFIG_AUTO_FDO enabled"
