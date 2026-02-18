@@ -1,0 +1,1637 @@
+Subject: [PATCH v11 0/8] mm: folio_zero_user: clear page ranges
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:01 -0800
+Message-Id: <20260107072009.1615991-1-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Hi,
+
+This series adds clearing of contiguous page ranges for hugepages.
+
+Major changes over v10: no major changes in logic. On Andrew's
+prompting, however, this version adds a lot more detail about the
+causes of the increased performance. Some of this was handwaved
+away in the earlier versions.
+
+More detail in the changelog.
+
+The series improves on the current discontiguous clearing approach in
+two ways:
+
+  - clear pages in a contiguous fashion.
+  - use batched clearing via clear_pages() wherever exposed.
+
+The first is useful because it allows us to make much better use
+of hardware prefetchers.
+
+The second, enables advertising the real extent to the processor. 
+Where specific instructions support it (ex. string instructions on
+x86; "mops" on arm64 etc), a processor can optimize based on this
+because, instead of seeing a sequence of 8-byte stores, or a sequence
+of 4KB pages, it sees a larger unit being operated on.
+
+For instance, AMD Zen uarchs (for extents larger than LLC-size) switch
+to a mode where they start eliding cacheline allocation. This is
+helpful not just because it results in higher bandwidth, but also
+because now the cache is not evicting useful cachelines and replacing
+them with zeroes.
+
+Demand faulting a 64GB region shows performance improvement:
+
+ $ perf bench mem mmap -p $pg-sz -f demand -s 64GB -l 5
+
+                       baseline              +series
+                   (GBps +- %stdev)      (GBps +- %stdev)
+
+   pg-sz=2MB       11.76 +- 1.10%        25.34 +- 1.18% [*]   +115.47%  	preempt=*
+
+   pg-sz=1GB       24.85 +- 2.41%        39.22 +- 2.32%       + 57.82%  	preempt=none|voluntary
+   pg-sz=1GB         (similar)           52.73 +- 0.20% [#]   +112.19%  	preempt=full|lazy
+
+ [*] This improvement is because switching to sequential clearing
+  allows the hardware prefetchers to do a much better job.
+
+ [#] For pg-sz=1GB a large part of the improvement is because of the
+  cacheline elision mentioned above. preempt=full|lazy improves upon
+  that because, not needing explicit invocations of cond_resched() to
+  ensure reasonable preemption latency, it can clear the full extent
+  as a single unit. In comparison the maximum extent used for
+  preempt=none|voluntary is PROCESS_PAGES_NON_PREEMPT_BATCH (32MB).
+
+  When provided the full extent the processor forgoes allocating
+  cachelines on this path almost entirely.
+
+  (The hope is that eventually, in the fullness of time, the lazy
+   preemption model will be able to do the same job that none or
+   voluntary models are used for, allowing us to do away with
+   cond_resched().)
+
+Raghavendra also tested previous version of the series on AMD Genoa
+and sees similar improvement [1] with preempt=lazy.
+
+  $ perf bench mem map -p $page-size -f populate -s 64GB -l 10
+
+                    base               patched              change
+   pg-sz=2MB       12.731939 GB/sec    26.304263 GB/sec     106.6%
+   pg-sz=1GB       26.232423 GB/sec    61.174836 GB/sec     133.2%
+
+Comments appreciated!
+
+Also at:
+  github.com/terminus/linux clear-pages.v11
+
+Thanks
+Ankur
+
+Changelog:
+
+v11:
+  - folio_zero_user(): unified the special casing of the gigantic page
+    with the hugetlb handling. Plus cleanups.
+  - highmem: unify clear_user_highpages() changes.
+
+   (Both suggested by David Hildenbrand).
+
+  - split patch "mm, folio_zero_user: support clearing page ranges"
+    from v10 into two separate patches:
+
+      - patch-6 "mm: folio_zero_user: clear pages sequentially", which
+        switches to doing sequential clearing from process_huge_pages().
+
+      - patch-7: "mm: folio_zero_user: clear page ranges", which
+        switches to clearing in batches.
+
+  - PROCESS_PAGES_NON_PREEMPT_BATCH: define it as 32MB instead of the
+    earlier 8MB.
+
+    (Both of these came out of a discussion with Andrew Morton.)
+
+  (https://lore.kernel.org/lkml/20251215204922.475324-1-ankur.a.arora@oracle.com/)
+
+v10:
+ - Condition the definition of clear_user_page(), clear_user_pages()
+   on the architecture code defining clear_user_highpage. This
+   simplifies issues with architectures where some do not define
+   clear_user_page, but define clear_user_highpage().
+
+   Also, instead of splitting up across files, move them to linux/highmem.
+   This gets rid of build errors while using clear_usre_pages() for
+   architectures that use macro magic (such as sparc, m68k).
+   (Suggested by Christophe Leroy).
+
+ - thresh out some of the comments around the x86 clear_pages()
+   definition (Suggested by Borislav Petkov and Mateusz Guzik).
+ (https://lore.kernel.org/lkml/20251121202352.494700-1-ankur.a.arora@oracle.com/)
+
+v9:
+ - Define PROCESS_PAGES_NON_PREEMPT_BATCH in common code (instead of
+   inheriting ARCH_PAGE_CONTIG_NR.)
+    - Also document this in much greater detail as clearing pages
+      needing a a constant dependent on the preemption model is
+      facially quite odd.
+     (Suggested by David Hildenbrand, Andrew Morton, Borislav Petkov.)
+
+ - Switch architectural markers from __HAVE_ARCH_CLEAR_USER_PAGE (and
+   similar) to clear_user_page etc. (Suggested by David Hildenbrand)
+
+ - s/memzero_page_aligned_unrolled/__clear_pages_unrolled/
+   (Suggested by Borislav Petkov.)
+ - style, comment fixes
+ (https://lore.kernel.org/lkml/20251027202109.678022-1-ankur.a.arora@oracle.com/)
+
+v8:
+ - make clear_user_highpages(), clear_user_pages() and clear_pages()
+   more robust across architectures. (Thanks David!)
+ - split up folio_zero_user() changes into ones for clearing contiguous
+   regions and those for maintaining temporal locality since they have
+   different performance profiles (Suggested by Andrew Morton.)
+ - added Raghavendra's Reviewed-by, Tested-by.
+ - get rid of nth_page()
+ - perf related patches have been pulled already. Remove them.
+
+v7:
+ - interface cleanups, comments for clear_user_highpages(), clear_user_pages(),
+   clear_pages().
+ - fixed build errors flagged by kernel test robot
+ (https://lore.kernel.org/lkml/20250917152418.4077386-1-ankur.a.arora@oracle.com/)
+
+v6:
+ - perf bench mem: update man pages and other cleanups (Namhyung Kim)
+ - unify folio_zero_user() for HIGHMEM, !HIGHMEM options instead of
+   working through a new config option (David Hildenbrand).
+   - cleanups and simlification around that.
+ (https://lore.kernel.org/lkml/20250902080816.3715913-1-ankur.a.arora@oracle.com/)
+
+v5:
+ - move the non HIGHMEM implementation of folio_zero_user() from x86
+   to common code (Dave Hansen)
+ - Minor naming cleanups, commit messages etc
+ (https://lore.kernel.org/lkml/20250710005926.1159009-1-ankur.a.arora@oracle.com/)
+
+v4:
+ - adds perf bench workloads to exercise mmap() populate/demand-fault (Ingo)
+ - inline stosb etc (PeterZ)
+ - handle cooperative preemption models (Ingo)
+ - interface and other cleanups all over (Ingo)
+ (https://lore.kernel.org/lkml/20250616052223.723982-1-ankur.a.arora@oracle.com/)
+
+v3:
+ - get rid of preemption dependency (TIF_ALLOW_RESCHED); this version
+   was limited to preempt=full|lazy.
+ - override folio_zero_user() (Linus)
+ (https://lore.kernel.org/lkml/20250414034607.762653-1-ankur.a.arora@oracle.com/)
+
+v2:
+ - addressed review comments from peterz, tglx.
+ - Removed clear_user_pages(), and CONFIG_X86_32:clear_pages()
+ - General code cleanup
+ (https://lore.kernel.org/lkml/20230830184958.2333078-1-ankur.a.arora@oracle.com/)
+
+[1] https://lore.kernel.org/lkml/fffd4dad-2cb9-4bc9-8a80-a70be687fd54@amd.com/
+
+Ankur Arora (7):
+  mm: introduce clear_pages() and clear_user_pages()
+  highmem: introduce clear_user_highpages()
+  x86/mm: Simplify clear_page_*
+  x86/clear_page: Introduce clear_pages()
+  mm: folio_zero_user: clear pages sequentially
+  mm: folio_zero_user: clear page ranges
+  mm: folio_zero_user: cache neighbouring pages
+
+David Hildenbrand (1):
+  treewide: provide a generic clear_user_page() variant
+
+ arch/alpha/include/asm/page.h      |  1 -
+ arch/arc/include/asm/page.h        |  2 +
+ arch/arm/include/asm/page-nommu.h  |  1 -
+ arch/arm64/include/asm/page.h      |  1 -
+ arch/csky/abiv1/inc/abi/page.h     |  1 +
+ arch/csky/abiv2/inc/abi/page.h     |  7 ---
+ arch/hexagon/include/asm/page.h    |  1 -
+ arch/loongarch/include/asm/page.h  |  1 -
+ arch/m68k/include/asm/page_no.h    |  1 -
+ arch/microblaze/include/asm/page.h |  1 -
+ arch/mips/include/asm/page.h       |  1 +
+ arch/nios2/include/asm/page.h      |  1 +
+ arch/openrisc/include/asm/page.h   |  1 -
+ arch/parisc/include/asm/page.h     |  1 -
+ arch/powerpc/include/asm/page.h    |  1 +
+ arch/riscv/include/asm/page.h      |  1 -
+ arch/s390/include/asm/page.h       |  1 -
+ arch/sparc/include/asm/page_64.h   |  1 +
+ arch/um/include/asm/page.h         |  1 -
+ arch/x86/include/asm/page.h        |  6 --
+ arch/x86/include/asm/page_32.h     |  6 ++
+ arch/x86/include/asm/page_64.h     | 76 ++++++++++++++++++-----
+ arch/x86/lib/clear_page_64.S       | 39 +++---------
+ arch/xtensa/include/asm/page.h     |  1 -
+ include/linux/highmem.h            | 98 +++++++++++++++++++++++++++++-
+ include/linux/mm.h                 | 56 +++++++++++++++++
+ mm/memory.c                        | 75 +++++++++++++++++------
+ 27 files changed, 290 insertions(+), 93 deletions(-)
+
+-- 
+2.31.1
+
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 1/8] treewide: provide a generic clear_user_page()
+ variant
+From: David Hildenbrand <david@redhat.com>
+Date: Tue, 06 Jan 2026 23:20:02 -0800
+Message-Id: <20260107072009.1615991-2-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Let's drop all variants that effectively map to clear_page() and
+provide it in a generic variant instead.
+
+We'll use the macro clear_user_page to indicate whether an architecture
+provides it's own variant.
+
+Also, clear_user_page() is only called from the generic variant of
+clear_user_highpage(), so define it only if the architecture does
+not provide a clear_user_highpage(). And, for simplicity define it
+in linux/highmem.h.
+
+Note that for parisc, clear_page() and clear_user_page() map to
+clear_page_asm(), so we can just get rid of the custom clear_user_page()
+implementation. There is a clear_user_page_asm() function on parisc,
+that seems to be unused. Not sure what's up with that.
+
+Signed-off-by: David Hildenbrand <david@redhat.com>
+Co-developed-by: Ankur Arora <ankur.a.arora@oracle.com>
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+---
+ arch/alpha/include/asm/page.h      |  1 -
+ arch/arc/include/asm/page.h        |  2 ++
+ arch/arm/include/asm/page-nommu.h  |  1 -
+ arch/arm64/include/asm/page.h      |  1 -
+ arch/csky/abiv1/inc/abi/page.h     |  1 +
+ arch/csky/abiv2/inc/abi/page.h     |  7 -------
+ arch/hexagon/include/asm/page.h    |  1 -
+ arch/loongarch/include/asm/page.h  |  1 -
+ arch/m68k/include/asm/page_no.h    |  1 -
+ arch/microblaze/include/asm/page.h |  1 -
+ arch/mips/include/asm/page.h       |  1 +
+ arch/nios2/include/asm/page.h      |  1 +
+ arch/openrisc/include/asm/page.h   |  1 -
+ arch/parisc/include/asm/page.h     |  1 -
+ arch/powerpc/include/asm/page.h    |  1 +
+ arch/riscv/include/asm/page.h      |  1 -
+ arch/s390/include/asm/page.h       |  1 -
+ arch/sparc/include/asm/page_64.h   |  1 +
+ arch/um/include/asm/page.h         |  1 -
+ arch/x86/include/asm/page.h        |  6 ------
+ arch/xtensa/include/asm/page.h     |  1 -
+ include/linux/highmem.h            | 24 ++++++++++++++++++++++--
+ 22 files changed, 29 insertions(+), 28 deletions(-)
+
+diff --git a/arch/alpha/include/asm/page.h b/arch/alpha/include/asm/page.h
+index d2c6667d73e9..59d01f9b77f6 100644
+--- a/arch/alpha/include/asm/page.h
++++ b/arch/alpha/include/asm/page.h
+@@ -11,7 +11,6 @@
+ #define STRICT_MM_TYPECHECKS
+ 
+ extern void clear_page(void *page);
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ 
+ #define vma_alloc_zeroed_movable_folio(vma, vaddr) \
+ 	vma_alloc_folio(GFP_HIGHUSER_MOVABLE | __GFP_ZERO, 0, vma, vaddr)
+diff --git a/arch/arc/include/asm/page.h b/arch/arc/include/asm/page.h
+index 9720fe6b2c24..38214e126c6d 100644
+--- a/arch/arc/include/asm/page.h
++++ b/arch/arc/include/asm/page.h
+@@ -32,6 +32,8 @@ struct page;
+ 
+ void copy_user_highpage(struct page *to, struct page *from,
+ 			unsigned long u_vaddr, struct vm_area_struct *vma);
++
++#define clear_user_page clear_user_page
+ void clear_user_page(void *to, unsigned long u_vaddr, struct page *page);
+ 
+ typedef struct {
+diff --git a/arch/arm/include/asm/page-nommu.h b/arch/arm/include/asm/page-nommu.h
+index 7c2c72323d17..e74415c959be 100644
+--- a/arch/arm/include/asm/page-nommu.h
++++ b/arch/arm/include/asm/page-nommu.h
+@@ -11,7 +11,6 @@
+ #define clear_page(page)	memset((page), 0, PAGE_SIZE)
+ #define copy_page(to,from)	memcpy((to), (from), PAGE_SIZE)
+ 
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ /*
+diff --git a/arch/arm64/include/asm/page.h b/arch/arm64/include/asm/page.h
+index 00f117ff4f7a..b39cc1127e1f 100644
+--- a/arch/arm64/include/asm/page.h
++++ b/arch/arm64/include/asm/page.h
+@@ -36,7 +36,6 @@ struct folio *vma_alloc_zeroed_movable_folio(struct vm_area_struct *vma,
+ bool tag_clear_highpages(struct page *to, int numpages);
+ #define __HAVE_ARCH_TAG_CLEAR_HIGHPAGES
+ 
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ typedef struct page *pgtable_t;
+diff --git a/arch/csky/abiv1/inc/abi/page.h b/arch/csky/abiv1/inc/abi/page.h
+index 2d2159933b76..58307254e7e5 100644
+--- a/arch/csky/abiv1/inc/abi/page.h
++++ b/arch/csky/abiv1/inc/abi/page.h
+@@ -10,6 +10,7 @@ static inline unsigned long pages_do_alias(unsigned long addr1,
+ 	return (addr1 ^ addr2) & (SHMLBA-1);
+ }
+ 
++#define clear_user_page clear_user_page
+ static inline void clear_user_page(void *addr, unsigned long vaddr,
+ 				   struct page *page)
+ {
+diff --git a/arch/csky/abiv2/inc/abi/page.h b/arch/csky/abiv2/inc/abi/page.h
+index cf005f13cd15..a5a255013308 100644
+--- a/arch/csky/abiv2/inc/abi/page.h
++++ b/arch/csky/abiv2/inc/abi/page.h
+@@ -1,11 +1,4 @@
+ /* SPDX-License-Identifier: GPL-2.0 */
+-
+-static inline void clear_user_page(void *addr, unsigned long vaddr,
+-				   struct page *page)
+-{
+-	clear_page(addr);
+-}
+-
+ static inline void copy_user_page(void *to, void *from, unsigned long vaddr,
+ 				  struct page *page)
+ {
+diff --git a/arch/hexagon/include/asm/page.h b/arch/hexagon/include/asm/page.h
+index 137ba7c5de48..f0aed3ed812b 100644
+--- a/arch/hexagon/include/asm/page.h
++++ b/arch/hexagon/include/asm/page.h
+@@ -113,7 +113,6 @@ static inline void clear_page(void *page)
+ /*
+  * Under assumption that kernel always "sees" user map...
+  */
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ static inline unsigned long virt_to_pfn(const void *kaddr)
+diff --git a/arch/loongarch/include/asm/page.h b/arch/loongarch/include/asm/page.h
+index 256d1ff7a1e3..327bf0bc92bf 100644
+--- a/arch/loongarch/include/asm/page.h
++++ b/arch/loongarch/include/asm/page.h
+@@ -30,7 +30,6 @@
+ extern void clear_page(void *page);
+ extern void copy_page(void *to, void *from);
+ 
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ extern unsigned long shm_align_mask;
+diff --git a/arch/m68k/include/asm/page_no.h b/arch/m68k/include/asm/page_no.h
+index 39db2026a4b4..d2532bc407ef 100644
+--- a/arch/m68k/include/asm/page_no.h
++++ b/arch/m68k/include/asm/page_no.h
+@@ -10,7 +10,6 @@ extern unsigned long memory_end;
+ #define clear_page(page)	memset((page), 0, PAGE_SIZE)
+ #define copy_page(to,from)	memcpy((to), (from), PAGE_SIZE)
+ 
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ #define vma_alloc_zeroed_movable_folio(vma, vaddr) \
+diff --git a/arch/microblaze/include/asm/page.h b/arch/microblaze/include/asm/page.h
+index 90ac9f34b4b4..e1e396367ba7 100644
+--- a/arch/microblaze/include/asm/page.h
++++ b/arch/microblaze/include/asm/page.h
+@@ -45,7 +45,6 @@ typedef unsigned long pte_basic_t;
+ # define copy_page(to, from)			memcpy((to), (from), PAGE_SIZE)
+ # define clear_page(pgaddr)			memset((pgaddr), 0, PAGE_SIZE)
+ 
+-# define clear_user_page(pgaddr, vaddr, page)	memset((pgaddr), 0, PAGE_SIZE)
+ # define copy_user_page(vto, vfrom, vaddr, topg) \
+ 			memcpy((vto), (vfrom), PAGE_SIZE)
+ 
+diff --git a/arch/mips/include/asm/page.h b/arch/mips/include/asm/page.h
+index bc3e3484c1bf..5ec428fcc887 100644
+--- a/arch/mips/include/asm/page.h
++++ b/arch/mips/include/asm/page.h
+@@ -90,6 +90,7 @@ static inline void clear_user_page(void *addr, unsigned long vaddr,
+ 	if (pages_do_alias((unsigned long) addr, vaddr & PAGE_MASK))
+ 		flush_data_cache_page((unsigned long)addr);
+ }
++#define clear_user_page clear_user_page
+ 
+ struct vm_area_struct;
+ extern void copy_user_highpage(struct page *to, struct page *from,
+diff --git a/arch/nios2/include/asm/page.h b/arch/nios2/include/asm/page.h
+index 00a51623d38a..722956ac0bf8 100644
+--- a/arch/nios2/include/asm/page.h
++++ b/arch/nios2/include/asm/page.h
+@@ -45,6 +45,7 @@
+ 
+ struct page;
+ 
++#define clear_user_page clear_user_page
+ extern void clear_user_page(void *addr, unsigned long vaddr, struct page *page);
+ extern void copy_user_page(void *vto, void *vfrom, unsigned long vaddr,
+ 				struct page *to);
+diff --git a/arch/openrisc/include/asm/page.h b/arch/openrisc/include/asm/page.h
+index 85797f94d1d7..d2cdbf3579bb 100644
+--- a/arch/openrisc/include/asm/page.h
++++ b/arch/openrisc/include/asm/page.h
+@@ -30,7 +30,6 @@
+ #define clear_page(page)	memset((page), 0, PAGE_SIZE)
+ #define copy_page(to, from)	memcpy((to), (from), PAGE_SIZE)
+ 
+-#define clear_user_page(page, vaddr, pg)        clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)     copy_page(to, from)
+ 
+ /*
+diff --git a/arch/parisc/include/asm/page.h b/arch/parisc/include/asm/page.h
+index 8f4e51071ea1..3630b36d07da 100644
+--- a/arch/parisc/include/asm/page.h
++++ b/arch/parisc/include/asm/page.h
+@@ -21,7 +21,6 @@ struct vm_area_struct;
+ 
+ void clear_page_asm(void *page);
+ void copy_page_asm(void *to, void *from);
+-#define clear_user_page(vto, vaddr, page) clear_page_asm(vto)
+ void copy_user_highpage(struct page *to, struct page *from, unsigned long vaddr,
+ 		struct vm_area_struct *vma);
+ #define __HAVE_ARCH_COPY_USER_HIGHPAGE
+diff --git a/arch/powerpc/include/asm/page.h b/arch/powerpc/include/asm/page.h
+index b28fbb1d57eb..f2bb1f98eebe 100644
+--- a/arch/powerpc/include/asm/page.h
++++ b/arch/powerpc/include/asm/page.h
+@@ -271,6 +271,7 @@ static inline const void *pfn_to_kaddr(unsigned long pfn)
+ 
+ struct page;
+ extern void clear_user_page(void *page, unsigned long vaddr, struct page *pg);
++#define clear_user_page clear_user_page
+ extern void copy_user_page(void *to, void *from, unsigned long vaddr,
+ 		struct page *p);
+ extern int devmem_is_allowed(unsigned long pfn);
+diff --git a/arch/riscv/include/asm/page.h b/arch/riscv/include/asm/page.h
+index ffe213ad65a4..061b60b954ec 100644
+--- a/arch/riscv/include/asm/page.h
++++ b/arch/riscv/include/asm/page.h
+@@ -50,7 +50,6 @@ void clear_page(void *page);
+ #endif
+ #define copy_page(to, from)			memcpy((to), (from), PAGE_SIZE)
+ 
+-#define clear_user_page(pgaddr, vaddr, page)	clear_page(pgaddr)
+ #define copy_user_page(vto, vfrom, vaddr, topg) \
+ 			memcpy((vto), (vfrom), PAGE_SIZE)
+ 
+diff --git a/arch/s390/include/asm/page.h b/arch/s390/include/asm/page.h
+index c1d63b613bf9..9c8c5283258e 100644
+--- a/arch/s390/include/asm/page.h
++++ b/arch/s390/include/asm/page.h
+@@ -65,7 +65,6 @@ static inline void copy_page(void *to, void *from)
+ 		: : "memory", "cc");
+ }
+ 
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ #define vma_alloc_zeroed_movable_folio(vma, vaddr) \
+diff --git a/arch/sparc/include/asm/page_64.h b/arch/sparc/include/asm/page_64.h
+index d764d8a8586b..fd4dc85fb38b 100644
+--- a/arch/sparc/include/asm/page_64.h
++++ b/arch/sparc/include/asm/page_64.h
+@@ -43,6 +43,7 @@ void _clear_page(void *page);
+ #define clear_page(X)	_clear_page((void *)(X))
+ struct page;
+ void clear_user_page(void *addr, unsigned long vaddr, struct page *page);
++#define clear_user_page clear_user_page
+ #define copy_page(X,Y)	memcpy((void *)(X), (void *)(Y), PAGE_SIZE)
+ void copy_user_page(void *to, void *from, unsigned long vaddr, struct page *topage);
+ #define __HAVE_ARCH_COPY_USER_HIGHPAGE
+diff --git a/arch/um/include/asm/page.h b/arch/um/include/asm/page.h
+index 2d363460d896..e348ff489b89 100644
+--- a/arch/um/include/asm/page.h
++++ b/arch/um/include/asm/page.h
+@@ -26,7 +26,6 @@ struct page;
+ #define clear_page(page)	memset((void *)(page), 0, PAGE_SIZE)
+ #define copy_page(to,from)	memcpy((void *)(to), (void *)(from), PAGE_SIZE)
+ 
+-#define clear_user_page(page, vaddr, pg)	clear_page(page)
+ #define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ 
+ typedef struct { unsigned long pte; } pte_t;
+diff --git a/arch/x86/include/asm/page.h b/arch/x86/include/asm/page.h
+index 9265f2fca99a..416dc88e35c1 100644
+--- a/arch/x86/include/asm/page.h
++++ b/arch/x86/include/asm/page.h
+@@ -22,12 +22,6 @@ struct page;
+ extern struct range pfn_mapped[];
+ extern int nr_pfn_mapped;
+ 
+-static inline void clear_user_page(void *page, unsigned long vaddr,
+-				   struct page *pg)
+-{
+-	clear_page(page);
+-}
+-
+ static inline void copy_user_page(void *to, void *from, unsigned long vaddr,
+ 				  struct page *topage)
+ {
+diff --git a/arch/xtensa/include/asm/page.h b/arch/xtensa/include/asm/page.h
+index 20655174b111..059493256765 100644
+--- a/arch/xtensa/include/asm/page.h
++++ b/arch/xtensa/include/asm/page.h
+@@ -126,7 +126,6 @@ void clear_user_highpage(struct page *page, unsigned long vaddr);
+ void copy_user_highpage(struct page *to, struct page *from,
+ 			unsigned long vaddr, struct vm_area_struct *vma);
+ #else
+-# define clear_user_page(page, vaddr, pg)	clear_page(page)
+ # define copy_user_page(to, from, vaddr, pg)	copy_page(to, from)
+ #endif
+ 
+diff --git a/include/linux/highmem.h b/include/linux/highmem.h
+index abc20f9810fd..393bd51e5a1f 100644
+--- a/include/linux/highmem.h
++++ b/include/linux/highmem.h
+@@ -197,15 +197,35 @@ static inline void invalidate_kernel_vmap_range(void *vaddr, int size)
+ }
+ #endif
+ 
+-/* when CONFIG_HIGHMEM is not set these will be plain clear/copy_page */
+ #ifndef clear_user_highpage
++#ifndef clear_user_page
++/**
++ * clear_user_page() - clear a page to be mapped to user space
++ * @addr: the address of the page
++ * @vaddr: the address of the user mapping
++ * @page: the page
++ *
++ * We condition the definition of clear_user_page() on the architecture
++ * not having a custom clear_user_highpage(). That's because if there
++ * is some special flushing needed for clear_user_highpage() then it
++ * is likely that clear_user_page() also needs some magic. And, since
++ * our only caller is the generic clear_user_highpage(), not defining
++ * is not much of a loss.
++ */
++static inline void clear_user_page(void *addr, unsigned long vaddr, struct page *page)
++{
++	clear_page(addr);
++}
++#endif
++
++/* when CONFIG_HIGHMEM is not set these will be plain clear/copy_page */
+ static inline void clear_user_highpage(struct page *page, unsigned long vaddr)
+ {
+ 	void *addr = kmap_local_page(page);
+ 	clear_user_page(addr, vaddr, page);
+ 	kunmap_local(addr);
+ }
+-#endif
++#endif /* clear_user_highpage */
+ 
+ #ifndef vma_alloc_zeroed_movable_folio
+ /**
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 2/8] mm: introduce clear_pages() and clear_user_pages()
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:03 -0800
+Message-Id: <20260107072009.1615991-3-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Introduce clear_pages(), to be overridden by architectures that
+support more efficient clearing of consecutive pages.
+
+Also introduce clear_user_pages(), however, we will not expect this
+function to be overridden anytime soon.
+
+As we do for clear_user_page(), define clear_user_pages() only if the
+architecture does not define clear_user_highpage().
+
+That is because if the architecture does define clear_user_highpage(),
+then it likely needs some flushing magic when clearing user pages or
+highpages. This means we can get away without defining clear_user_pages(),
+since, much like its single page sibling, its only potential user is the
+generic clear_user_highpages() which should instead be using
+clear_user_highpage().
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Acked-by: David Hildenbrand (Red Hat) <david@kernel.org>
+---
+ include/linux/highmem.h | 33 +++++++++++++++++++++++++++++++++
+ include/linux/mm.h      | 20 ++++++++++++++++++++
+ 2 files changed, 53 insertions(+)
+
+diff --git a/include/linux/highmem.h b/include/linux/highmem.h
+index 393bd51e5a1f..019ab7d8c841 100644
+--- a/include/linux/highmem.h
++++ b/include/linux/highmem.h
+@@ -218,6 +218,39 @@ static inline void clear_user_page(void *addr, unsigned long vaddr, struct page
+ }
+ #endif
+ 
++/**
++ * clear_user_pages() - clear a page range to be mapped to user space
++ * @addr: start address
++ * @vaddr: start address of the user mapping
++ * @page: start page
++ * @npages: number of pages
++ *
++ * Assumes that the region (@addr, +@npages) has been validated
++ * already so this does no exception handling.
++ *
++ * If the architecture provides a clear_user_page(), use that;
++ * otherwise, we can safely use clear_pages().
++ */
++static inline void clear_user_pages(void *addr, unsigned long vaddr,
++		struct page *page, unsigned int npages)
++{
++
++#ifdef clear_user_page
++	do {
++		clear_user_page(addr, vaddr, page);
++		addr += PAGE_SIZE;
++		vaddr += PAGE_SIZE;
++		page++;
++	} while (--npages);
++#else
++	/*
++	 * Prefer clear_pages() to allow for architectural optimizations
++	 * when operating on contiguous page ranges.
++	 */
++	clear_pages(addr, npages);
++#endif
++}
++
+ /* when CONFIG_HIGHMEM is not set these will be plain clear/copy_page */
+ static inline void clear_user_highpage(struct page *page, unsigned long vaddr)
+ {
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index 6f959d8ca4b4..a4a9a8d1ffec 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -4194,6 +4194,26 @@ static inline void clear_page_guard(struct zone *zone, struct page *page,
+ 				unsigned int order) {}
+ #endif	/* CONFIG_DEBUG_PAGEALLOC */
+ 
++#ifndef clear_pages
++/**
++ * clear_pages() - clear a page range for kernel-internal use.
++ * @addr: start address
++ * @npages: number of pages
++ *
++ * Use clear_user_pages() instead when clearing a page range to be
++ * mapped to user space.
++ *
++ * Does absolutely no exception handling.
++ */
++static inline void clear_pages(void *addr, unsigned int npages)
++{
++	do {
++		clear_page(addr);
++		addr += PAGE_SIZE;
++	} while (--npages);
++}
++#endif
++
+ #ifdef __HAVE_ARCH_GATE_AREA
+ extern struct vm_area_struct *get_gate_vma(struct mm_struct *mm);
+ extern int in_gate_area_no_mm(unsigned long addr);
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 3/8] highmem: introduce clear_user_highpages()
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:04 -0800
+Message-Id: <20260107072009.1615991-4-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Define clear_user_highpages() which uses the range clearing primitive,
+clear_user_pages(). We can safely use this when CONFIG_HIGHMEM is
+disabled and if the architecture does not have clear_user_highpage.
+
+The first is needed to ensure that contiguous page ranges stay
+contiguous which precludes intermediate maps via HIGMEM.
+The second, because if the architecture has clear_user_highpage(),
+it likely needs flushing magic when clearing the page, magic that
+we aren't privy to.
+
+For both of those cases, just fallback to a loop around
+clear_user_highpage().
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Acked-by: David Hildenbrand (Red Hat) <david@kernel.org>
+---
+ include/linux/highmem.h | 45 ++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/highmem.h b/include/linux/highmem.h
+index 019ab7d8c841..af03db851a1d 100644
+--- a/include/linux/highmem.h
++++ b/include/linux/highmem.h
+@@ -251,7 +251,14 @@ static inline void clear_user_pages(void *addr, unsigned long vaddr,
+ #endif
+ }
+ 
+-/* when CONFIG_HIGHMEM is not set these will be plain clear/copy_page */
++/**
++ * clear_user_highpage() - clear a page to be mapped to user space
++ * @page: start page
++ * @vaddr: start address of the user mapping
++ *
++ * With !CONFIG_HIGHMEM this (and the copy_user_highpage() below) will
++ * be plain clear_user_page() (and copy_user_page()).
++ */
+ static inline void clear_user_highpage(struct page *page, unsigned long vaddr)
+ {
+ 	void *addr = kmap_local_page(page);
+@@ -260,6 +267,42 @@ static inline void clear_user_highpage(struct page *page, unsigned long vaddr)
+ }
+ #endif /* clear_user_highpage */
+ 
++/**
++ * clear_user_highpages() - clear a page range to be mapped to user space
++ * @page: start page
++ * @vaddr: start address of the user mapping
++ * @npages: number of pages
++ *
++ * Assumes that all the pages in the region (@page, +@npages) are valid
++ * so this does no exception handling.
++ */
++static inline void clear_user_highpages(struct page *page, unsigned long vaddr,
++					unsigned int npages)
++{
++
++#if defined(clear_user_highpage) || defined(CONFIG_HIGHMEM)
++	/*
++	 * An architecture defined clear_user_highpage() implies special
++	 * handling is needed.
++	 *
++	 * So we use that or, the generic variant if CONFIG_HIGHMEM is
++	 * enabled.
++	 */
++	do {
++		clear_user_highpage(page, vaddr);
++		vaddr += PAGE_SIZE;
++		page++;
++	} while (--npages);
++#else
++
++	/*
++	 * Prefer clear_user_pages() to allow for architectural optimizations
++	 * when operating on contiguous page ranges.
++	 */
++	clear_user_pages(page_address(page), vaddr, page, npages);
++#endif
++}
++
+ #ifndef vma_alloc_zeroed_movable_folio
+ /**
+  * vma_alloc_zeroed_movable_folio - Allocate a zeroed page for a VMA.
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 4/8] x86/mm: Simplify clear_page_*
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:05 -0800
+Message-Id: <20260107072009.1615991-5-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+clear_page_rep() and clear_page_erms() are wrappers around "REP; STOS"
+variations. Inlining gets rid of an unnecessary CALL/RET (which isn't
+free when using RETHUNK speculative execution mitigations.)
+Fixup and rename clear_page_orig() to adapt to the changed calling
+convention.
+
+Also add a comment from Dave Hansen detailing various clearing mechanisms
+used in clear_page().
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Tested-by: Raghavendra K T <raghavendra.kt@amd.com>
+Reviewed-by: Borislav Petkov (AMD) <bp@alien8.de>
+---
+ arch/x86/include/asm/page_32.h |  6 +++
+ arch/x86/include/asm/page_64.h | 67 ++++++++++++++++++++++++++--------
+ arch/x86/lib/clear_page_64.S   | 39 ++++----------------
+ 3 files changed, 66 insertions(+), 46 deletions(-)
+
+diff --git a/arch/x86/include/asm/page_32.h b/arch/x86/include/asm/page_32.h
+index 0c623706cb7e..19fddb002cc9 100644
+--- a/arch/x86/include/asm/page_32.h
++++ b/arch/x86/include/asm/page_32.h
+@@ -17,6 +17,12 @@ extern unsigned long __phys_addr(unsigned long);
+ 
+ #include <linux/string.h>
+ 
++/**
++ * clear_page() - clear a page using a kernel virtual address.
++ * @page: address of kernel page
++ *
++ * Does absolutely no exception handling.
++ */
+ static inline void clear_page(void *page)
+ {
+ 	memset(page, 0, PAGE_SIZE);
+diff --git a/arch/x86/include/asm/page_64.h b/arch/x86/include/asm/page_64.h
+index 2f0e47be79a4..ec3307234a17 100644
+--- a/arch/x86/include/asm/page_64.h
++++ b/arch/x86/include/asm/page_64.h
+@@ -48,26 +48,63 @@ static inline unsigned long __phys_addr_symbol(unsigned long x)
+ 
+ #define __phys_reloc_hide(x)	(x)
+ 
+-void clear_page_orig(void *page);
+-void clear_page_rep(void *page);
+-void clear_page_erms(void *page);
+-KCFI_REFERENCE(clear_page_orig);
+-KCFI_REFERENCE(clear_page_rep);
+-KCFI_REFERENCE(clear_page_erms);
++void __clear_pages_unrolled(void *page);
++KCFI_REFERENCE(__clear_pages_unrolled);
+ 
+-static inline void clear_page(void *page)
++/**
++ * clear_page() - clear a page using a kernel virtual address.
++ * @addr: address of kernel page
++ *
++ * Switch between three implementations of page clearing based on CPU
++ * capabilities:
++ *
++ *  - __clear_pages_unrolled(): the oldest, slowest and universally
++ *    supported method. Zeroes via 8-byte MOV instructions unrolled 8x
++ *    to write a 64-byte cacheline in each loop iteration.
++ *
++ *  - "REP; STOSQ": really old CPUs had crummy REP implementations.
++ *    Vendor CPU setup code sets 'REP_GOOD' on CPUs where REP can be
++ *    trusted. The instruction writes 8-byte per REP iteration but
++ *    CPUs can internally batch these together and do larger writes.
++ *
++ *  - "REP; STOSB": used on CPUs with "enhanced REP MOVSB/STOSB",
++ *    which enumerate 'ERMS' and provide an implementation which
++ *    unlike "REP; STOSQ" above wasn't overly picky about alignment.
++ *    The instruction writes 1-byte per REP iteration with CPUs
++ *    internally batching these together into larger writes and is
++ *    generally fastest of the three.
++ *
++ * Note that when running as a guest, features exposed by the CPU
++ * might be mediated by the hypervisor. So, the STOSQ variant might
++ * be in active use on some systems even when the hardware enumerates
++ * ERMS.
++ *
++ * Does absolutely no exception handling.
++ */
++static inline void clear_page(void *addr)
+ {
++	u64 len = PAGE_SIZE;
+ 	/*
+ 	 * Clean up KMSAN metadata for the page being cleared. The assembly call
+-	 * below clobbers @page, so we perform unpoisoning before it.
++	 * below clobbers @addr, so perform unpoisoning before it.
+ 	 */
+-	kmsan_unpoison_memory(page, PAGE_SIZE);
+-	alternative_call_2(clear_page_orig,
+-			   clear_page_rep, X86_FEATURE_REP_GOOD,
+-			   clear_page_erms, X86_FEATURE_ERMS,
+-			   "=D" (page),
+-			   "D" (page),
+-			   "cc", "memory", "rax", "rcx");
++	kmsan_unpoison_memory(addr, len);
++
++	/*
++	 * The inline asm embeds a CALL instruction and usually that is a no-no
++	 * due to the compiler not knowing that and thus being unable to track
++	 * callee-clobbered registers.
++	 *
++	 * In this case that is fine because the registers clobbered by
++	 * __clear_pages_unrolled() are part of the inline asm register
++	 * specification.
++	 */
++	asm volatile(ALTERNATIVE_2("call __clear_pages_unrolled",
++				   "shrq $3, %%rcx; rep stosq", X86_FEATURE_REP_GOOD,
++				   "rep stosb", X86_FEATURE_ERMS)
++			: "+c" (len), "+D" (addr), ASM_CALL_CONSTRAINT
++			: "a" (0)
++			: "cc", "memory");
+ }
+ 
+ void copy_page(void *to, void *from);
+diff --git a/arch/x86/lib/clear_page_64.S b/arch/x86/lib/clear_page_64.S
+index a508e4a8c66a..f7f356e7218b 100644
+--- a/arch/x86/lib/clear_page_64.S
++++ b/arch/x86/lib/clear_page_64.S
+@@ -6,30 +6,15 @@
+ #include <asm/asm.h>
+ 
+ /*
+- * Most CPUs support enhanced REP MOVSB/STOSB instructions. It is
+- * recommended to use this when possible and we do use them by default.
+- * If enhanced REP MOVSB/STOSB is not available, try to use fast string.
+- * Otherwise, use original.
++ * Zero page aligned region.
++ * %rdi	- dest
++ * %rcx	- length
+  */
+-
+-/*
+- * Zero a page.
+- * %rdi	- page
+- */
+-SYM_TYPED_FUNC_START(clear_page_rep)
+-	movl $4096/8,%ecx
+-	xorl %eax,%eax
+-	rep stosq
+-	RET
+-SYM_FUNC_END(clear_page_rep)
+-EXPORT_SYMBOL_GPL(clear_page_rep)
+-
+-SYM_TYPED_FUNC_START(clear_page_orig)
+-	xorl   %eax,%eax
+-	movl   $4096/64,%ecx
++SYM_TYPED_FUNC_START(__clear_pages_unrolled)
++	shrq   $6, %rcx
+ 	.p2align 4
+ .Lloop:
+-	decl	%ecx
++	decq	%rcx
+ #define PUT(x) movq %rax,x*8(%rdi)
+ 	movq %rax,(%rdi)
+ 	PUT(1)
+@@ -43,16 +28,8 @@ SYM_TYPED_FUNC_START(clear_page_orig)
+ 	jnz	.Lloop
+ 	nop
+ 	RET
+-SYM_FUNC_END(clear_page_orig)
+-EXPORT_SYMBOL_GPL(clear_page_orig)
+-
+-SYM_TYPED_FUNC_START(clear_page_erms)
+-	movl $4096,%ecx
+-	xorl %eax,%eax
+-	rep stosb
+-	RET
+-SYM_FUNC_END(clear_page_erms)
+-EXPORT_SYMBOL_GPL(clear_page_erms)
++SYM_FUNC_END(__clear_pages_unrolled)
++EXPORT_SYMBOL_GPL(__clear_pages_unrolled)
+ 
+ /*
+  * Default clear user-space.
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 5/8] x86/clear_page: Introduce clear_pages()
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:06 -0800
+Message-Id: <20260107072009.1615991-6-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Performance when clearing with string instructions (x86-64-stosq and
+similar) can vary significantly based on the chunk-size used.
+
+  $ perf bench mem memset -k 4KB -s 4GB -f x86-64-stosq
+  # Running 'mem/memset' benchmark:
+  # function 'x86-64-stosq' (movsq-based memset() in arch/x86/lib/memset_64.S)
+  # Copying 4GB bytes ...
+
+      13.748208 GB/sec
+
+  $ perf bench mem memset -k 2MB -s 4GB -f x86-64-stosq
+  # Running 'mem/memset' benchmark:
+  # function 'x86-64-stosq' (movsq-based memset() in
+  # arch/x86/lib/memset_64.S)
+  # Copying 4GB bytes ...
+
+      15.067900 GB/sec
+
+  $ perf bench mem memset -k 1GB -s 4GB -f x86-64-stosq
+  # Running 'mem/memset' benchmark:
+  # function 'x86-64-stosq' (movsq-based memset() in arch/x86/lib/memset_64.S)
+  # Copying 4GB bytes ...
+
+      38.104311 GB/sec
+
+(Both on AMD Milan.)
+
+With a change in chunk-size from 4KB to 1GB, we see the performance go
+from 13.7 GB/sec to 38.1 GB/sec. For the chunk-size of 2MB the change isn't
+quite as drastic but it is worth adding a clear_page() variant that can
+handle contiguous page-extents.
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Tested-by: Raghavendra K T <raghavendra.kt@amd.com>
+Reviewed-by: David Hildenbrand (Red Hat) <david@kernel.org>
+---
+ arch/x86/include/asm/page_64.h | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/include/asm/page_64.h b/arch/x86/include/asm/page_64.h
+index ec3307234a17..1895c207f629 100644
+--- a/arch/x86/include/asm/page_64.h
++++ b/arch/x86/include/asm/page_64.h
+@@ -52,8 +52,9 @@ void __clear_pages_unrolled(void *page);
+ KCFI_REFERENCE(__clear_pages_unrolled);
+ 
+ /**
+- * clear_page() - clear a page using a kernel virtual address.
+- * @addr: address of kernel page
++ * clear_pages() - clear a page range using a kernel virtual address.
++ * @addr: start address of kernel page range
++ * @npages: number of pages
+  *
+  * Switch between three implementations of page clearing based on CPU
+  * capabilities:
+@@ -81,11 +82,11 @@ KCFI_REFERENCE(__clear_pages_unrolled);
+  *
+  * Does absolutely no exception handling.
+  */
+-static inline void clear_page(void *addr)
++static inline void clear_pages(void *addr, unsigned int npages)
+ {
+-	u64 len = PAGE_SIZE;
++	u64 len = npages * PAGE_SIZE;
+ 	/*
+-	 * Clean up KMSAN metadata for the page being cleared. The assembly call
++	 * Clean up KMSAN metadata for the pages being cleared. The assembly call
+ 	 * below clobbers @addr, so perform unpoisoning before it.
+ 	 */
+ 	kmsan_unpoison_memory(addr, len);
+@@ -106,6 +107,12 @@ static inline void clear_page(void *addr)
+ 			: "a" (0)
+ 			: "cc", "memory");
+ }
++#define clear_pages clear_pages
++
++static inline void clear_page(void *addr)
++{
++	clear_pages(addr, 1);
++}
+ 
+ void copy_page(void *to, void *from);
+ KCFI_REFERENCE(copy_page);
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 6/8] mm: folio_zero_user: clear pages sequentially
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:07 -0800
+Message-Id: <20260107072009.1615991-7-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+process_huge_pages(), used to clear hugepages, is optimized for cache
+locality. In particular it processes a hugepage in 4KB page units and
+in a difficult to predict order: clearing pages in the periphery in a
+backwards or forwards direction, then converging inwards to the
+faulting page (or page specified via base_addr.)
+
+This helps maximize temporal locality at time of access. However, while
+it keeps stores inside a 4KB page sequential, pages are ordered
+semi-randomly in a way that is not easy for the processor to predict.
+
+This limits the clearing bandwidth to what's available in a 4KB page.
+
+Consider the baseline bandwidth:
+
+  $ perf bench mem mmap -p 2MB -f populate -s 64GB -l 3
+  # Running 'mem/mmap' benchmark:
+  # function 'populate' (Eagerly populated mmap())
+  # Copying 64GB bytes ...
+
+      11.791097 GB/sec
+
+  (Unless otherwise noted, all numbers are on AMD Genoa (EPYC 9J13);
+   region-size=64GB, local node; 2.56 GHz, boost=0.)
+
+11.79 GBps amounts to around 323ns/4KB. With memory access latency
+of ~100ns, that doesn't leave much time to help from, say, hardware
+prefetchers.
+
+(Note that since this is a purely write workload, it's reasonable
+ to assume that the processor does not need to prefetch any cachelines.
+
+ However, for a processor to skip the prefetch, it would need to look
+ at the access pattern, and see that full cachelines were being written.
+ This might be easily visible if clear_page() was using, say x86 string
+ instructions; less so if it were using a store loop. In any case, the
+ existence of these kind predictors or appropriately helpful threshold
+ values is implementation specific.
+
+ Additionally, even when the processor can skip the prefetch, coherence
+ protocols will still need to establish exclusive ownership
+ necessitating communication with remote caches.)
+
+With that, the change is quite straight-forward. Instead of clearing
+pages discontiguously, clear contiguously: switch to a loop around
+clear_user_highpage().
+
+Performance
+==
+
+Testing a demand fault workload shows a decent improvement in bandwidth
+with pg-sz=2MB. Performance of pg-sz=1GB does not change because it
+has always used straight clearing.
+
+ $ perf bench mem mmap -p $pg-sz -f demand -s 64GB -l 5
+
+                 discontiguous-pages    contiguous-pages
+		      (baseline)
+
+                   (GBps +- %stdev)      (GBps +- %stdev)
+
+   pg-sz=2MB       11.76 +- 1.10%        23.58 +- 1.95%       +100.51%
+   pg-sz=1GB       24.85 +- 2.41%        25.40 +- 1.33%          -
+
+Analysis (pg-sz=2MB)
+==
+
+At L1 data cache level, nothing changes. The processor continues to
+access the same number of cachelines, allocating and missing them
+as it writes to them.
+
+ discontiguous-pages    7,394,341,051      L1-dcache-loads                  #  445.172 M/sec                       ( +-  0.04% )  (35.73%)
+                        3,292,247,227      L1-dcache-load-misses            #   44.52% of all L1-dcache accesses   ( +-  0.01% )  (35.73%)
+
+    contiguous-pages    7,205,105,282      L1-dcache-loads                  #  861.895 M/sec                       ( +-  0.02% )  (35.75%)
+                        3,241,584,535      L1-dcache-load-misses            #   44.99% of all L1-dcache accesses   ( +-  0.00% )  (35.74%)
+
+The L2 prefetcher, however, is now able to prefetch ~22% more cachelines
+(L2 prefetch miss rate also goes up significantly showing that we are
+backend limited):
+
+ discontiguous-pages    2,835,860,245      l2_pf_hit_l2.all                 #  170.242 M/sec                       ( +-  0.12% )  (15.65%)
+    contiguous-pages    3,472,055,269      l2_pf_hit_l2.all                 #  411.319 M/sec                       ( +-  0.62% )  (15.67%)
+
+That sill leaves a large gap between the ~22% improvement in prefetch
+and the ~100% improvement in bandwidth but better prefetching seems to
+streamline the traffic well enough that most of the data starts comes
+from the L2 leading to substantially fewer cache-misses at the LLC:
+
+ discontiguous-pages    8,493,499,137      cache-references                 #  511.416 M/sec                       ( +-  0.15% )  (50.01%)
+                          930,501,344      cache-misses                     #   10.96% of all cache refs           ( +-  0.52% )  (50.01%)
+
+    contiguous-pages    9,421,926,416      cache-references                 #    1.120 G/sec                       ( +-  0.09% )  (50.02%)
+                           68,787,247      cache-misses                     #    0.73% of all cache refs           ( +-  0.15% )  (50.03%)
+
+In addition, there are a few minor frontend optimizations: clear_pages()
+on x86 is now fully inlined, so we don't have a CALL/RET pair (which
+isn't free when using RETHUNK speculative execution mitigation as we
+do on my test system.) The loop in clear_contig_highpages() is also
+easier to predict (especially when handling faults) as compared to
+that in process_huge_pages().
+
+  discontiguous-pages       980,014,411      branches                         #   59.005 M/sec                       (31.26%)
+  discontiguous-pages       180,897,177      branch-misses                    #   18.46% of all branches             (31.26%)
+
+     contiguous-pages       515,630,550      branches                         #   62.654 M/sec                       (31.27%)
+     contiguous-pages        78,039,496      branch-misses                    #   15.13% of all branches             (31.28%)
+
+Note that although clearing contiguously is easier to optimize for the
+processor, it does not, sadly, mean that the processor will necessarily
+take advantage of it. For instance this change does not result in any
+improvement in my tests on Intel Icelakex (Oracle X9), or on ARM64
+Neoverse-N1 (Ampere Altra).
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Reviewed-by: Raghavendra K T <raghavendra.kt@amd.com>
+Tested-by: Raghavendra K T <raghavendra.kt@amd.com>
+Acked-by: David Hildenbrand (Red Hat) <david@kernel.org>
+---
+Interestingly enough, with this change we are pretty much back to commit
+79ac6ba40eb8 ("[PATCH] hugepage: Small fixes to hugepage clear/copy path")
+from circa 2006!
+
+Raghu, I've retained your R-by and tested by on this patch (and
+the next) since both of these commits just break up the original patch.
+Please let me know if that's not okay.
+
+ mm/memory.c | 28 +++++++++-------------------
+ 1 file changed, 9 insertions(+), 19 deletions(-)
+
+diff --git a/mm/memory.c b/mm/memory.c
+index 2a55edc48a65..c06e43a8861a 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -7237,40 +7237,30 @@ static inline int process_huge_page(
+ 	return 0;
+ }
+ 
+-static void clear_gigantic_page(struct folio *folio, unsigned long addr_hint,
+-				unsigned int nr_pages)
++static void clear_contig_highpages(struct page *page, unsigned long addr,
++				   unsigned int nr_pages)
+ {
+-	unsigned long addr = ALIGN_DOWN(addr_hint, folio_size(folio));
+-	int i;
++	unsigned int i;
+ 
+ 	might_sleep();
+ 	for (i = 0; i < nr_pages; i++) {
+ 		cond_resched();
+-		clear_user_highpage(folio_page(folio, i), addr + i * PAGE_SIZE);
++
++		clear_user_highpage(page + i, addr + i * PAGE_SIZE);
+ 	}
+ }
+ 
+-static int clear_subpage(unsigned long addr, int idx, void *arg)
+-{
+-	struct folio *folio = arg;
+-
+-	clear_user_highpage(folio_page(folio, idx), addr);
+-	return 0;
+-}
+-
+ /**
+  * folio_zero_user - Zero a folio which will be mapped to userspace.
+  * @folio: The folio to zero.
+- * @addr_hint: The address will be accessed or the base address if uncelar.
++ * @addr_hint: The address accessed by the user or the base address.
+  */
+ void folio_zero_user(struct folio *folio, unsigned long addr_hint)
+ {
+-	unsigned int nr_pages = folio_nr_pages(folio);
++	unsigned long base_addr = ALIGN_DOWN(addr_hint, folio_size(folio));
+ 
+-	if (unlikely(nr_pages > MAX_ORDER_NR_PAGES))
+-		clear_gigantic_page(folio, addr_hint, nr_pages);
+-	else
+-		process_huge_page(addr_hint, nr_pages, clear_subpage, folio);
++	clear_contig_highpages(folio_page(folio, 0),
++				base_addr, folio_nr_pages(folio));
+ }
+ 
+ static int copy_user_gigantic_page(struct folio *dst, struct folio *src,
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 7/8] mm: folio_zero_user: clear page ranges
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:08 -0800
+Message-Id: <20260107072009.1615991-8-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Use batch clearing in clear_contig_highpages() instead of clearing a
+single page at a time. Exposing larger ranges enables the processor to
+optimize based on extent.
+
+To do this we just switch to using clear_user_highpages() which would
+in turn use clear_user_pages() or clear_pages().
+
+Batched clearing, when running under non-preemptible models, however,
+has latency considerations. In particular, we need periodic invocations
+of cond_resched() to keep to reasonable preemption latencies.
+This is a problem because the clearing primitives do not, or might not
+be able to, call cond_resched() to check if preemption is needed.
+
+So, limit the worst case preemption latency by doing the clearing in
+units of no more than PROCESS_PAGES_NON_PREEMPT_BATCH pages.
+(Preemptible models already define away most of cond_resched(), so the
+batch size is ignored when running under those.)
+
+PROCESS_PAGES_NON_PREEMPT_BATCH: for architectures with "fast"
+clear-pages (ones that define clear_pages()), we define it as 32MB
+worth of pages. This is meant to be large enough to allow the processor
+to optimize the operation and yet small enough that we see reasonable
+preemption latency for when this optimization is not possible
+(ex. slow microarchitectures, memory bandwidth saturation.)
+
+This specific value also allows for a cacheline allocation elision
+optimization (which might help unrelated applications by not evicting
+potentially useful cache lines) that kicks in recent generations of
+AMD Zen processors at around LLC-size (32MB is a typical size).
+
+At the same time 32MB is small enough that even with poor clearing
+bandwidth (say ~10GBps), time to clear 32MB should be well below the
+scheduler's default warning threshold (sysctl_resched_latency_warn_ms=100).
+
+"Slow" architectures (don't have clear_pages()) will continue to use
+the base value (single page).
+
+Performance
+==
+
+Testing a demand fault workload shows a decent improvement in bandwidth
+with pg-sz=1GB. Bandwidth with pg-sz=2MB stays flat.
+
+ $ perf bench mem mmap -p $pg-sz -f demand -s 64GB -l 5
+
+                   contiguous-pages       batched-pages
+                   (GBps +- %stdev)      (GBps +- %stdev)
+
+   pg-sz=2MB       23.58 +- 1.95%        25.34 +- 1.18%       +  7.50%  preempt=*
+
+   pg-sz=1GB       25.09 +- 0.79%        39.22 +- 2.32%       + 56.31%  preempt=none|voluntary
+   pg-sz=1GB       25.71 +- 0.03%        52.73 +- 0.20% [#]   +110.16%  preempt=full|lazy
+
+ [#] We perform much better with preempt=full|lazy because, not
+  needing explicit invocations of cond_resched() we can clear the
+  full extent (pg-sz=1GB) as a single unit which the processor
+  can optimize for.
+
+ (Unless otherwise noted, all numbers are on AMD Genoa (EPYC 9J13);
+  region-size=64GB, local node; 2.56 GHz, boost=0.)
+
+Analysis
+==
+
+pg-sz=1GB: the improvement we see falls in two buckets depending on
+the batch size in use.
+
+For batch-size=32MB the number of cachelines allocated (L1-dcache-loads)
+-- which stay relatively flat for smaller batches, start to drop off
+because cacheline allocation elision kicks in. And as can be seen below,
+at batch-size=1GB, we stop allocating cachelines almost entirely.
+(Not visible here but from testing with intermediate sizes, the
+allocation change kicks in only at batch-size=32MB and ramps up from
+there.)
+
+ contigous-pages       6,949,417,798      L1-dcache-loads                  #  883.599 M/sec                       ( +-  0.01% )  (35.75%)
+                       3,226,709,573      L1-dcache-load-misses            #   46.43% of all L1-dcache accesses   ( +-  0.05% )  (35.75%)
+
+    batched,32MB       2,290,365,772      L1-dcache-loads                  #  471.171 M/sec                       ( +-  0.36% )  (35.72%)
+                       1,144,426,272      L1-dcache-load-misses            #   49.97% of all L1-dcache accesses   ( +-  0.58% )  (35.70%)
+
+    batched,1GB           63,914,157      L1-dcache-loads                  #   17.464 M/sec                       ( +-  8.08% )  (35.73%)
+                          22,074,367      L1-dcache-load-misses            #   34.54% of all L1-dcache accesses   ( +- 16.70% )  (35.70%)
+
+The dropoff is also visible in L2 prefetch hits (miss numbers are
+on similar lines):
+
+ contiguous-pages      3,464,861,312      l2_pf_hit_l2.all                 #  437.722 M/sec                       ( +-  0.74% )  (15.69%)
+
+   batched,32MB          883,750,087      l2_pf_hit_l2.all                 #  181.223 M/sec                       ( +-  1.18% )  (15.71%)
+
+    batched,1GB            8,967,943      l2_pf_hit_l2.all                 #    2.450 M/sec                       ( +- 17.92% )  (15.77%)
+
+This largely decouples the frontend from the backend since the clearing
+operation does not need to wait on loads from memory (we still need
+cacheline ownership but that's a shorter path). This is most visible
+if we rerun the test above with (boost=1, 3.66 GHz).
+
+ $ perf bench mem mmap -p $pg-sz -f demand -s 64GB -l 5
+
+                   contiguous-pages       batched-pages
+                   (GBps +- %stdev)      (GBps +- %stdev)
+
+   pg-sz=2MB       26.08 +- 1.72%        26.13 +- 0.92%           -     preempt=*            
+
+   pg-sz=1GB       26.99 +- 0.62%        48.85 +- 2.19%       + 80.99%  preempt=none|voluntary
+   pg-sz=1GB       27.69 +- 0.18%        75.18 +- 0.25%       +171.50%  preempt=full|lazy     
+
+Comparing the batched-pages numbers from the boost=0 ones and these: for
+a clock-speed gain of 42% we gain 24.5% for batch-size=32MB and 42.5%
+for batch-size=1GB.
+In comparison the baseline contiguous-pages case and both the
+pg-sz=2MB ones are largely backend bound so gain no more than ~10%.
+
+Other platforms tested, Intel Icelakex (Oracle X9) and ARM64 Neoverse-N1
+(Ampere Altra) both show an improvement of ~35% for pg-sz=2MB|1GB.
+The first goes from around 8GBps to 11GBps and the second from 32GBps
+to 44 GBPs.
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Acked-by: David Hildenbrand (Red Hat) <david@kernel.org>
+---
+ include/linux/mm.h | 36 ++++++++++++++++++++++++++++++++++++
+ mm/memory.c        | 18 +++++++++++++++---
+ 2 files changed, 51 insertions(+), 3 deletions(-)
+
+diff --git a/include/linux/mm.h b/include/linux/mm.h
+index a4a9a8d1ffec..fb5b86d78093 100644
+--- a/include/linux/mm.h
++++ b/include/linux/mm.h
+@@ -4204,6 +4204,15 @@ static inline void clear_page_guard(struct zone *zone, struct page *page,
+  * mapped to user space.
+  *
+  * Does absolutely no exception handling.
++ *
++ * Note that even though the clearing operation is preemptible, clear_pages()
++ * does not (and on architectures where it reduces to a few long-running
++ * instructions, might not be able to) call cond_resched() to check if
++ * rescheduling is required.
++ *
++ * When running under preemptible models this is not a problem. Under
++ * cooperatively scheduled models, however, the caller is expected to
++ * limit @npages to no more than PROCESS_PAGES_NON_PREEMPT_BATCH.
+  */
+ static inline void clear_pages(void *addr, unsigned int npages)
+ {
+@@ -4214,6 +4224,32 @@ static inline void clear_pages(void *addr, unsigned int npages)
+ }
+ #endif
+ 
++#ifndef PROCESS_PAGES_NON_PREEMPT_BATCH
++#ifdef clear_pages
++/*
++ * The architecture defines clear_pages(), and we assume that it is
++ * generally "fast". So choose a batch size large enough to allow the processor
++ * headroom for optimizing the operation and yet small enough that we see
++ * reasonable preemption latency for when this optimization is not possible
++ * (ex. slow microarchitectures, memory bandwidth saturation.)
++ *
++ * With a value of 32MB and assuming a memory bandwidth of ~10GBps, this should
++ * result in worst case preemption latency of around 3ms when clearing pages.
++ *
++ * (See comment above clear_pages() for why preemption latency is a concern
++ * here.)
++ */
++#define PROCESS_PAGES_NON_PREEMPT_BATCH		(32 << (20 - PAGE_SHIFT))
++#else /* !clear_pages */
++/*
++ * The architecture does not provide a clear_pages() implementation. Assume
++ * that clear_page() -- which clear_pages() will fallback to -- is relatively
++ * slow and choose a small value for PROCESS_PAGES_NON_PREEMPT_BATCH.
++ */
++#define PROCESS_PAGES_NON_PREEMPT_BATCH		1
++#endif
++#endif
++
+ #ifdef __HAVE_ARCH_GATE_AREA
+ extern struct vm_area_struct *get_gate_vma(struct mm_struct *mm);
+ extern int in_gate_area_no_mm(unsigned long addr);
+diff --git a/mm/memory.c b/mm/memory.c
+index c06e43a8861a..49e7154121f5 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -7240,13 +7240,25 @@ static inline int process_huge_page(
+ static void clear_contig_highpages(struct page *page, unsigned long addr,
+ 				   unsigned int nr_pages)
+ {
+-	unsigned int i;
++	unsigned int i, unit, count;
+ 
+ 	might_sleep();
+-	for (i = 0; i < nr_pages; i++) {
++	/*
++	 * When clearing we want to operate on the largest extent possible since
++	 * that allows for extent based architecture specific optimizations.
++	 *
++	 * However, since the clearing interfaces (clear_user_highpages(),
++	 * clear_user_pages(), clear_pages()), do not call cond_resched(), we
++	 * limit the batch size when running under non-preemptible scheduling
++	 * models.
++	 */
++	unit = preempt_model_preemptible() ? nr_pages : PROCESS_PAGES_NON_PREEMPT_BATCH;
++
++	for (i = 0; i < nr_pages; i += count) {
+ 		cond_resched();
+ 
+-		clear_user_highpage(page + i, addr + i * PAGE_SIZE);
++		count = min(unit, nr_pages - i);
++		clear_user_highpages(page + i, addr + i * PAGE_SIZE, count);
+ 	}
+ }
+ 
+-- 
+2.31.1
+
+From git@z Thu Jan  1 00:00:00 1970
+Subject: [PATCH v11 8/8] mm: folio_zero_user: cache neighbouring pages
+From: Ankur Arora <ankur.a.arora@oracle.com>
+Date: Tue, 06 Jan 2026 23:20:09 -0800
+Message-Id: <20260107072009.1615991-9-ankur.a.arora@oracle.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+folio_zero_user() does straight zeroing without caring about
+temporal locality for caches.
+
+This replaced commit c6ddfb6c5890 ("mm, clear_huge_page: move order
+algorithm into a separate function") where we cleared a page at a
+time converging to the faulting page from the left and the right.
+
+To retain limited temporal locality, split the clearing in three
+parts: the faulting page and its immediate neighbourhood, and the
+regions on its left and right. We clear the local neighbourhood last
+to maximize chances of it sticking around in the cache.
+
+Performance
+===
+
+AMD Genoa (EPYC 9J14, cpus=2 sockets * 96 cores * 2 threads,
+           memory=2.2 TB, L1d=16K/thread, L2=512K/thread, L3=2MB/thread)
+
+vm-scalability/anon-w-seq-hugetlb: this workload runs with 384 processes
+(one for each CPU) each zeroing anonymously mapped hugetlb memory which
+is then accessed sequentially.
+                                stime                utime
+
+  discontiguous-page      1739.93 ( +- 6.15% )  1016.61 ( +- 4.75% )
+  contiguous-page         1853.70 ( +- 2.51% )  1187.13 ( +- 3.50% )
+  batched-pages           1756.75 ( +- 2.98% )  1133.32 ( +- 4.89% )
+  neighbourhood-last      1725.18 ( +- 4.59% )  1123.78 ( +- 7.38% )
+
+Both stime and utime largely respond somewhat expectedly. There is a
+fair amount of run to run variation but the general trend is that the
+stime drops and utime increases. There are a few oddities, like
+contiguous-page performing very differently from batched-pages.
+
+As such this is likely an uncommon pattern where we saturate the memory
+bandwidth (since all CPUs are running the test) and at the same time
+are cache constrained because we access the entire region.
+
+Kernel make (make -j 12 bzImage):
+
+                              stime                  utime
+
+  discontiguous-page      199.29 ( +- 0.63% )   1431.67 ( +- .04% )
+  contiguous-page         193.76 ( +- 0.58% )   1433.60 ( +- .05% )
+  batched-pages           193.92 ( +- 0.76% )   1431.04 ( +- .08% )
+  neighbourhood-last      194.46 ( +- 0.68% )   1431.51 ( +- .06% )
+
+For make the utime stays relatively flat with a fairly small (-2.4%)
+improvement in the stime.
+
+Signed-off-by: Ankur Arora <ankur.a.arora@oracle.com>
+Reviewed-by: Raghavendra K T <raghavendra.kt@amd.com>
+Tested-by: Raghavendra K T <raghavendra.kt@amd.com>
+Acked-by: David Hildenbrand (Red Hat) <david@kernel.org>
+---
+ mm/memory.c | 41 ++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 38 insertions(+), 3 deletions(-)
+
+diff --git a/mm/memory.c b/mm/memory.c
+index 49e7154121f5..a27ef2eb92db 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -7262,6 +7262,15 @@ static void clear_contig_highpages(struct page *page, unsigned long addr,
+ 	}
+ }
+ 
++/*
++ * When zeroing a folio, we want to differentiate between pages in the
++ * vicinity of the faulting address where we have spatial and temporal
++ * locality, and those far away where we don't.
++ *
++ * Use a radius of 2 for determining the local neighbourhood.
++ */
++#define FOLIO_ZERO_LOCALITY_RADIUS	2
++
+ /**
+  * folio_zero_user - Zero a folio which will be mapped to userspace.
+  * @folio: The folio to zero.
+@@ -7269,10 +7278,36 @@ static void clear_contig_highpages(struct page *page, unsigned long addr,
+  */
+ void folio_zero_user(struct folio *folio, unsigned long addr_hint)
+ {
+-	unsigned long base_addr = ALIGN_DOWN(addr_hint, folio_size(folio));
++	const unsigned long base_addr = ALIGN_DOWN(addr_hint, folio_size(folio));
++	const long fault_idx = (addr_hint - base_addr) / PAGE_SIZE;
++	const struct range pg = DEFINE_RANGE(0, folio_nr_pages(folio) - 1);
++	const int radius = FOLIO_ZERO_LOCALITY_RADIUS;
++	struct range r[3];
++	int i;
+ 
+-	clear_contig_highpages(folio_page(folio, 0),
+-				base_addr, folio_nr_pages(folio));
++	/*
++	 * Faulting page and its immediate neighbourhood. Will be cleared at the
++	 * end to keep its cachelines hot.
++	 */
++	r[2] = DEFINE_RANGE(clamp_t(s64, fault_idx - radius, pg.start, pg.end),
++			    clamp_t(s64, fault_idx + radius, pg.start, pg.end));
++
++	/* Region to the left of the fault */
++	r[1] = DEFINE_RANGE(pg.start,
++			    clamp_t(s64, r[2].start - 1, pg.start - 1, r[2].start));
++
++	/* Region to the right of the fault: always valid for the common fault_idx=0 case. */
++	r[0] = DEFINE_RANGE(clamp_t(s64, r[2].end + 1, r[2].end, pg.end + 1),
++			    pg.end);
++
++	for (i = 0; i < ARRAY_SIZE(r); i++) {
++		const unsigned long addr = base_addr + r[i].start * PAGE_SIZE;
++		const unsigned int nr_pages = range_len(&r[i]);
++		struct page *page = folio_page(folio, r[i].start);
++
++		if (nr_pages > 0)
++			clear_contig_highpages(page, addr, nr_pages);
++	}
+ }
+ 
+ static int copy_user_gigantic_page(struct folio *dst, struct folio *src,
+-- 
+2.31.1
+
+
