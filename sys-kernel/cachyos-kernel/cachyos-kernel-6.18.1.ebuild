@@ -916,6 +916,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-zstd.patch"
 	eapply "${FILESDIR}/6.18.1-rss-stat-optimization.patch"
 	eapply "${FILESDIR}/6.18.1-mm-folio.patch"
+	eapply "${FILESDIR}/6.18.1-reflex-cpu.patch"
 	einfo "Applying local patches"
 
 
