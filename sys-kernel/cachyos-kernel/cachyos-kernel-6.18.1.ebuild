@@ -558,7 +558,7 @@ cachy_use_config() {
 	fi
 
 	if use lto; then
-		: "${_use_llvm_lto:=full}"
+		: "${_use_llvm_lto:=thin}"
 	else
 		: "${_use_llvm_lto:=none}"
 	fi
@@ -811,6 +811,7 @@ cachy_use_config() {
 	kconf unset INIT_ON_ALLOC_DEFAULT_ON
 	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
+
 	kconf set SCHED_CLUSTER
 	einfo "SCHED_CLUSTER ENABLED"
 
@@ -825,6 +826,12 @@ cachy_use_config() {
     kconf set CPU_CPU_FREQ
 	kconf set CPU_FREQ_GOV_SCHEDUTIL
 	kconf set CPU_FREQ_GOV_REFLEX
+	kconf unset SHUFFLE_PAGE_ALLOCATOR
+	kconf set NET_RX_BUSY_POLL
+	kconf set COMPACTION
+	kconf set PER_VMA_LOCK
+
+	
 
 
 
