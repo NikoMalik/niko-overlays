@@ -558,7 +558,7 @@ cachy_use_config() {
 	fi
 
 	if use lto; then
-		: "${_use_llvm_lto:=thin}"
+		: "${_use_llvm_lto:=full}"
 	else
 		: "${_use_llvm_lto:=none}"
 	fi
@@ -822,8 +822,10 @@ cachy_use_config() {
 	kconf unset SLAB_FREELIST_HARDEN
 	einfo "SLAB_RANDOM DISABLED"
 
-
+    kconf set CPU_CPU_FREQ
+	kconf set CPU_FREQ_GOV_SCHEDUTIL
 	kconf set CPU_FREQ_GOV_REFLEX
+
 
 
 	if use autofdo; then
@@ -920,6 +922,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-zstd.patch"
 	eapply "${FILESDIR}/6.18.1-rss-stat-optimization.patch"
 	eapply "${FILESDIR}/6.18.1-mm-folio.patch"
+	eapply "${FILESDIR}/6.18.1-reflex-cpu.patch"
 	einfo "Applying local patches"
 
 
