@@ -924,7 +924,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-mm-folio.patch"
 	eapply "${FILESDIR}/6.18.1-reflex-cpu.patch"
 	eapply "${FILESDIR}/6.18.1-disable-workqueue-crypto.patch"
-	eapply "${FILESDIR}/6.18.1-input-evdev.patch"
+	# eapply "${FILESDIR}/6.18.1-input-evdev.patch" // already there
 	eapply "${FILESDIR}/6.18.1-rq-affinity.patch"
 	eapply "${FILESDIR}/6.18.1-iouring-leak.patch"
 	eapply "${FILESDIR}/6.18.1-swing-modulo-clang.patch"
