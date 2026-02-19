@@ -1,0 +1,13 @@
+diff --git a/io_uring/zcrx.c b/io_uring/zcrx.c
+index b1b723222..3109fa3c0 100644
+--- a/io_uring/zcrx.c
++++ b/io_uring/zcrx.c
+@@ -196,6 +196,7 @@ static int io_import_umem(struct io_zcrx_ifq *ifq,
+ 					GFP_KERNEL_ACCOUNT);
+ 	if (ret) {
+ 		unpin_user_pages(pages, nr_pages);
++		kvfree(pages);
+ 		return ret;
+ 	}
+ 
+

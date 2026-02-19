@@ -1,0 +1,17 @@
+Set rq_affinity to force complete I/O requests on same CPU 
+diff --git a/include/linux/blkdev.h b/include/linux/blkdev.h
+index 70b671a9a..e04bf3289 100644
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -661,7 +661,9 @@ enum {
+ 	QUEUE_FLAG_MAX
+ };
+ 
+-#define QUEUE_FLAG_MQ_DEFAULT	(1UL << QUEUE_FLAG_SAME_COMP)
++#define QUEUE_FLAG_MQ_DEFAULT	((1UL << QUEUE_FLAG_SAME_COMP) |		\
++				 (1UL << QUEUE_FLAG_SAME_FORCE))
++
+ 
+ void blk_queue_flag_set(unsigned int flag, struct request_queue *q);
+ void blk_queue_flag_clear(unsigned int flag, struct request_queue *q);
+

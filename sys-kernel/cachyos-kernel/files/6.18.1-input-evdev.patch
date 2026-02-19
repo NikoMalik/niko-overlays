@@ -1,0 +1,104 @@
+Significant time was spent on synchronize_rcu in evdev_detach_client
+when applications closed evdev devices. Switching VT away from a
+graphical environment commonly leads to mass input device closures,
+which could lead to noticable delays on systems with many input devices.
+
+Replace synchronize_rcu with call_rcu, deferring reclaim of the evdev
+client struct till after the RCU grace period instead of blocking the
+calling application.
+
+While this does not solve all slow evdev fd closures, it takes care of a
+good portion of them, including this simple test:
+
+	#include <fcntl.h>
+	#include <unistd.h>
+
+	int main(int argc, char *argv[])
+	{
+		int idx, fd;
+		const char *path = "/dev/input/event0";
+		for (idx = 0; idx < 1000; idx++) {
+			if ((fd = open(path, O_RDWR)) == -1) {
+				return -1;
+			}
+			close(fd);
+		}
+		return 0;
+	}
+
+Time to completion of above test when run locally:
+
+	Before: 0m27.111s
+	After:  0m0.018s
+
+
+
+
+
+diff --git a/drivers/input/evdev.c b/drivers/input/evdev.c
+index 90ff6be85..c8d2f1087 100644
+--- a/drivers/input/evdev.c
++++ b/drivers/input/evdev.c
+@@ -30,6 +30,7 @@ struct evdev {
+ 	struct input_handle handle;
+ 	struct evdev_client __rcu *grab;
+ 	struct list_head client_list;
++	struct rcu_head rcu;
+ 	spinlock_t client_lock; /* protects client_list */
+ 	struct mutex mutex;
+ 	struct device dev;
+@@ -71,6 +72,16 @@ static size_t evdev_get_mask_cnt(unsigned int type)
+ 	return (type < EV_CNT) ? counts[type] : 0;
+ }
+ 
++static inline void evdev_reclaim_client(struct rcu_head *rp)
++{
++	struct evdev_client *client = container_of(rp, struct evdev_client, rcu);
++	unsigned int i;
++	for (i = 0; i < EV_CNT; ++i)
++		bitmap_free(client->evmasks[i]);
++	kvfree(client);
++}
++
++
+ /* requires the buffer lock to be held */
+ static bool __evdev_is_filtered(struct evdev_client *client,
+ 				unsigned int type,
+@@ -374,7 +385,8 @@ static void evdev_detach_client(struct evdev *evdev,
+ 	spin_lock(&evdev->client_lock);
+ 	list_del_rcu(&client->node);
+ 	spin_unlock(&evdev->client_lock);
+-	synchronize_rcu();
++	call_rcu(&client->rcu, evdev_reclaim_client);
++
+ }
+ 
+ static int evdev_open_device(struct evdev *evdev)
+@@ -427,7 +439,6 @@ static int evdev_release(struct inode *inode, struct file *file)
+ {
+ 	struct evdev_client *client = file->private_data;
+ 	struct evdev *evdev = client->evdev;
+-	unsigned int i;
+ 
+ 	mutex_lock(&evdev->mutex);
+ 
+@@ -439,10 +450,6 @@ static int evdev_release(struct inode *inode, struct file *file)
+ 
+ 	evdev_detach_client(evdev, client);
+ 
+-	for (i = 0; i < EV_CNT; ++i)
+-		bitmap_free(client->evmasks[i]);
+-
+-	kvfree(client);
+ 
+ 	evdev_close_device(evdev);
+ 
+@@ -486,7 +493,6 @@ static int evdev_open(struct inode *inode, struct file *file)
+ 
+  err_free_client:
+ 	evdev_detach_client(evdev, client);
+-	kvfree(client);
+ 	return error;
+ }
+ 
+

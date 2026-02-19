@@ -1,0 +1,17 @@
+diff --git a/Makefile b/Makefile
+index b6d2134..c030404 100644
+--- a/Makefile
++++ b/Makefile
+@@ -871,9 +871,11 @@ KBUILD_CFLAGS += -O2
+ KBUILD_RUSTFLAGS += -Copt-level=2
+ else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
+ KBUILD_CFLAGS += -O3
++KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
+ KBUILD_RUSTFLAGS += -Copt-level=3
+ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS += -Os
++KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner-opt-size)
+ KBUILD_RUSTFLAGS += -Copt-level=s
+ endif
+ 
+
