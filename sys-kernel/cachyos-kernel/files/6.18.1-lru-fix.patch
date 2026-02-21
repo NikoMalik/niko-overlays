@@ -1,5 +1,5 @@
 diff --git a/include/linux/mm_inline.h b/include/linux/mm_inline.h
-index f6a2b2d20..df3d849f0 100644;
+index f6a2b2d20..df3d849f0 100644
 --- a/include/linux/mm_inline.h
 +++ b/include/linux/mm_inline.h
 @@ -161,9 +161,9 @@ static inline int folio_lru_gen(const struct folio *folio)
@@ -66,7 +66,7 @@ index f6a2b2d20..df3d849f0 100644;
  	gen = ((flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
  
 diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
-index 7fb7331c5..d04067abc 100644
+index 7fb7331c5..c360282cd 100644
 --- a/include/linux/mmzone.h
 +++ b/include/linux/mmzone.h
 @@ -489,11 +489,11 @@ enum {
@@ -96,7 +96,7 @@ index 7fb7331c5..d04067abc 100644
  struct lru_gen_mm_state {
  	/* synced with max_seq after each iteration */
 -	unsigned long seq;
-+	unsigned long seq[ANON_AND_FILE];
++	unsigned long seq[ANON_ANF_FILE];
  	/* where the current iteration continues after */
  	struct list_head *head;
  	/* where the last iteration ended before */
@@ -111,7 +111,7 @@ index 7fb7331c5..d04067abc 100644
  	unsigned long next_addr;
  	/* to batch promoted pages */
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 9909cd64c..3231696cf 100644
+index 9909cd64c..533ccacbb 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -2839,7 +2839,11 @@ static bool should_clear_pmd_young(void)
@@ -224,7 +224,7 @@ index 9909cd64c..3231696cf 100644
  	struct lru_gen_folio *lrugen = &lruvec->lrugen;
  	bool clear = carryover ? NR_HIST_GENS == 1 : NR_HIST_GENS > 1;
 -	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq + 1;
-+	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq[type] + 1;
++	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq[type] + 1
  
  	lockdep_assert_held(&lruvec->lru_lock);
  
@@ -699,96 +699,126 @@ index 9909cd64c..3231696cf 100644
  			s = "tyfa";
  			n = READ_ONCE(mm_state->stats[hist][i]);
  		}
-@@ -5601,36 +5635,66 @@ static int lru_gen_seq_show(struct seq_file *m, void *v)
- 
- 	seq_printf(m, " node %5d\n", nid);
- 
+@@ -5580,60 +5614,68 @@ static void lru_gen_seq_show_full(struct seq_file *m, struct lruvec *lruvec,
+ /* see Documentation/admin-guide/mm/multigen_lru.rst for details */
+ static int lru_gen_seq_show(struct seq_file *m, void *v)
+ {
+-	unsigned long seq;
+-	bool full = debugfs_get_aux_num(m->file);
+-	struct lruvec *lruvec = v;
+-	struct lru_gen_folio *lrugen = &lruvec->lrugen;
+-	int nid = lruvec_pgdat(lruvec)->node_id;
+-	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
+-	DEFINE_MAX_SEQ(lruvec);
+-	DEFINE_MIN_SEQ(lruvec);
+-
+-	if (nid == first_memory_node) {
+-		const char *path = memcg ? m->private : "";
+-
++    unsigned long seq;
++    bool full = debugfs_get_aux_num(m->file);
++    struct lruvec *lruvec = v;
++    struct lru_gen_folio *lrugen = &lruvec->lrugen;
++    int nid = lruvec_pgdat(lruvec)->node_id;
++    struct mem_cgroup *memcg = lruvec_memcg(lruvec);
++    DEFINE_MAX_SEQ(lruvec);
++    DEFINE_MIN_SEQ(lruvec);
++    if (nid == first_memory_node) {
++        const char *path = memcg ? m->private : "";
+ #ifdef CONFIG_MEMCG
+-		if (memcg)
+-			cgroup_path(memcg->css.cgroup, m->private, PATH_MAX);
++        if (memcg)
++            cgroup_path(memcg->css.cgroup, m->private, PATH_MAX);
+ #endif
+-		seq_printf(m, "memcg %5hu %s\n", mem_cgroup_id(memcg), path);
+-	}
+-
+-	seq_printf(m, " node %5d\n", nid);
+-
 -	if (!full)
 -		seq = evictable_min_seq(min_seq, MAX_SWAPPINESS / 2);
 -	else if (max_seq >= MAX_NR_GENS)
 -		seq = max_seq - MAX_NR_GENS + 1;
 -	else
 -		seq = 0;
-+	{
-+		unsigned long max_seq_val = max(max_seq[LRU_GEN_ANON], max_seq[LRU_GEN_FILE]);
- 
+-
 -	for (; seq <= max_seq; seq++) {
 -		int type, zone;
 -		int gen = lru_gen_from_seq(seq);
 -		unsigned long birth = READ_ONCE(lruvec->lrugen.timestamps[gen]);
-+		if (!full)
-+			seq = evictable_min_seq(min_seq, MAX_SWAPPINESS / 2);
-+		else if (max_seq_val >= MAX_NR_GENS)
-+			seq = max_seq_val - MAX_NR_GENS + 1;
-+		else
-+			seq = 0;
- 
+-
 -		seq_printf(m, " %10lu %10u", seq, jiffies_to_msecs(jiffies - birth));
- 
+-
 -		for (type = 0; type < ANON_AND_FILE; type++) {
 -			unsigned long size = 0;
 -			char mark = full && seq < min_seq[type] ? 'x' : ' ';
-+		for (; seq <= max_seq_val; seq++) {
-+			int type, zone;
-+			int gen = lru_gen_from_seq(seq);
- 
+-
 -			for (zone = 0; zone < MAX_NR_ZONES; zone++)
 -				size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
-+			seq_printf(m, " %10lu", seq);
-
- 
+-
 -			seq_printf(m, " %10lu%c", size, mark);
 -		}
-+			/* show the older birth time among evictable types */
-+			{
-+				unsigned long birth = jiffies;
-+				int t;
- 
+-
 -		seq_putc(m, '\n');
-+				for (t = 0; t < ANON_AND_FILE; t++) {
-+					unsigned long ts = READ_ONCE(lruvec->lrugen.timestamps[t][gen]);
-+
-+
-+					if (time_before(ts, birth))
-+						birth = ts;
-+				}
-+				seq_printf(m, " %10u", jiffies_to_msecs(jiffies - birth));
-+			}
-+
-+			for (type = 0; type < ANON_AND_FILE; type++) {
-+				unsigned long size = 0;
-+				char mark = ' ';
-+
-+				if (full) {
-+					if (seq < min_seq[type])
-+						mark = 'x';
-+					else if (seq > max_seq[type])
-+						mark = '-';
-+				}
-+
-+				for (zone = 0; zone < MAX_NR_ZONES; zone++)
-+					size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
-+
-+				seq_printf(m, " %10lu%c", size, mark);
-+			}
-+
-+			seq_putc(m, '\n');
- 
+-
 -		if (full)
 -			lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
 -	}
- 
-+
-+
-+
-+	if (full)
-+		lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
-+	}
-
- 	return 0;
+-
+-	return 0;
++        seq_printf(m, "memcg %5hu %s\n", mem_cgroup_id(memcg), path);
++    }
++    seq_printf(m, " node %5d\n", nid);
++    {
++        unsigned long max_seq_val = max(max_seq[LRU_GEN_ANON], max_seq[LRU_GEN_FILE]);
++        if (!full)
++            seq = evictable_min_seq(min_seq, MAX_SWAPPINESS / 2);
++        else if (max_seq_val >= MAX_NR_GENS)
++            seq = max_seq_val - MAX_NR_GENS + 1;
++        else
++            seq = 0;
++        for (; seq <= max_seq_val; seq++) {
++            int type, zone;
++            int gen = lru_gen_from_seq(seq);
++            seq_printf(m, " %10lu", seq);
++            /* show the older birth time among evictable types */
++            {
++                unsigned long birth = jiffies;
++                int t;
++                for (t = 0; t < ANON_AND_FILE; t++) {
++                    unsigned long ts = READ_ONCE(lruvec->lrugen.timestamps[t][gen]);
++                    if (time_before(ts, birth))
++                        birth = ts;
++                }
++                seq_printf(m, " %10u", jiffies_to_msecs(jiffies - birth));
++            }
++            for (type = 0; type < ANON_AND_FILE; type++) {
++                unsigned long size = 0;
++                char mark = ' ';
++                if (full) {
++                    if (seq < min_seq[type])
++                        mark = 'x';
++                    else if (seq > max_seq[type])
++                        mark = '-';
++                }
++                for (zone = 0; zone < MAX_NR_ZONES; zone++)
++                    size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
++                seq_printf(m, " %10lu%c", size, mark);
++            }
++            seq_putc(m, '\n');
++            if (full)
++                lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
++        }
++    }
++    return 0;
  }
  
-@@ -5644,22 +5708,41 @@ static const struct seq_operations lru_gen_seq_ops = {
++
+ static const struct seq_operations lru_gen_seq_ops = {
+ 	.start = lru_gen_seq_start,
+ 	.stop = lru_gen_seq_stop,
+@@ -5644,21 +5686,38 @@ static const struct seq_operations lru_gen_seq_ops = {
  static int run_aging(struct lruvec *lruvec, unsigned long seq,
  		     int swappiness, bool force_scan)
  {
@@ -822,18 +852,17 @@ index 9909cd64c..3231696cf 100644
 +	int type;
  	DEFINE_MAX_SEQ(lruvec);
  
-- 	if (seq + MIN_NR_GENS > max_seq)
-- 		return -EINVAL;
- 
+-	if (seq + MIN_NR_GENS > max_seq)
+-		return -EINVAL;
++
 +	for_each_evictable_type(type, swappiness) {
 +		if (seq + MIN_NR_GENS > max_seq[type])
 +			return -EINVAL;
 +	}
-+
+ 
  	sc->nr_reclaimed = 0;
  
- 	while (!signal_pending(current)) {
-@@ -5857,17 +5940,21 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
+@@ -5857,17 +5916,21 @@ void lru_gen_init_lruvec(struct lruvec *lruvec)
  	struct lru_gen_folio *lrugen = &lruvec->lrugen;
  	struct lru_gen_mm_state *mm_state = get_mm_state(lruvec);
  
