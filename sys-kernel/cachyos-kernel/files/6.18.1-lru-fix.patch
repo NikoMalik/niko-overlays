@@ -1,5 +1,5 @@
 diff --git a/include/linux/mm_inline.h b/include/linux/mm_inline.h
-index f6a2b2d20..df3d849f0 100644
+index f6a2b2d20..df3d849f0 100644;
 --- a/include/linux/mm_inline.h
 +++ b/include/linux/mm_inline.h
 @@ -161,9 +161,9 @@ static inline int folio_lru_gen(const struct folio *folio)
@@ -79,7 +79,7 @@ index 7fb7331c5..d04067abc 100644
  	unsigned long min_seq[ANON_AND_FILE];
  	/* the birth time of each generation in jiffies */
 -	unsigned long timestamps[MAX_NR_GENS];
-+	unsigned long timestamps[MAX_NR_GENS][MAX_NR_GENS];
++	unsigned long timestamps[ANON_AND_FILE][MAX_NR_GENS];
  	/* the multi-gen LRU lists, lazily sorted on eviction */
  	struct list_head folios[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
  	/* the multi-gen LRU sizes, eventually consistent */
@@ -224,7 +224,7 @@ index 9909cd64c..3231696cf 100644
  	struct lru_gen_folio *lrugen = &lruvec->lrugen;
  	bool clear = carryover ? NR_HIST_GENS == 1 : NR_HIST_GENS > 1;
 -	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq + 1;
-+	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq[type] +
++	unsigned long seq = carryover ? lrugen->min_seq[type] : lrugen->max_seq[type] + 1;
  
  	lockdep_assert_held(&lruvec->lru_lock);
  
@@ -735,7 +735,7 @@ index 9909cd64c..3231696cf 100644
 -			for (zone = 0; zone < MAX_NR_ZONES; zone++)
 -				size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
 +			seq_printf(m, " %10lu", seq);
-+                 }
+
  
 -			seq_printf(m, " %10lu%c", size, mark);
 -		}
@@ -749,30 +749,30 @@ index 9909cd64c..3231696cf 100644
 +					unsigned long ts = READ_ONCE(lruvec->lrugen.timestamps[t][gen]);
 +
 +
-++					if (time_before(ts, birth))
-++						birth = ts;
-++				}
-++				seq_printf(m, " %10u", jiffies_to_msecs(jiffies - birth));
-++			}
-++
-++			for (type = 0; type < ANON_AND_FILE; type++) {
-++				unsigned long size = 0;
-++				char mark = ' ';
-++
-++				if (full) {
-++					if (seq < min_seq[type])
-++						mark = 'x';
-++					else if (seq > max_seq[type])
-++						mark = '-';
-++				}
-++
-++				for (zone = 0; zone < MAX_NR_ZONES; zone++)
-++					size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
-++
-++				seq_printf(m, " %10lu%c", size, mark);
-++			}
-++
-++			seq_putc(m, '\n');
++					if (time_before(ts, birth))
++						birth = ts;
++				}
++				seq_printf(m, " %10u", jiffies_to_msecs(jiffies - birth));
++			}
++
++			for (type = 0; type < ANON_AND_FILE; type++) {
++				unsigned long size = 0;
++				char mark = ' ';
++
++				if (full) {
++					if (seq < min_seq[type])
++						mark = 'x';
++					else if (seq > max_seq[type])
++						mark = '-';
++				}
++
++				for (zone = 0; zone < MAX_NR_ZONES; zone++)
++					size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
++
++				seq_printf(m, " %10lu%c", size, mark);
++			}
++
++			seq_putc(m, '\n');
  
 -		if (full)
 -			lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
@@ -784,7 +784,7 @@ index 9909cd64c..3231696cf 100644
 +	if (full)
 +		lru_gen_seq_show_full(m, lruvec, max_seq, min_seq, seq);
 +	}
-+}
+
  	return 0;
  }
  
@@ -822,8 +822,8 @@ index 9909cd64c..3231696cf 100644
 +	int type;
  	DEFINE_MAX_SEQ(lruvec);
  
- 	if (seq + MIN_NR_GENS > max_seq)
- 		return -EINVAL;
+- 	if (seq + MIN_NR_GENS > max_seq)
+- 		return -EINVAL;
  
 +	for_each_evictable_type(type, swappiness) {
 +		if (seq + MIN_NR_GENS > max_seq[type])
