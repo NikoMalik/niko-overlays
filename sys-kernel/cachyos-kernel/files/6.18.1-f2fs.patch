@@ -30,7 +30,7 @@ index 775aa4f63..005bde48c 100644
 +       struct inode *inode,
 +       loff_t pos,
 +       size_t len,
-+       bool check_first,
++       bool check_first
 +       )
  {
  	struct f2fs_map_blocks map;
