@@ -96,7 +96,7 @@ index 7fb7331c5..c360282cd 100644
  struct lru_gen_mm_state {
  	/* synced with max_seq after each iteration */
 -	unsigned long seq;
-+	unsigned long seq[ANON_ANF_FILE];
++	unsigned long seq[ANON_AND_FILE];
  	/* where the current iteration continues after */
  	struct list_head *head;
  	/* where the last iteration ended before */
