@@ -934,7 +934,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-iouring-leak.patch"
 	eapply "${FILESDIR}/6.18.1-swing-modulo-clang.patch"
 	# eapply "${FILESDIR}/6.18.1-intel-pstate.patch" // already there
-	# eapply "${FILESDIR}/6.18.1-cpuidle.patch" // best performance,but ultra temp on load
+	# eapply "${FILESDIR}/6.18.1-cpuidle.patch"
 	eapply "${FILESDIR}/6.18.1-f2fs.patch"
 	eapply "${FILESDIR}/6.18.1-lru-fix.patch"
 	einfo "Applying local patches"
