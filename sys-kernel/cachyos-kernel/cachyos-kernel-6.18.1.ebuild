@@ -937,6 +937,9 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-cpuidle.patch"
 	eapply "${FILESDIR}/6.18.1-f2fs.patch"
 	eapply "${FILESDIR}/6.18.1-spin-bit.patch"
+	eapply "${FILESDIR}/6.18.1-ktime-remove.patch"
+	eappply "${FILESDIR}/6.18.1-avoid-false-sharing-clock.patch"
+	eapply "${FILESDIR}/6.18.1-cache-string-fs.patch"
 	# eapply "${FILESDIR}/6.18.1-lru-fix.patch"
 	einfo "Applying local patches"
 
