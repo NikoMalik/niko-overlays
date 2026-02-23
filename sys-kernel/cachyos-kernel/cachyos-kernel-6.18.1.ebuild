@@ -21,7 +21,7 @@ GENTOO_CONFIG_VER=g18
 # https://github.com/CachyOS/linux-cachyos
 CONFIG_COMMIT=278762fc5eb743b8bf9f819fdf6506306685b101
 # https://github.com/CachyOS/kernel-patches
-PATCH_COMMIT=fd1f0c2b7020e735de3981dcceada77fe1305580
+PATCH_COMMIT=8a5e89d346af4221d7426b45da65a677a1ff5582
 # bcachefs backports version
 # https://github.com/koverstreet/bcachefs-tools
 # https://github.com/xarblu/bcachefs-patches
