@@ -941,7 +941,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-avoid-false-sharing-clock.patch"
 	eapply "${FILESDIR}/6.18.1-proc-make.patch"
 	eapply "${FILESDIR}/6.18.1-cache-string-fs.patch"
-	# eapply "${FILESDIR}/6.18.1-lru-fix.patch"
+	eapply "${FILESDIR}/6.18.1-lru-fix.patch"
 	einfo "Applying local patches"
 
 
