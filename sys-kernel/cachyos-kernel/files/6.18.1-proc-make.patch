@@ -1,0 +1,147 @@
+Message-ID: <CAGudoHGtvBArbAhpynYLd=FzshR+UM-qx=n_1wOq1BPqW9nTXA@mail.gmail.com>
+Date: Wed, 9 Apr 2025 22:27:12 +0200
+From: Mateusz Guzik <mjguzik@...il.com>
+To: Alexey Dobriyan <adobriyan@...il.com>
+Cc: akpm@...ux-foundation.org, brauner@...nel.org, 
+	linux-kernel@...r.kernel.org, linux-fsdevel@...r.kernel.org
+Subject: Re: [PATCH] proc: allow to mark /proc files permanent outside of fs/proc/
+
+On Wed, Apr 9, 2025 at 9:20 PM Alexey Dobriyan <adobriyan@...il.com> wrote:
+>
+> From 06e2ff406942fef65b9c397a7f44478dd4b61451 Mon Sep 17 00:00:00 2001
+> From: Alexey Dobriyan <adobriyan@...il.com>
+> Date: Sat, 5 Apr 2025 14:50:10 +0300
+> Subject: [PATCH 1/1] proc: allow to mark /proc files permanent outside of
+>  fs/proc/
+>
+> From: Mateusz Guzik <mjguzik@...il.com>
+>
+> Add proc_make_permanent() function to mark PDE as permanent to speed up
+> open/read/close (one alloc/free and lock/unlock less).
+>
+> Enable it for built-in code and for compiled-in modules.
+> This function becomes nop magically in modular code.
+>
+> Use it on /proc/filesystems to add a user.
+>
+>                 Note, note, note!
+>
+> If built-in code creates and deletes PDEs dynamically (not in init
+> hook), then proc_make_permanent() must not be used.
+>
+> It is intended for simple code:
+>
+>         static int __init xxx_module_init(void)
+>         {
+>                 g_pde = proc_create_single();
+>                 proc_make_permanent(g_pde);
+>                 return 0;
+>         }
+>         static void __exit xxx_module_exit(void)
+>         {
+>                 remove_proc_entry(g_pde);
+>         }
+>
+> If module is built-in then exit hook never executed and PDE is
+> permanent so it is OK to mark it as such.
+>
+> If module is module then rmmod will yank PDE, but proc_make_permanent()
+> is nop and core /proc code will do everything right.
+>
+> [adobriyan@...il.com: unexport function (usual exporting is a bug)]
+> [adobriyan@...il.com: rewrite changelog]
+>
+> Signed-off-by: Mateusz Guzik <mjguzik@...il.com>
+> Signed-off-by: Alexey Dobriyan <adobriyan@...il.com>
+> ---
+>  fs/filesystems.c        |  4 +++-
+>  fs/proc/generic.c       | 12 ++++++++++++
+>  fs/proc/internal.h      |  3 +++
+>  include/linux/proc_fs.h | 10 ++++++++++
+>  4 files changed, 28 insertions(+), 1 deletion(-)
+>
+> diff --git a/fs/filesystems.c b/fs/filesystems.c
+> index 58b9067b2391..81dcd0ddadb6 100644
+> --- a/fs/filesystems.c
+> +++ b/fs/filesystems.c
+> @@ -252,7 +252,9 @@ static int filesystems_proc_show(struct seq_file *m, void *v)
+>
+>  static int __init proc_filesystems_init(void)
+>  {
+> -       proc_create_single("filesystems", 0, NULL, filesystems_proc_show);
+> +       struct proc_dir_entry *pde =
+> +               proc_create_single("filesystems", 0, NULL, filesystems_proc_show);
+> +       proc_make_permanent(pde);
+>         return 0;
+>  }
+>  module_init(proc_filesystems_init);
+> diff --git a/fs/proc/generic.c b/fs/proc/generic.c
+> index a3e22803cddf..0342600c0172 100644
+> --- a/fs/proc/generic.c
+> +++ b/fs/proc/generic.c
+> @@ -826,3 +826,15 @@ ssize_t proc_simple_write(struct file *f, const char __user *ubuf, size_t size,
+>         kfree(buf);
+>         return ret == 0 ? size : ret;
+>  }
+> +
+> +/*
+> + * Not exported to modules:
+> + * modules' /proc files aren't permanent because modules aren't permanent.
+> + */
+> +void impl_proc_make_permanent(struct proc_dir_entry *pde);
+> +void impl_proc_make_permanent(struct proc_dir_entry *pde)
+> +{
+> +       if (pde) {
+> +               pde_make_permanent(pde);
+> +       }
+> +}
+> diff --git a/fs/proc/internal.h b/fs/proc/internal.h
+> index 96122e91c645..885b1cd38020 100644
+> --- a/fs/proc/internal.h
+> +++ b/fs/proc/internal.h
+> @@ -80,8 +80,11 @@ static inline bool pde_is_permanent(const struct proc_dir_entry *pde)
+>         return pde->flags & PROC_ENTRY_PERMANENT;
+>  }
+>
+> +/* This is for builtin code, not even for modules which are compiled in. */
+>  static inline void pde_make_permanent(struct proc_dir_entry *pde)
+>  {
+> +       /* Ensure magic flag does something. */
+> +       static_assert(PROC_ENTRY_PERMANENT != 0);
+>         pde->flags |= PROC_ENTRY_PERMANENT;
+>  }
+>
+> diff --git a/include/linux/proc_fs.h b/include/linux/proc_fs.h
+> index ea62201c74c4..2d59f29b49eb 100644
+> --- a/include/linux/proc_fs.h
+> +++ b/include/linux/proc_fs.h
+> @@ -247,4 +247,14 @@ static inline struct pid_namespace *proc_pid_ns(struct super_block *sb)
+>
+>  bool proc_ns_file(const struct file *file);
+>
+> +static inline void proc_make_permanent(struct proc_dir_entry *pde)
+> +{
+> +       /* Don't give matches to modules. */
+> +#if defined CONFIG_PROC_FS && !defined MODULE
+> +       /* This mess is created by defining "struct proc_dir_entry" elsewhere. */
+> +       void impl_proc_make_permanent(struct proc_dir_entry *pde);
+> +       impl_proc_make_permanent(pde);
+> +#endif
+> +}
+> +
+>  #endif /* _LINUX_PROC_FS_H */
+
+This diff should not be changing /proc/filesystems, that's for the
+other patch to do.
+
+So I think this patch is all you and my name needs to be dropped from
+it, along with marking /proc/filesystems as permanent.
+
+Given that you kept the name (proc_make_permanent), the
+fs/filesystems.c side of things is identical so my first patch can be
+just swapped for this one.
+
+Alternatively I can resend the patchset with this (augmented as
+described above).
+-- 
+Mateusz Guzik <mjguzik gmail.com>
