@@ -832,6 +832,11 @@ cachy_use_config() {
 	kconf unset SHUFFLE_PAGE_ALLOCATOR
 	kconf set PER_VMA_LOCK
 
+	kconf unset KFENCE
+	kconf unset DEBUG_FS
+	kconf unset DEBUG_WX
+	kconf unset DEBUG_MEMORY_INIT
+
 	
 
 
