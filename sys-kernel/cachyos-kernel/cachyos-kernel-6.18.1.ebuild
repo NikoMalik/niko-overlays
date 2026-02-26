@@ -815,6 +815,9 @@ cachy_use_config() {
 	kconf set SCHED_CLUSTER
 	einfo "SCHED_CLUSTER ENABLED"
 
+	kconf set SCHED_SMT
+	einfo "SCHED_SMT ENABLED"
+
 	kconf set LRU_GEN_ENABLED
 	kconf set LRU_GEN
 	einfo "LRU_GEN_ENABLED enabled"
