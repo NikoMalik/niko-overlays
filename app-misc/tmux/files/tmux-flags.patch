@@ -1,17 +1,15 @@
-diff --git a/Makefile.am b/Makefile.am
-index 81c9c2f..da43805 100644
---- a/Makefile.am
-+++ b/Makefile.am
-@@ -20,9 +20,9 @@ LDADD = $(LIBOBJS)
+ Makefile.am |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+--- tmux-2.4/Makefile.am
++++ tmux-2.4/Makefile.am
+@@ -17,9 +17,8 @@
  
  # Set flags for gcc.
  if IS_GCC
--AM_CFLAGS += -std=gnu99
-+AM_CFLAGS += -std=gnu99 -O3
- if IS_OPTIMIZED
--AM_CFLAGS += -O2
-+AM_CFLAGS += -O3
- else
- AM_CFLAGS += -O0
- endif
-
+-AM_CFLAGS += -std=gnu99 -O2
++AM_CFLAGS += -std=gnu99
+ if IS_DEBUG
+-AM_CFLAGS += -g
+ AM_CFLAGS += -Wno-long-long -Wall -W -Wformat=2
+ AM_CFLAGS += -Wmissing-prototypes -Wstrict-prototypes -Wmissing-declarations
+ AM_CFLAGS += -Wwrite-strings -Wshadow -Wpointer-arith -Wsign-compare
