@@ -22,7 +22,7 @@ index cac5997dc..ae67a4640 100644
  	default y if ACPI || PPC_PSERIES
  	select CPU_IDLE_GOV_LADDER if (!NO_HZ && !NO_HZ_IDLE)
 -	select CPU_IDLE_GOV_MENU if (NO_HZ || NO_HZ_IDLE) && !CPU_IDLE_GOV_TEO
-+	select CPU_IDLE_GOV_NAP if (NO_HZ || NO_HZ_IDLE) && !CPU_IDLE_GOV_MENU
++	select CPU_IDLE_GOV_TEO if (NO_HZ || NO_HZ_IDLE) && !CPU_IDLE_GOV_MENU
  	help
  	  CPU idle is a generic framework for supporting software-controlled
  	  idle processor power management.  It includes modular cross-platform
@@ -45,7 +45,7 @@ index 23239b0c0..a197bcb9e 100644
  static struct cpuidle_governor menu_governor = {
  	.name =		"menu",
 -	.rating =	20,
-+	.rating =	18,
++	.rating =	19,
  	.enable =	menu_enable_device,
  	.select =	menu_select,
  	.reflect =	menu_reflect,
@@ -58,7 +58,7 @@ index bfa55c1ea..65fe6856b 100644
  static struct cpuidle_governor teo_governor = {
  	.name =		"teo",
 -	.rating =	19,
-+	.rating =	19,
++	.rating =	20,
  	.enable =	teo_enable_device,
  	.select =	teo_select,
  	.reflect =	teo_reflect,
