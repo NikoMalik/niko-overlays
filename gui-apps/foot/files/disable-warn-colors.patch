@@ -1,0 +1,16 @@
+diff --git a/config.c b/config.c
+index b8cf5b2f..5f1664ca 100644
+--- a/config.c
++++ b/config.c
+@@ -1552,8 +1552,8 @@ parse_section_colors_light(struct context *ctx) {
+ 
+ static bool
+ parse_section_colors(struct context *ctx) {
+-    LOG_WARN("%s:%d: [colors]: deprecated; use [colors-dark] instead",
+-             ctx->path, ctx->lineno);
++    // LOG_WARN("%s:%d: [colors]: deprecated; use [colors-dark] instead",
++    //          ctx->path, ctx->lineno);
+ 
+     user_notification_add(
+         &ctx->conf->notifications,
+

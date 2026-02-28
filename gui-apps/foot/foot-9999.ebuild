@@ -83,6 +83,7 @@ pkg_setup() {
 src_prepare() {
 	eapply "${FILESDIR}/rss.patch"
 	eapply "${FILESDIR}/mimalloc.patch"
+	eapply "${FILESDIR}/disable-warn-colors.patch"
 	default
 	python_fix_shebang ./scripts
 }
