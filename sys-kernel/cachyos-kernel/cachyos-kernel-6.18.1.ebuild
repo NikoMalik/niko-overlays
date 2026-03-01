@@ -807,9 +807,9 @@ cachy_use_config() {
     fi
 
 
-
-	kconf unset INIT_ON_ALLOC_DEFAULT_ON
-	einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
+    # possible issues on nvidia and amd
+	# kconf unset INIT_ON_ALLOC_DEFAULT_ON
+	# einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
 
 	kconf set SCHED_CLUSTER
