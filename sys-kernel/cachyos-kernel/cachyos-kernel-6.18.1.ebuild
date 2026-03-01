@@ -19,9 +19,9 @@ GENTOO_PATCHSET=linux-gentoo-patches-6.18.1
 # https://github.com/projg2/gentoo-kernel-config
 GENTOO_CONFIG_VER=g18
 # https://github.com/CachyOS/linux-cachyos
-CONFIG_COMMIT=278762fc5eb743b8bf9f819fdf6506306685b101
+CONFIG_COMMIT=4a363451cc86ff5304514c8bf25eac42eb46b8c8
 # https://github.com/CachyOS/kernel-patches
-PATCH_COMMIT=8a5e89d346af4221d7426b45da65a677a1ff5582
+PATCH_COMMIT=ba68c229d00200f85c0bd29b63ca5ede694f1264
 # bcachefs backports version
 # https://github.com/koverstreet/bcachefs-tools
 # https://github.com/xarblu/bcachefs-patches
