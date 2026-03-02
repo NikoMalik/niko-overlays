@@ -836,6 +836,22 @@ cachy_use_config() {
 	kconf unset DEBUG_FS
 	kconf unset DEBUG_WX
 	kconf unset DEBUG_MEMORY_INIT
+	kconf unset SCHEDSTATS          
+    kconf unset FTRACE           
+    kconf unset FUNCTION_TRACER   
+    kconf unset STACK_TRACER   
+    kconf unset SCHED_TRACER    
+    kconf unset KPROBES          
+    kconf unset PROFILING         
+    kconf unset NUMA_BALANCING     
+    kconf unset SLUB_DEBUG          
+
+
+    kconf unset ACPI_DEBUG      
+    kconf unset PM_DEBUG         
+    kconf unset PM_SLEEP_DEBUG    
+    kconf unset DYNAMIC_DEBUG      
+    kconf unset PAGE_POISONING      
 
 	
 
