@@ -42,11 +42,11 @@ CACHY_PATCH_SPECS=(
 	-:all/0001-cachyos-base-all.patch
 	# flavours
 	bmq:sched/0001-prjc-cachy.patch
-    bore:sched/0001-bore-cachy.patch
+    # bore:sched/0001-bore-cachy.patch
 	deckify:misc/0001-acpi-call.patch
 	deckify:misc/0001-handheld.patch
 	deckify:sched/0001-bore-cachy.patch
-	rt-bore:sched/0001-bore-cachy.patch
+	# rt-bore:sched/0001-bore-cachy.patch
 	rt-bore:misc/0001-rt-i915.patch
 	# clang
 	clang:misc/dkms-clang.patch
@@ -908,6 +908,13 @@ src_prepare() {
 
 	# apply package and user patches
 	eapply "${WORKDIR}/patches"
+	if use bore; then
+		eapply "${FILESDIR}/6.18.1-bore.patch"
+	fi
+	if use rt-bore; then
+		eapply "${FILESDIR}/6.18.1-bore.patch"
+	fi
+
 	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
 	eapply "${FILESDIR}/6.18.1-harder-flags.patch"
 	eapply "${FILESDIR}/6.18.1-nvme-latency.patch"
