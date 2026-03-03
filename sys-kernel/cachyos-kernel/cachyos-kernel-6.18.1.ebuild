@@ -833,7 +833,6 @@ cachy_use_config() {
 	kconf set PER_VMA_LOCK
 
 	kconf unset KFENCE
-	kconf unset DEBUG_FS
 	kconf unset DEBUG_WX
 	kconf unset DEBUG_MEMORY_INIT
 	kconf unset SCHEDSTATS          
@@ -844,7 +843,6 @@ cachy_use_config() {
     kconf unset KPROBES          
     kconf unset PROFILING         
     kconf unset NUMA_BALANCING     
-    kconf unset SLUB_DEBUG          
 
 
     kconf unset ACPI_DEBUG      
@@ -852,6 +850,10 @@ cachy_use_config() {
     kconf unset PM_SLEEP_DEBUG    
     kconf unset DYNAMIC_DEBUG      
     kconf unset PAGE_POISONING      
+	kconf unset DEBUG_FS
+	kconf unset SLUB_DEBUG          
+	kconf unset DEBUG_MEMORY
+	kconf unset SND_DEBUG
 
 	
 
