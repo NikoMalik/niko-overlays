@@ -242,7 +242,7 @@ new file mode 100644
 index 000000000..ac685f116
 --- /dev/null
 +++ b/kernel/sched/bore.c
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,413 @@
 +/*
 + *  Burst-Oriented Response Enhancer (BORE) CPU Scheduler
 + *  Copyright (C) 2021-2025 Masahito Suzuki <firelzrd@gmail.com>
