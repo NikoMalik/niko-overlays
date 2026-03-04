@@ -9,17 +9,16 @@ Signed-off-by: Piotr Gorski <lucjan.lucjanov@gmail.com>
  include/linux/sched/bore.h |  39 ++++
  init/Kconfig               |  17 ++
  kernel/Kconfig.hz          |  17 ++
- kernel/exit.c              |   2 +-
- kernel/fork.c              |  11 +-
+ kernel/fork.c              |   8 +
  kernel/futex/waitwake.c    |  11 +
  kernel/sched/Makefile      |   1 +
- kernel/sched/bore.c        | 415 +++++++++++++++++++++++++++++++++++++
+ kernel/sched/bore.c        | 409 +++++++++++++++++++++++++++++++++++++
  kernel/sched/core.c        |  12 ++
  kernel/sched/debug.c       |  61 ++++++
  kernel/sched/fair.c        | 137 +++++++++---
  kernel/sched/features.h    |   3 +
  kernel/sched/sched.h       |   9 +
- 14 files changed, 742 insertions(+), 27 deletions(-)
+ 13 files changed, 733 insertions(+), 25 deletions(-)
  create mode 100644 include/linux/sched/bore.h
  create mode 100644 kernel/sched/bore.c
 
@@ -173,55 +172,32 @@ index e1359db55..31053e619 100644
 +	 Setting this value too high can cause the system to boot with
 +	 an unnecessarily large base slice, resulting in high scheduling
 +	 latency and poor system responsiveness.
-diff --git a/kernel/exit.c b/kernel/exit.c
-index 9f74e8f1c..ca564251f 100644
---- a/kernel/exit.c
-+++ b/kernel/exit.c
-@@ -147,7 +147,7 @@ static void __unhash_process(struct release_task_post *post, struct task_struct
- 		detach_pid(post->pids, p, PIDTYPE_SID);
- 
- 		list_del_rcu(&p->tasks);
--		list_del_init(&p->sibling);
-+		list_del_rcu(&p->sibling);
- 		__this_cpu_dec(process_counts);
- 	}
- 	list_del_rcu(&p->thread_node);
 diff --git a/kernel/fork.c b/kernel/fork.c
-index ef65f7e42..99bbdd7d9 100644
+index ef65f7e42..6a3d23606 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -116,6 +116,10 @@
  /* For dup_mmap(). */
  #include "../mm/internal.h"
- 
+
 +#ifdef CONFIG_SCHED_BORE
 +#include <linux/sched/bore.h>
 +#endif /* CONFIG_SCHED_BORE */
 +
  #include <trace/events/sched.h>
- 
+
  #define CREATE_TRACE_POINTS
-@@ -2335,6 +2339,11 @@ __latent_entropy struct task_struct *copy_process(
- 	p->start_time = ktime_get_ns();
- 	p->start_boottime = ktime_get_boottime_ns();
- 
+@@ -2340,6 +2344,10 @@ __latent_entropy struct task_struct *copy_process(
+ 	 * Need tasklist lock for parent etc handling!
+ 	 */
+ 	write_lock_irq(&tasklist_lock);
 +#ifdef CONFIG_SCHED_BORE
 +	if (likely(p->pid))
 +		task_fork_bore(p, current, clone_flags, p->start_time);
 +#endif /* CONFIG_SCHED_BORE */
-+
- 	/*
- 	 * Make it visible to the rest of the system, but dont wake it up yet.
- 	 * Need tasklist lock for parent etc handling!
-@@ -2408,7 +2417,7 @@ __latent_entropy struct task_struct *copy_process(
- 			 */
- 			p->signal->has_child_subreaper = p->real_parent->signal->has_child_subreaper ||
- 							 p->real_parent->signal->is_child_subreaper;
--			list_add_tail(&p->sibling, &p->real_parent->children);
-+			list_add_tail_rcu(&p->sibling, &p->real_parent->children);
- 			list_add_tail_rcu(&p->tasks, &init_task.tasks);
- 			attach_pid(p, PIDTYPE_TGID);
- 			attach_pid(p, PIDTYPE_PGID);
+
+ 	/* CLONE_PARENT re-uses the old parent */
+ 	if (clone_flags & (CLONE_PARENT|CLONE_THREAD)) {
 diff --git a/kernel/futex/waitwake.c b/kernel/futex/waitwake.c
 index e2bbe5509..6484ad583 100644
 --- a/kernel/futex/waitwake.c
@@ -409,7 +385,7 @@ index 000000000..ac685f116
 +
 +#ifndef for_each_child_task
 +#define for_each_child_task(p, t) \
-+	list_for_each_entry_rcu(t, &(p)->children, sibling)
++	list_for_each_entry(t, &(p)->children, sibling)
 +#endif
 +
 +static inline u32 count_children_upto2(struct task_struct *p) {
@@ -445,7 +421,7 @@ index 000000000..ac685f116
 +	struct bore_bc bc_val;
 +
 +	if (clone_flags & CLONE_PARENT)
-+		parent = rcu_dereference(parent->real_parent);
++		parent = parent->real_parent;
 +
 +	struct bore_bc *bc = &parent->bore.subtree;
 +
@@ -475,12 +451,12 @@ index 000000000..ac685f116
 +	u32 sole_child_count = 0;
 +
 +	if (clone_flags & CLONE_PARENT) {
-+		ancestor = rcu_dereference(ancestor->real_parent);
++		ancestor = ancestor->real_parent;
 +		sole_child_count = 1;
 +	}
 +
 +	for (struct task_struct *next;
-+			(next = rcu_dereference(ancestor->real_parent)) != ancestor &&
++			(next = ancestor->real_parent) != ancestor &&
 +			count_children_upto2(ancestor) <= sole_child_count;
 +			ancestor = next, sole_child_count = 1) {}
 +
@@ -538,7 +514,6 @@ index 000000000..ac685f116
 +	               struct task_struct *parent, u64 clone_flags, u64 now) {
 +	if (!task_is_bore_eligible(p) || unlikely(!sched_bore)) return;
 +
-+	rcu_read_lock();
 +	struct bore_ctx *ctx = &p->bore;
 +	u32 inherited_penalty = (clone_flags & CLONE_THREAD)?
 +		inherit_from_thread_group(parent, now):
@@ -551,7 +526,6 @@ index 000000000..ac685f116
 +	ctx->stop_update   = false;
 +	ctx->futex_waiting = false;
 +	update_penalty(p);
-+	rcu_read_unlock();
 +}
 +
 +void reset_task_bore(struct task_struct *p)
