@@ -948,7 +948,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-ext4.patch"
 	eapply "${FILESDIR}/6.18.1-elf-optimize.patch"
 	eapply "${FILESDIR}/6.18.1-mem_page.patch"
-	# eapply "${FILESDIR}/6.18.1-sched-limit.patch"
+	eapply "${FILESDIR}/6.18.1-sched-limit.patch"
 	eapply "${FILESDIR}/6.18.1-udp-inline.patch"
 	eapply "${FILESDIR}/6.18.1-readdir-hint.patch"
 	eapply "${FILESDIR}/6.18.1-poc-selector.patch"
@@ -979,6 +979,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-cpuidle.patch"
 	eapply "${FILESDIR}/6.18.1-adios_update.patch"
 	eapply "${FILESDIR}/6.18.1-futex-multiply.patch"
+	eapply "${FILESDIR}/6.18.1-reuse-timer.patch"
 	einfo "Applying local patches"
 
 

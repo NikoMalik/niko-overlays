@@ -1,0 +1,17 @@
+diff --git a/arch/x86/kernel/tsc.c b/arch/x86/kernel/tsc.c
+index 87e749106..bfb7c0387 100644
+--- a/arch/x86/kernel/tsc.c
++++ b/arch/x86/kernel/tsc.c
+@@ -1597,6 +1597,11 @@ unsigned long calibrate_delay_is_known(void)
+ 	if (!constant_tsc || !mask)
+ 		return 0;
+ 
++	 
++	if (cpu != 0)
++		return cpu_data(0).loops_per_jiffy;
++
++
+ 	sibling = cpumask_any_but(mask, cpu);
+ 	if (sibling < nr_cpu_ids)
+ 		return cpu_data(sibling).loops_per_jiffy;
+
