@@ -927,10 +927,10 @@ src_prepare() {
 	# apply package and user patches
 	eapply "${WORKDIR}/patches"
 	if use bore; then
-		eapply "${FILESDIR}/6.18.1-bore-dev.patch"
+		eapply "${FILESDIR}/6.18.1-bore.patch"
 	fi
 	if use rt-bore; then
-		eapply "${FILESDIR}/6.18.1-bore-dev.patch"
+		eapply "${FILESDIR}/6.18.1-bore.patch"
 	fi
 	eapply "${FILESDIR}/6.18.1-spin-faster.patch"
 	eapply "${FILESDIR}/6.18.1-harder-flags.patch"
