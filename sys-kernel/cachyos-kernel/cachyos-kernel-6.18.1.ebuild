@@ -982,7 +982,6 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-reuse-timer.patch"
 	eapply "${FILESDIR}/6.18.1-wavl-avl.patch"
 	eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
-	eapply "${FILESDIR}/6.18.1-duet.patch"
 	einfo "Applying local patches"
 
 
