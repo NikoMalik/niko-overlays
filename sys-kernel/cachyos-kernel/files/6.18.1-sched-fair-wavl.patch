@@ -1,0 +1,248 @@
+From 4c52fb2448a2e05381d4f69bad81ebb347264432 Mon Sep 17 00:00:00 2001
+From: Masahito S <firelzrd@gmail.com>
+Date: Tue, 10 Mar 2026 03:19:13 +0900
+Subject: [PATCH] sched/fair: add CONFIG_SCHED_WAVL to use WAVL trees for CFS
+ task scheduling
+
+Introduce CONFIG_SCHED_WAVL, a new Kconfig option that replaces the
+red-black tree in CFS's sched_entity scheduling with a WAVL tree.
+
+This leverages the rbtree_wavl proxy headers to transparently redirect
+rb_* API calls to wavl_* implementations.  fair.c switches its include
+from rbtree_augmented.h to rbtree_wavl_augmented.h when enabled, so
+all existing CFS tree operations work without any code changes.
+
+Only the struct type definitions require explicit conditionals:
+ - sched_entity.run_node: wavl_node vs rb_node (include/linux/sched.h)
+ - cfs_rq.tasks_timeline: wavl_root_cached vs rb_root_cached (sched.h)
+
+Build-tested with both CONFIG_SCHED_WAVL=y and CONFIG_SCHED_WAVL=n.
+---
+ include/linux/rbtree_wavl.h           | 24 +++++++++++++++++++++++-
+ include/linux/rbtree_wavl_augmented.h | 10 ++++++++++
+ include/linux/rbtree_wavl_types.h     |  9 +++++++++
+ include/linux/sched.h                 |  7 +++++++
+ init/Kconfig                          | 11 +++++++++++
+ kernel/sched/fair.c                   |  4 ++++
+ kernel/sched/sched.h                  |  4 ++++
+ 7 files changed, 68 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/rbtree_wavl.h b/include/linux/rbtree_wavl.h
+index 3be356579e..12bd6110ee 100644
+--- a/include/linux/rbtree_wavl.h
++++ b/include/linux/rbtree_wavl.h
+@@ -14,19 +14,32 @@
+ #include <linux/rbtree_wavl_types.h>
+ 
+ /* Core accessors */
++#undef rb_parent
++#undef rb_entry
+ #define rb_parent		wavl_parent
+ #define rb_entry		wavl_entry
+ 
+ /* State checks */
++#undef RB_EMPTY_ROOT
++#undef RB_EMPTY_NODE
++#undef RB_CLEAR_NODE
+ #define RB_EMPTY_ROOT		WAVL_EMPTY_ROOT
+ #define RB_EMPTY_NODE		WAVL_EMPTY_NODE
+ #define RB_CLEAR_NODE		WAVL_CLEAR_NODE
+ 
+ /* Tree operations */
++#undef rb_insert_color
++#undef rb_erase
+ #define rb_insert_color		wavl_insert_rebalance
+ #define rb_erase		wavl_erase
+ 
+ /* Traversal */
++#undef rb_next
++#undef rb_prev
++#undef rb_first
++#undef rb_last
++#undef rb_first_postorder
++#undef rb_next_postorder
+ #define rb_next			wavl_next
+ #define rb_prev			wavl_prev
+ #define rb_first		wavl_first
+@@ -35,23 +48,32 @@
+ #define rb_next_postorder	wavl_next_postorder
+ 
+ /* Replacement */
++#undef rb_replace_node
++#undef rb_replace_node_cached
+ #define rb_replace_node		wavl_replace_node
++#define rb_replace_node_cached	wavl_replace_node_cached
+ 
+ /* Insertion helper */
++#undef rb_link_node
+ #define rb_link_node		wavl_link_node
+ 
+ /* Safe entry access */
++#undef rb_entry_safe
+ #define rb_entry_safe		wavl_entry_safe
+ 
+ /* Iteration */
++#undef rbtree_postorder_for_each_entry_safe
+ #define rbtree_postorder_for_each_entry_safe \
+ 				rbtree_postorder_for_each_entry_safe_wavl
+ 
+ /* Cached (leftmost) variants */
++#undef rb_first_cached
++#undef rb_insert_color_cached
++#undef rb_erase_cached
++#undef rb_add_cached
+ #define rb_first_cached		wavl_first_cached
+ #define rb_insert_color_cached	wavl_insert_rebalance_cached
+ #define rb_erase_cached		wavl_erase_cached
+-#define rb_replace_node_cached	wavl_replace_node_cached
+ #define rb_add_cached		wavl_add_cached
+ 
+ #endif	/* _LINUX_RBTREE_WAVL_H */
+diff --git a/include/linux/rbtree_wavl_augmented.h b/include/linux/rbtree_wavl_augmented.h
+index b8c8fed551..cc07b0d617 100644
+--- a/include/linux/rbtree_wavl_augmented.h
++++ b/include/linux/rbtree_wavl_augmented.h
+@@ -14,21 +14,31 @@
+ #include <linux/rbtree_wavl.h>
+ 
+ /* Augmented callback type */
++#undef rb_augment_callbacks
+ #define rb_augment_callbacks	wavl_augment_callbacks
+ 
+ /* Augmented insertion */
++#undef __rb_insert_augmented
++#undef rb_insert_augmented
++#undef rb_insert_augmented_cached
+ #define __rb_insert_augmented	__wavl_insert_augmented
+ #define rb_insert_augmented	wavl_insert_augmented
+ #define rb_insert_augmented_cached wavl_insert_augmented_cached
+ 
+ /* Augmented add (insert with less-than comparator) */
++#undef rb_add_augmented_cached
+ #define rb_add_augmented_cached	wavl_add_augmented_cached
+ 
+ /* Augmented callback declaration macros */
++#undef RB_DECLARE_CALLBACKS
++#undef RB_DECLARE_CALLBACKS_MAX
+ #define RB_DECLARE_CALLBACKS	WAVL_DECLARE_CALLBACKS
+ #define RB_DECLARE_CALLBACKS_MAX WAVL_DECLARE_CALLBACKS_MAX
+ 
+ /* Augmented erase */
++#undef __rb_erase_augmented
++#undef rb_erase_augmented
++#undef rb_erase_augmented_cached
+ #define __rb_erase_augmented	__wavl_erase_augmented
+ #define rb_erase_augmented	wavl_erase_augmented
+ #define rb_erase_augmented_cached wavl_erase_augmented_cached
+diff --git a/include/linux/rbtree_wavl_types.h b/include/linux/rbtree_wavl_types.h
+index d643b42010..c385f88a6e 100644
+--- a/include/linux/rbtree_wavl_types.h
++++ b/include/linux/rbtree_wavl_types.h
+@@ -16,17 +16,26 @@
+ #include <linux/wavl_types.h>
+ 
+ /* Struct type names: struct rb_node → struct wavl_node, etc. */
++#undef rb_node
++#undef rb_root
++#undef rb_root_cached
+ #define rb_node			wavl_node
+ #define rb_root			wavl_root
+ #define rb_root_cached		wavl_root_cached
+ 
+ /* Struct member names */
++#undef __rb_parent_color
++#undef rb_left
++#undef rb_right
++#undef rb_leftmost
+ #define __rb_parent_color	__wavl_parent
+ #define rb_left			wavl_left
+ #define rb_right		wavl_right
+ #define rb_leftmost		wavl_leftmost
+ 
+ /* Initializers */
++#undef RB_ROOT
++#undef RB_ROOT_CACHED
+ #define RB_ROOT			WAVL_ROOT
+ #define RB_ROOT_CACHED		WAVL_ROOT_CACHED
+ 
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 6ad294330c..4dd7fb2b66 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -28,6 +28,9 @@
+ #include <linux/timer_types.h>
+ #include <linux/seccomp_types.h>
+ #include <linux/nodemask_types.h>
++#ifdef CONFIG_SCHED_WAVL
++#include <linux/wavl_types.h>
++#endif
+ #include <linux/refcount_types.h>
+ #include <linux/resource.h>
+ #include <linux/latencytop.h>
+@@ -570,7 +573,11 @@ struct sched_statistics {
+ struct sched_entity {
+ 	/* For load-balancing: */
+ 	struct load_weight		load;
++#ifdef CONFIG_SCHED_WAVL
++	struct wavl_node		run_node;
++#else
+ 	struct rb_node			run_node;
++#endif
+ 	u64				deadline;
+ 	u64				min_vruntime;
+ 	u64				min_slice;
+diff --git a/init/Kconfig b/init/Kconfig
+index cab3ad28ca..e5ae1c5021 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1111,6 +1111,17 @@ config FAIR_GROUP_SCHED
+ 	select GROUP_SCHED_WEIGHT
+ 	default CGROUP_SCHED
+ 
++config SCHED_WAVL
++	bool "Use WAVL trees for CFS task scheduling"
++	default y
++	help
++	  Replace the red-black tree used for CFS task scheduling with
++	  a Weak AVL (WAVL) tree.  WAVL trees guarantee at most two
++	  rotations per insert/delete while maintaining O(log n) height,
++	  which can reduce rebalancing overhead under heavy scheduling.
++
++	  If unsure, say Y.
++
+ config CFS_BANDWIDTH
+ 	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
+ 	depends on FAIR_GROUP_SCHED
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 82038166d7..6fe912c452 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -56,6 +56,10 @@
+ 
+ #include "sched.h"
+ #include "stats.h"
++
++#ifdef CONFIG_SCHED_WAVL
++#include <linux/rbtree_wavl_augmented.h>
++#endif
+ #include "autogroup.h"
+ 
+ /*
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index 2f8b06b12a..13f5e9843e 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -689,7 +689,11 @@ struct cfs_rq {
+ 	u64			zero_vruntime_fi;
+ #endif
+ 
++#ifdef CONFIG_SCHED_WAVL
++	struct wavl_root_cached	tasks_timeline;
++#else
+ 	struct rb_root_cached	tasks_timeline;
++#endif
+ 
+ 	/*
+ 	 * 'curr' points to currently running entity on this cfs_rq.
+-- 
+2.34.1

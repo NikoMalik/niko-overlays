@@ -1,0 +1,1206 @@
+From 82999b1479db0a87297bede20fab60c51ad142b7 Mon Sep 17 00:00:00 2001
+From: Masahito S <firelzrd@gmail.com>
+Date: Tue, 10 Mar 2026 01:58:52 +0900
+Subject: [PATCH] lib: add WAVL (Weak AVL) tree implementation with rbtree
+ proxy headers
+
+Add a complete WAVL tree library that mirrors the existing rbtree API.
+WAVL trees are rank-balanced BSTs that guarantee at most 2 rotations
+per insert/delete (amortized O(1) structural changes) while maintaining
+O(log n) height, making them suitable for latency-sensitive paths such
+as the scheduler.
+
+The API surface mirrors rbtree exactly:
+  - wavl_types.h: wavl_node, wavl_root, wavl_root_cached
+  - wavl.h: wavl_link_node, wavl_insert_rebalance, wavl_erase,
+    wavl_first/next/prev, wavl_add_cached, wavl_first_cached
+  - wavl_augmented.h: wavl_augment_callbacks, wavl_add_augmented_cached,
+    wavl_erase_augmented_cached, WAVL_DECLARE_CALLBACKS[_MAX]
+  - lib/wavl.c: exported symbols for insert/erase rebalance, iteration
+
+Additionally, three proxy headers (rbtree_wavl.h, rbtree_wavl_types.h,
+rbtree_wavl_augmented.h) map rb_* names to wavl_* equivalents, allowing
+existing code to switch to WAVL trees with zero code changes by simply
+including rbtree_wavl_augmented.h instead of rbtree_augmented.h.
+---
+ include/linux/rbtree_wavl.h           |  57 +++
+ include/linux/rbtree_wavl_augmented.h |  36 ++
+ include/linux/rbtree_wavl_types.h     |  33 ++
+ include/linux/wavl.h                  | 132 ++++++
+ include/linux/wavl_augmented.h        | 263 ++++++++++++
+ include/linux/wavl_types.h            |  33 ++
+ lib/Makefile                          |   2 +-
+ lib/wavl.c                            | 553 ++++++++++++++++++++++++++
+ 8 files changed, 1108 insertions(+), 1 deletion(-)
+ create mode 100644 include/linux/rbtree_wavl.h
+ create mode 100644 include/linux/rbtree_wavl_augmented.h
+ create mode 100644 include/linux/rbtree_wavl_types.h
+ create mode 100644 include/linux/wavl.h
+ create mode 100644 include/linux/wavl_augmented.h
+ create mode 100644 include/linux/wavl_types.h
+ create mode 100644 lib/wavl.c
+
+diff --git a/include/linux/rbtree_wavl.h b/include/linux/rbtree_wavl.h
+new file mode 100644
+index 0000000000..3be356579e
+--- /dev/null
++++ b/include/linux/rbtree_wavl.h
+@@ -0,0 +1,57 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef _LINUX_RBTREE_WAVL_H
++#define _LINUX_RBTREE_WAVL_H
++
++/*
++ * WAVL-backed rbtree API proxy.
++ *
++ * Include this INSTEAD of <linux/rbtree.h> to transparently
++ * replace red-black tree operations with WAVL tree operations
++ * while keeping the rb_* naming convention.
++ */
++
++#include <linux/wavl.h>
++#include <linux/rbtree_wavl_types.h>
++
++/* Core accessors */
++#define rb_parent		wavl_parent
++#define rb_entry		wavl_entry
++
++/* State checks */
++#define RB_EMPTY_ROOT		WAVL_EMPTY_ROOT
++#define RB_EMPTY_NODE		WAVL_EMPTY_NODE
++#define RB_CLEAR_NODE		WAVL_CLEAR_NODE
++
++/* Tree operations */
++#define rb_insert_color		wavl_insert_rebalance
++#define rb_erase		wavl_erase
++
++/* Traversal */
++#define rb_next			wavl_next
++#define rb_prev			wavl_prev
++#define rb_first		wavl_first
++#define rb_last			wavl_last
++#define rb_first_postorder	wavl_first_postorder
++#define rb_next_postorder	wavl_next_postorder
++
++/* Replacement */
++#define rb_replace_node		wavl_replace_node
++
++/* Insertion helper */
++#define rb_link_node		wavl_link_node
++
++/* Safe entry access */
++#define rb_entry_safe		wavl_entry_safe
++
++/* Iteration */
++#define rbtree_postorder_for_each_entry_safe \
++				rbtree_postorder_for_each_entry_safe_wavl
++
++/* Cached (leftmost) variants */
++#define rb_first_cached		wavl_first_cached
++#define rb_insert_color_cached	wavl_insert_rebalance_cached
++#define rb_erase_cached		wavl_erase_cached
++#define rb_replace_node_cached	wavl_replace_node_cached
++#define rb_add_cached		wavl_add_cached
++
++#endif	/* _LINUX_RBTREE_WAVL_H */
+diff --git a/include/linux/rbtree_wavl_augmented.h b/include/linux/rbtree_wavl_augmented.h
+new file mode 100644
+index 0000000000..b8c8fed551
+--- /dev/null
++++ b/include/linux/rbtree_wavl_augmented.h
+@@ -0,0 +1,36 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef _LINUX_RBTREE_WAVL_AUGMENTED_H
++#define _LINUX_RBTREE_WAVL_AUGMENTED_H
++
++/*
++ * WAVL-backed augmented rbtree API proxy.
++ *
++ * Include this INSTEAD of <linux/rbtree_augmented.h> to transparently
++ * replace augmented red-black tree operations with WAVL tree operations
++ * while keeping the rb_* naming convention.
++ */
++
++#include <linux/wavl_augmented.h>
++#include <linux/rbtree_wavl.h>
++
++/* Augmented callback type */
++#define rb_augment_callbacks	wavl_augment_callbacks
++
++/* Augmented insertion */
++#define __rb_insert_augmented	__wavl_insert_augmented
++#define rb_insert_augmented	wavl_insert_augmented
++#define rb_insert_augmented_cached wavl_insert_augmented_cached
++
++/* Augmented add (insert with less-than comparator) */
++#define rb_add_augmented_cached	wavl_add_augmented_cached
++
++/* Augmented callback declaration macros */
++#define RB_DECLARE_CALLBACKS	WAVL_DECLARE_CALLBACKS
++#define RB_DECLARE_CALLBACKS_MAX WAVL_DECLARE_CALLBACKS_MAX
++
++/* Augmented erase */
++#define __rb_erase_augmented	__wavl_erase_augmented
++#define rb_erase_augmented	wavl_erase_augmented
++#define rb_erase_augmented_cached wavl_erase_augmented_cached
++
++#endif	/* _LINUX_RBTREE_WAVL_AUGMENTED_H */
+diff --git a/include/linux/rbtree_wavl_types.h b/include/linux/rbtree_wavl_types.h
+new file mode 100644
+index 0000000000..d643b42010
+--- /dev/null
++++ b/include/linux/rbtree_wavl_types.h
+@@ -0,0 +1,33 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef _LINUX_RBTREE_WAVL_TYPES_H
++#define _LINUX_RBTREE_WAVL_TYPES_H
++
++/*
++ * WAVL-backed rbtree type proxy.
++ *
++ * Include this INSTEAD of <linux/rbtree_types.h> to transparently
++ * replace red-black tree types with WAVL tree types while keeping
++ * the rb_* naming convention.
++ *
++ * The native wavl_* API (wavl_types.h) remains available for code
++ * that needs to use both tree types in the same file.
++ */
++
++#include <linux/wavl_types.h>
++
++/* Struct type names: struct rb_node → struct wavl_node, etc. */
++#define rb_node			wavl_node
++#define rb_root			wavl_root
++#define rb_root_cached		wavl_root_cached
++
++/* Struct member names */
++#define __rb_parent_color	__wavl_parent
++#define rb_left			wavl_left
++#define rb_right		wavl_right
++#define rb_leftmost		wavl_leftmost
++
++/* Initializers */
++#define RB_ROOT			WAVL_ROOT
++#define RB_ROOT_CACHED		WAVL_ROOT_CACHED
++
++#endif	/* _LINUX_RBTREE_WAVL_TYPES_H */
+diff --git a/include/linux/wavl.h b/include/linux/wavl.h
+new file mode 100644
+index 0000000000..c058639b61
+--- /dev/null
++++ b/include/linux/wavl.h
+@@ -0,0 +1,132 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Weak AVL (WAVL) Trees
++ *
++ * Drop-in alternative to rbtrees with the same API shape.
++ * See Documentation/core-api/rbtree.rst for the rbtree docs
++ * whose conventions this file mirrors.
++ */
++
++#ifndef _LINUX_WAVL_H
++#define _LINUX_WAVL_H
++
++#include <linux/container_of.h>
++#include <linux/wavl_types.h>
++#include <linux/stddef.h>
++
++#define wavl_parent(n)		((struct wavl_node *)((n)->__wavl_parent))
++
++#define wavl_entry(ptr, type, member) container_of(ptr, type, member)
++
++#define WAVL_EMPTY_ROOT(root)	(READ_ONCE((root)->wavl_node) == NULL)
++
++#define WAVL_EMPTY_NODE(node) \
++	((node)->__wavl_parent == (unsigned long)(node))
++#define WAVL_CLEAR_NODE(node) \
++	((node)->__wavl_parent = (unsigned long)(node))
++
++extern void wavl_insert_rebalance(struct wavl_node *, struct wavl_root *);
++extern void wavl_erase(struct wavl_node *, struct wavl_root *);
++
++extern struct wavl_node *wavl_next(const struct wavl_node *);
++extern struct wavl_node *wavl_prev(const struct wavl_node *);
++extern struct wavl_node *wavl_first(const struct wavl_root *);
++extern struct wavl_node *wavl_last(const struct wavl_root *);
++
++extern struct wavl_node *wavl_first_postorder(const struct wavl_root *);
++extern struct wavl_node *wavl_next_postorder(const struct wavl_node *);
++
++extern void wavl_replace_node(struct wavl_node *victim, struct wavl_node *new,
++			      struct wavl_root *root);
++
++static inline void wavl_link_node(struct wavl_node *node,
++				  struct wavl_node *parent,
++				  struct wavl_node **link)
++{
++	node->__wavl_parent = (unsigned long)parent;
++	node->wavl_left = node->wavl_right = NULL;
++	node->rank = 0;
++
++	*link = node;
++}
++
++#define wavl_entry_safe(ptr, type, member) \
++	({ typeof(ptr) ____ptr = (ptr); \
++	   ____ptr ? wavl_entry(____ptr, type, member) : NULL; \
++	})
++
++#define rbtree_postorder_for_each_entry_safe_wavl(pos, n, root, field) \
++	for (pos = wavl_entry_safe(wavl_first_postorder(root), \
++				   typeof(*pos), field); \
++	     pos && ({ n = wavl_entry_safe( \
++			wavl_next_postorder(&pos->field), \
++			typeof(*pos), field); 1; }); \
++	     pos = n)
++
++/* Same as wavl_first(), but O(1) */
++#define wavl_first_cached(root) (root)->wavl_leftmost
++
++static inline void wavl_insert_rebalance_cached(struct wavl_node *node,
++						struct wavl_root_cached *root,
++						bool leftmost)
++{
++	if (leftmost)
++		root->wavl_leftmost = node;
++	wavl_insert_rebalance(node, &root->wavl_root);
++}
++
++static inline struct wavl_node *
++wavl_erase_cached(struct wavl_node *node, struct wavl_root_cached *root)
++{
++	struct wavl_node *leftmost = NULL;
++
++	if (root->wavl_leftmost == node)
++		leftmost = root->wavl_leftmost = wavl_next(node);
++
++	wavl_erase(node, &root->wavl_root);
++
++	return leftmost;
++}
++
++static inline void wavl_replace_node_cached(struct wavl_node *victim,
++					    struct wavl_node *new,
++					    struct wavl_root_cached *root)
++{
++	if (root->wavl_leftmost == victim)
++		root->wavl_leftmost = new;
++	wavl_replace_node(victim, new, &root->wavl_root);
++}
++
++/**
++ * wavl_add_cached() - insert @node into the leftmost cached tree @tree
++ * @node: node to insert
++ * @tree: leftmost cached tree to insert @node into
++ * @less: operator defining the (partial) node order
++ *
++ * Returns @node when it is the new leftmost, or NULL.
++ */
++static __always_inline struct wavl_node *
++wavl_add_cached(struct wavl_node *node, struct wavl_root_cached *tree,
++		bool (*less)(struct wavl_node *, const struct wavl_node *))
++{
++	struct wavl_node **link = &tree->wavl_root.wavl_node;
++	struct wavl_node *parent = NULL;
++	bool leftmost = true;
++
++	while (*link) {
++		parent = *link;
++		if (less(node, parent)) {
++			link = &parent->wavl_left;
++		} else {
++			link = &parent->wavl_right;
++			leftmost = false;
++		}
++	}
++
++	wavl_link_node(node, parent, link);
++	wavl_insert_rebalance_cached(node, tree, leftmost);
++
++	return leftmost ? node : NULL;
++}
++
++#endif	/* _LINUX_WAVL_H */
+diff --git a/include/linux/wavl_augmented.h b/include/linux/wavl_augmented.h
+new file mode 100644
+index 0000000000..100c7ca409
+--- /dev/null
++++ b/include/linux/wavl_augmented.h
+@@ -0,0 +1,263 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Weak AVL (WAVL) Trees — augmented tree support.
++ *
++ * Mirrors include/linux/rbtree_augmented.h.
++ * Only struct wavl_augment_callbacks, wavl_insert_augmented(),
++ * wavl_erase_augmented(), and the WAVL_DECLARE_CALLBACKS* macros
++ * are public API.  Everything else is implementation detail.
++ */
++
++#ifndef _LINUX_WAVL_AUGMENTED_H
++#define _LINUX_WAVL_AUGMENTED_H
++
++#include <linux/compiler.h>
++#include <linux/wavl.h>
++
++struct wavl_augment_callbacks {
++	void (*propagate)(struct wavl_node *node, struct wavl_node *stop);
++	void (*copy)(struct wavl_node *old, struct wavl_node *new);
++	void (*rotate)(struct wavl_node *old, struct wavl_node *new);
++};
++
++extern void __wavl_insert_augmented(struct wavl_node *node,
++	struct wavl_root *root,
++	void (*augment_rotate)(struct wavl_node *old, struct wavl_node *new));
++
++static inline void
++wavl_insert_augmented(struct wavl_node *node, struct wavl_root *root,
++		      const struct wavl_augment_callbacks *augment)
++{
++	__wavl_insert_augmented(node, root, augment->rotate);
++}
++
++static inline void
++wavl_insert_augmented_cached(struct wavl_node *node,
++			     struct wavl_root_cached *root, bool newleft,
++			     const struct wavl_augment_callbacks *augment)
++{
++	if (newleft)
++		root->wavl_leftmost = node;
++	wavl_insert_augmented(node, &root->wavl_root, augment);
++}
++
++static __always_inline struct wavl_node *
++wavl_add_augmented_cached(struct wavl_node *node,
++			  struct wavl_root_cached *tree,
++			  bool (*less)(struct wavl_node *,
++				       const struct wavl_node *),
++			  const struct wavl_augment_callbacks *augment)
++{
++	struct wavl_node **link = &tree->wavl_root.wavl_node;
++	struct wavl_node *parent = NULL;
++	bool leftmost = true;
++
++	while (*link) {
++		parent = *link;
++		if (less(node, parent)) {
++			link = &parent->wavl_left;
++		} else {
++			link = &parent->wavl_right;
++			leftmost = false;
++		}
++	}
++
++	wavl_link_node(node, parent, link);
++	augment->propagate(parent, NULL);
++	wavl_insert_augmented_cached(node, tree, leftmost, augment);
++
++	return leftmost ? node : NULL;
++}
++
++/*
++ * Template for declaring augmented WAVL callbacks (generic case).
++ * Mirrors RB_DECLARE_CALLBACKS.
++ */
++#define WAVL_DECLARE_CALLBACKS(WSTATIC, WNAME,				\
++			       WSTRUCT, WFIELD, WAUGMENTED, WCOMPUTE)	\
++static inline void							\
++WNAME ## _propagate(struct wavl_node *wavl, struct wavl_node *stop)	\
++{									\
++	while (wavl != stop) {						\
++		WSTRUCT *node = wavl_entry(wavl, WSTRUCT, WFIELD);	\
++		if (WCOMPUTE(node, true))				\
++			break;						\
++		wavl = wavl_parent(&node->WFIELD);			\
++	}								\
++}									\
++static inline void							\
++WNAME ## _copy(struct wavl_node *wavl_old, struct wavl_node *wavl_new)	\
++{									\
++	WSTRUCT *old = wavl_entry(wavl_old, WSTRUCT, WFIELD);		\
++	WSTRUCT *new = wavl_entry(wavl_new, WSTRUCT, WFIELD);		\
++	new->WAUGMENTED = old->WAUGMENTED;				\
++}									\
++static void								\
++WNAME ## _rotate(struct wavl_node *wavl_old, struct wavl_node *wavl_new)\
++{									\
++	WSTRUCT *old = wavl_entry(wavl_old, WSTRUCT, WFIELD);		\
++	WSTRUCT *new = wavl_entry(wavl_new, WSTRUCT, WFIELD);		\
++	new->WAUGMENTED = old->WAUGMENTED;				\
++	WCOMPUTE(old, false);						\
++}									\
++WSTATIC const struct wavl_augment_callbacks WNAME = {			\
++	.propagate = WNAME ## _propagate,				\
++	.copy = WNAME ## _copy,						\
++	.rotate = WNAME ## _rotate					\
++};
++
++/*
++ * Template for max-tracking augmented WAVL callbacks.
++ * Mirrors RB_DECLARE_CALLBACKS_MAX.
++ */
++#define WAVL_DECLARE_CALLBACKS_MAX(WSTATIC, WNAME, WSTRUCT, WFIELD,	      \
++				   WTYPE, WAUGMENTED, WCOMPUTE)		      \
++static inline bool WNAME ## _compute_max(WSTRUCT *node, bool exit)	      \
++{									      \
++	WSTRUCT *child;							      \
++	WTYPE max = WCOMPUTE(node);					      \
++	if (node->WFIELD.wavl_left) {					      \
++		child = wavl_entry(node->WFIELD.wavl_left, WSTRUCT, WFIELD);  \
++		if (child->WAUGMENTED > max)				      \
++			max = child->WAUGMENTED;			      \
++	}								      \
++	if (node->WFIELD.wavl_right) {					      \
++		child = wavl_entry(node->WFIELD.wavl_right, WSTRUCT, WFIELD); \
++		if (child->WAUGMENTED > max)				      \
++			max = child->WAUGMENTED;			      \
++	}								      \
++	if (exit && node->WAUGMENTED == max)				      \
++		return true;						      \
++	node->WAUGMENTED = max;						      \
++	return false;							      \
++}									      \
++WAVL_DECLARE_CALLBACKS(WSTATIC, WNAME,					      \
++		       WSTRUCT, WFIELD, WAUGMENTED,			      \
++		       WNAME ## _compute_max)
++
++/* ---- Implementation details below ---- */
++
++static inline void wavl_set_parent(struct wavl_node *node,
++				   struct wavl_node *parent)
++{
++	node->__wavl_parent = (unsigned long)parent;
++}
++
++static inline void
++__wavl_change_child(struct wavl_node *old, struct wavl_node *new,
++		    struct wavl_node *parent, struct wavl_root *root)
++{
++	if (parent) {
++		if (parent->wavl_left == old)
++			WRITE_ONCE(parent->wavl_left, new);
++		else
++			WRITE_ONCE(parent->wavl_right, new);
++	} else {
++		WRITE_ONCE(root->wavl_node, new);
++	}
++}
++
++extern void __wavl_erase_rebalance(struct wavl_node *parent,
++	struct wavl_root *root,
++	void (*augment_rotate)(struct wavl_node *old, struct wavl_node *new));
++
++static __always_inline struct wavl_node *
++__wavl_erase_augmented(struct wavl_node *node, struct wavl_root *root,
++		       const struct wavl_augment_callbacks *augment)
++{
++	struct wavl_node *child = node->wavl_right;
++	struct wavl_node *tmp = node->wavl_left;
++	struct wavl_node *parent, *rebalance;
++
++	if (!tmp) {
++		/*
++		 * Case 1: node has no left child.
++		 * Replace node with its right child (may be NULL).
++		 */
++		parent = wavl_parent(node);
++		__wavl_change_child(node, child, parent, root);
++		if (child)
++			wavl_set_parent(child, parent);
++		rebalance = parent;
++		tmp = parent;
++	} else if (!child) {
++		/* Case 1b: node has no right child. */
++		parent = wavl_parent(node);
++		__wavl_change_child(node, tmp, parent, root);
++		wavl_set_parent(tmp, parent);
++		rebalance = parent;
++		tmp = parent;
++	} else {
++		struct wavl_node *successor = child, *child2;
++
++		tmp = child->wavl_left;
++		if (!tmp) {
++			/*
++			 * Case 2: node's successor is its right child.
++			 */
++			parent = successor;
++			child2 = successor->wavl_right;
++
++			augment->copy(node, successor);
++		} else {
++			/*
++			 * Case 3: node's successor is leftmost under
++			 * node's right child subtree.
++			 */
++			do {
++				parent = successor;
++				successor = tmp;
++				tmp = tmp->wavl_left;
++			} while (tmp);
++			child2 = successor->wavl_right;
++			WRITE_ONCE(parent->wavl_left, child2);
++			WRITE_ONCE(successor->wavl_right, child);
++			wavl_set_parent(child, successor);
++
++			augment->copy(node, successor);
++			augment->propagate(parent, successor);
++		}
++
++		tmp = node->wavl_left;
++		WRITE_ONCE(successor->wavl_left, tmp);
++		wavl_set_parent(tmp, successor);
++
++		{
++			struct wavl_node *nparent = wavl_parent(node);
++
++			__wavl_change_child(node, successor, nparent, root);
++			wavl_set_parent(successor, nparent);
++		}
++
++		if (child2)
++			wavl_set_parent(child2, parent);
++		successor->rank = node->rank;
++		rebalance = parent;
++		tmp = successor;
++	}
++
++	augment->propagate(tmp, NULL);
++	return rebalance;
++}
++
++static __always_inline void
++wavl_erase_augmented(struct wavl_node *node, struct wavl_root *root,
++		     const struct wavl_augment_callbacks *augment)
++{
++	struct wavl_node *rebalance = __wavl_erase_augmented(node, root,
++							     augment);
++	if (rebalance)
++		__wavl_erase_rebalance(rebalance, root, augment->rotate);
++}
++
++static __always_inline void
++wavl_erase_augmented_cached(struct wavl_node *node,
++			    struct wavl_root_cached *root,
++			    const struct wavl_augment_callbacks *augment)
++{
++	if (root->wavl_leftmost == node)
++		root->wavl_leftmost = wavl_next(node);
++	wavl_erase_augmented(node, &root->wavl_root, augment);
++}
++
++#endif	/* _LINUX_WAVL_AUGMENTED_H */
+diff --git a/include/linux/wavl_types.h b/include/linux/wavl_types.h
+new file mode 100644
+index 0000000000..89a14baadb
+--- /dev/null
++++ b/include/linux/wavl_types.h
+@@ -0,0 +1,33 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef _LINUX_WAVL_TYPES_H
++#define _LINUX_WAVL_TYPES_H
++
++/*
++ * Weak AVL (WAVL) Trees — rank-balanced binary search trees.
++ *
++ * Compared to red-black trees, WAVL trees perform at most 2 rotations
++ * per insert/delete while maintaining O(log n) height.  Balance is
++ * tracked via integer ranks: every parent-child rank difference is
++ * 1 or 2, leaves have rank 0, and NULL has conceptual rank -1.
++ */
++
++struct wavl_node {
++	unsigned long __wavl_parent;
++	struct wavl_node *wavl_right;
++	struct wavl_node *wavl_left;
++	int rank;
++} __attribute__((aligned(sizeof(long))));
++
++struct wavl_root {
++	struct wavl_node *wavl_node;
++};
++
++struct wavl_root_cached {
++	struct wavl_root wavl_root;
++	struct wavl_node *wavl_leftmost;
++};
++
++#define WAVL_ROOT (struct wavl_root) { NULL, }
++#define WAVL_ROOT_CACHED (struct wavl_root_cached) { {NULL, }, NULL }
++
++#endif
+diff --git a/lib/Makefile b/lib/Makefile
+index 1ab2c4be3b..ec11dc1123 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -34,7 +34,7 @@ CFLAGS_string.o += -fno-stack-protector
+ endif
+ 
+ lib-y := ctype.o string.o vsprintf.o cmdline.o \
+-	 rbtree.o radix-tree.o timerqueue.o xarray.o \
++	 rbtree.o wavl.o radix-tree.o timerqueue.o xarray.o \
+ 	 maple_tree.o idr.o extable.o irq_regs.o argv_split.o \
+ 	 flex_proportions.o ratelimit.o \
+ 	 is_single_threaded.o plist.o decompress.o kobject_uevent.o \
+diff --git a/lib/wavl.c b/lib/wavl.c
+new file mode 100644
+index 0000000000..226d6c2570
+--- /dev/null
++++ b/lib/wavl.c
+@@ -0,0 +1,553 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Weak AVL (WAVL) Trees
++ *
++ * WAVL invariants:
++ *   - Every node carries a non-negative integer rank.
++ *   - Leaf rank = 0.  NULL (external) rank = -1.
++ *   - Parent-child rank difference is always 1 or 2.
++ *
++ * Insert: promote (rank++) up the spine while (0,1); at most 1
++ *   rotation (single or double) to finish.
++ * Delete: demote down the spine while (2,2)-leaf or (3,2)/(3,1 with
++ *   2,2-sibling); at most 1 rotation to finish.
++ */
++
++#include <linux/wavl_augmented.h>
++#include <linux/export.h>
++
++/* ----- helpers ----- */
++
++static inline int wavl_rank_of(struct wavl_node *n)
++{
++	return n ? n->rank : -1;
++}
++
++static inline int wavl_rank_diff(struct wavl_node *parent,
++				 struct wavl_node *child)
++{
++	return parent->rank - wavl_rank_of(child);
++}
++
++/*
++ * Rotation helper: old is replaced by new in the tree, and old
++ * becomes a child of new.  Parent pointer of new is set to old's
++ * former parent.
++ */
++static inline void
++__wavl_rotate_set_parents(struct wavl_node *old, struct wavl_node *new,
++			  struct wavl_root *root)
++{
++	struct wavl_node *parent = wavl_parent(old);
++
++	wavl_set_parent(new, parent);
++	wavl_set_parent(old, new);
++	__wavl_change_child(old, new, parent, root);
++}
++
++/* ----- insert rebalancing ----- */
++
++/*
++ * After linking a new rank-0 leaf with wavl_link_node(), call this to
++ * restore WAVL balance.
++ *
++ * Algorithm:
++ *   While the new node creates a 0-child (rank diff 0):
++ *     - If sibling has rank diff 1 → promote parent, continue up.
++ *     - If sibling has rank diff 2 → rotate (single or double), done.
++ */
++static __always_inline void
++__wavl_insert(struct wavl_node *node, struct wavl_root *root,
++	      void (*augment_rotate)(struct wavl_node *old,
++				     struct wavl_node *new))
++{
++	struct wavl_node *parent = wavl_parent(node), *tmp;
++
++	/*
++	 * Promote loop: while parent is a (0,1) node, promote it so
++	 * rank differences become (1,2).  This may cascade upward.
++	 */
++	while (parent) {
++		int ld = wavl_rank_diff(parent, parent->wavl_left);
++		int rd = wavl_rank_diff(parent, parent->wavl_right);
++
++		if (ld + rd != 1)
++			break;
++
++		parent->rank++;
++		node = parent;
++		parent = wavl_parent(node);
++	}
++
++	if (!parent || wavl_rank_diff(parent, node) != 0)
++		return;
++
++	/*
++	 * Rotation needed: parent is a (0,2) node.
++	 */
++	if (parent->wavl_left == node) {
++		tmp = node->wavl_right;
++		if (!tmp || wavl_rank_diff(node, tmp) == 2) {
++			/*
++			 * Single right rotation at parent.
++			 *
++			 *        P(r)            N(r)
++			 *       / \             / \
++			 *     N(r) S(r-2) → .   P(r-1)
++			 *    / \                / \
++			 *   .   T              T   S
++			 */
++			struct wavl_node *mid = node->wavl_right;
++
++			WRITE_ONCE(parent->wavl_left, mid);
++			WRITE_ONCE(node->wavl_right, parent);
++			if (mid)
++				wavl_set_parent(mid, parent);
++			__wavl_rotate_set_parents(parent, node, root);
++			augment_rotate(parent, node);
++			parent->rank--;
++		} else {
++			/*
++			 * Double rotation: left at node, right at parent.
++			 *
++			 *      P             T
++			 *     / \           / \
++			 *    N   S   →    N     P
++			 *     \          / \   / \
++			 *      T        .   . .   S
++			 */
++			/* tmp == node->wavl_right == T */
++			struct wavl_node *tl = tmp->wavl_left;
++			struct wavl_node *tr = tmp->wavl_right;
++
++			WRITE_ONCE(node->wavl_right, tl);
++			WRITE_ONCE(tmp->wavl_left, node);
++			if (tl)
++				wavl_set_parent(tl, node);
++			wavl_set_parent(node, tmp);
++			augment_rotate(node, tmp);
++
++			WRITE_ONCE(parent->wavl_left, tr);
++			WRITE_ONCE(tmp->wavl_right, parent);
++			if (tr)
++				wavl_set_parent(tr, parent);
++			__wavl_rotate_set_parents(parent, tmp, root);
++			augment_rotate(parent, tmp);
++
++			tmp->rank++;
++			parent->rank--;
++			node->rank--;
++		}
++	} else {
++		/* Symmetric: node is right child */
++		tmp = node->wavl_left;
++		if (!tmp || wavl_rank_diff(node, tmp) == 2) {
++			/* Single left rotation at parent */
++			struct wavl_node *mid = node->wavl_left;
++
++			WRITE_ONCE(parent->wavl_right, mid);
++			WRITE_ONCE(node->wavl_left, parent);
++			if (mid)
++				wavl_set_parent(mid, parent);
++			__wavl_rotate_set_parents(parent, node, root);
++			augment_rotate(parent, node);
++			parent->rank--;
++		} else {
++			/* Double rotation: right at node, left at parent */
++			struct wavl_node *tl = tmp->wavl_left;
++			struct wavl_node *tr = tmp->wavl_right;
++
++			WRITE_ONCE(node->wavl_left, tr);
++			WRITE_ONCE(tmp->wavl_right, node);
++			if (tr)
++				wavl_set_parent(tr, node);
++			wavl_set_parent(node, tmp);
++			augment_rotate(node, tmp);
++
++			WRITE_ONCE(parent->wavl_right, tl);
++			WRITE_ONCE(tmp->wavl_left, parent);
++			if (tl)
++				wavl_set_parent(tl, parent);
++			__wavl_rotate_set_parents(parent, tmp, root);
++			augment_rotate(parent, tmp);
++
++			tmp->rank++;
++			parent->rank--;
++			node->rank--;
++		}
++	}
++}
++
++/* ----- erase rebalancing ----- */
++
++/*
++ * After BST removal (__wavl_erase_augmented), rebalance from @parent
++ * which is the parent of the physically removed node.
++ *
++ * Algorithm:
++ *   1. Fix (2,2)-leaves: demote and continue upward.
++ *   2. Fix 3-children:
++ *      a. (3,2): demote parent, continue.
++ *      b. (3,1) with (2,2)-sibling: double demote, continue.
++ *      c. Otherwise: rotate (single or double), done.
++ */
++static __always_inline void
++____wavl_erase_rebalance(struct wavl_node *parent, struct wavl_root *root,
++	void (*augment_rotate)(struct wavl_node *old, struct wavl_node *new))
++{
++	struct wavl_node *sibling, *tmp;
++
++	while (parent) {
++		struct wavl_node *left = parent->wavl_left;
++		struct wavl_node *right = parent->wavl_right;
++		int ld = wavl_rank_diff(parent, left);
++		int rd = wavl_rank_diff(parent, right);
++
++		/* Valid tree: no violation */
++		if (ld <= 2 && rd <= 2) {
++			/* (2,2)-leaf: demote and check upward */
++			if (ld == 2 && rd == 2 && !left && !right) {
++				parent->rank = 0;
++				parent = wavl_parent(parent);
++				continue;
++			}
++			break;
++		}
++
++		if (ld == 3) {
++			/* Left deficit: sibling is on the right */
++			sibling = right;
++
++			if (rd == 2) {
++				/* (3,2): demote parent */
++				parent->rank--;
++				parent = wavl_parent(parent);
++				continue;
++			}
++
++			/* rd == 1 */
++			{
++				int sl = wavl_rank_diff(sibling,
++							sibling->wavl_left);
++				int sr = wavl_rank_diff(sibling,
++							sibling->wavl_right);
++
++				if (sl == 2 && sr == 2) {
++					/* Double demote */
++					parent->rank--;
++					sibling->rank--;
++					parent = wavl_parent(parent);
++					continue;
++				}
++
++				if (sr == 1) {
++					/*
++					 * Single left rotation at parent.
++					 *
++					 *    P              S
++					 *   / \            / \
++					 *  n   S    →    P   Sr
++					 *     / \       / \
++					 *    Sl  Sr    n   Sl
++					 */
++					tmp = sibling->wavl_left;
++					WRITE_ONCE(parent->wavl_right, tmp);
++					WRITE_ONCE(sibling->wavl_left, parent);
++					if (tmp)
++						wavl_set_parent(tmp, parent);
++					__wavl_rotate_set_parents(parent,
++								  sibling,
++								  root);
++					augment_rotate(parent, sibling);
++					sibling->rank++;
++					if (!parent->wavl_left &&
++					    !parent->wavl_right)
++						parent->rank -= 2;
++					else
++						parent->rank--;
++					break;
++				}
++
++				/* sr == 2 && sl == 1: double rotation */
++				{
++					struct wavl_node *s_left =
++						sibling->wavl_left;
++					struct wavl_node *sll =
++						s_left->wavl_left;
++					struct wavl_node *slr =
++						s_left->wavl_right;
++
++					/* Right rotate at sibling */
++					WRITE_ONCE(sibling->wavl_left, slr);
++					WRITE_ONCE(s_left->wavl_right,
++						   sibling);
++					if (slr)
++						wavl_set_parent(slr, sibling);
++					wavl_set_parent(sibling, s_left);
++					augment_rotate(sibling, s_left);
++
++					/* Left rotate at parent */
++					WRITE_ONCE(parent->wavl_right, sll);
++					WRITE_ONCE(s_left->wavl_left, parent);
++					if (sll)
++						wavl_set_parent(sll, parent);
++					__wavl_rotate_set_parents(parent,
++								  s_left,
++								  root);
++					augment_rotate(parent, s_left);
++
++					parent->rank -= 2;
++					s_left->rank += 2;
++					sibling->rank--;
++					break;
++				}
++			}
++		}
++
++		if (rd == 3) {
++			/* Right deficit: sibling is on the left (symmetric) */
++			sibling = left;
++
++			if (ld == 2) {
++				parent->rank--;
++				parent = wavl_parent(parent);
++				continue;
++			}
++
++			/* ld == 1 */
++			{
++				int sl = wavl_rank_diff(sibling,
++							sibling->wavl_left);
++				int sr = wavl_rank_diff(sibling,
++							sibling->wavl_right);
++
++				if (sl == 2 && sr == 2) {
++					parent->rank--;
++					sibling->rank--;
++					parent = wavl_parent(parent);
++					continue;
++				}
++
++				if (sl == 1) {
++					/* Single right rotation at parent */
++					tmp = sibling->wavl_right;
++					WRITE_ONCE(parent->wavl_left, tmp);
++					WRITE_ONCE(sibling->wavl_right,
++						   parent);
++					if (tmp)
++						wavl_set_parent(tmp, parent);
++					__wavl_rotate_set_parents(parent,
++								  sibling,
++								  root);
++					augment_rotate(parent, sibling);
++					sibling->rank++;
++					if (!parent->wavl_left &&
++					    !parent->wavl_right)
++						parent->rank -= 2;
++					else
++						parent->rank--;
++					break;
++				}
++
++				/* sl == 2 && sr == 1: double rotation */
++				{
++					struct wavl_node *s_right =
++						sibling->wavl_right;
++					struct wavl_node *srl =
++						s_right->wavl_left;
++					struct wavl_node *srr =
++						s_right->wavl_right;
++
++					/* Left rotate at sibling */
++					WRITE_ONCE(sibling->wavl_right, srl);
++					WRITE_ONCE(s_right->wavl_left,
++						   sibling);
++					if (srl)
++						wavl_set_parent(srl, sibling);
++					wavl_set_parent(sibling, s_right);
++					augment_rotate(sibling, s_right);
++
++					/* Right rotate at parent */
++					WRITE_ONCE(parent->wavl_left, srr);
++					WRITE_ONCE(s_right->wavl_right,
++						   parent);
++					if (srr)
++						wavl_set_parent(srr, parent);
++					__wavl_rotate_set_parents(parent,
++								  s_right,
++								  root);
++					augment_rotate(parent, s_right);
++
++					parent->rank -= 2;
++					s_right->rank += 2;
++					sibling->rank--;
++					break;
++				}
++			}
++		}
++
++		break; /* should not be reached */
++	}
++}
++
++/* Non-augmented erase rebalance (exported) */
++void __wavl_erase_rebalance(struct wavl_node *parent, struct wavl_root *root,
++	void (*augment_rotate)(struct wavl_node *old, struct wavl_node *new))
++{
++	____wavl_erase_rebalance(parent, root, augment_rotate);
++}
++EXPORT_SYMBOL(__wavl_erase_rebalance);
++
++/* ----- Non-augmented wrappers ----- */
++
++static inline void dummy_propagate(struct wavl_node *n, struct wavl_node *s) {}
++static inline void dummy_copy(struct wavl_node *o, struct wavl_node *n) {}
++static inline void dummy_rotate(struct wavl_node *o, struct wavl_node *n) {}
++
++static const struct wavl_augment_callbacks dummy_callbacks = {
++	.propagate = dummy_propagate,
++	.copy = dummy_copy,
++	.rotate = dummy_rotate,
++};
++
++void wavl_insert_rebalance(struct wavl_node *node, struct wavl_root *root)
++{
++	__wavl_insert(node, root, dummy_rotate);
++}
++EXPORT_SYMBOL(wavl_insert_rebalance);
++
++void __wavl_insert_augmented(struct wavl_node *node, struct wavl_root *root,
++	void (*augment_rotate)(struct wavl_node *old, struct wavl_node *new))
++{
++	__wavl_insert(node, root, augment_rotate);
++}
++EXPORT_SYMBOL(__wavl_insert_augmented);
++
++void wavl_erase(struct wavl_node *node, struct wavl_root *root)
++{
++	struct wavl_node *rebalance;
++
++	rebalance = __wavl_erase_augmented(node, root, &dummy_callbacks);
++	if (rebalance)
++		____wavl_erase_rebalance(rebalance, root, dummy_rotate);
++}
++EXPORT_SYMBOL(wavl_erase);
++
++/* ----- Iteration ----- */
++
++struct wavl_node *wavl_first(const struct wavl_root *root)
++{
++	struct wavl_node *n = root->wavl_node;
++
++	if (!n)
++		return NULL;
++	while (n->wavl_left)
++		n = n->wavl_left;
++	return n;
++}
++EXPORT_SYMBOL(wavl_first);
++
++struct wavl_node *wavl_last(const struct wavl_root *root)
++{
++	struct wavl_node *n = root->wavl_node;
++
++	if (!n)
++		return NULL;
++	while (n->wavl_right)
++		n = n->wavl_right;
++	return n;
++}
++EXPORT_SYMBOL(wavl_last);
++
++struct wavl_node *wavl_next(const struct wavl_node *node)
++{
++	struct wavl_node *parent;
++
++	if (WAVL_EMPTY_NODE(node))
++		return NULL;
++
++	if (node->wavl_right) {
++		node = node->wavl_right;
++		while (node->wavl_left)
++			node = node->wavl_left;
++		return (struct wavl_node *)node;
++	}
++
++	while ((parent = wavl_parent(node)) && node == parent->wavl_right)
++		node = parent;
++
++	return parent;
++}
++EXPORT_SYMBOL(wavl_next);
++
++struct wavl_node *wavl_prev(const struct wavl_node *node)
++{
++	struct wavl_node *parent;
++
++	if (WAVL_EMPTY_NODE(node))
++		return NULL;
++
++	if (node->wavl_left) {
++		node = node->wavl_left;
++		while (node->wavl_right)
++			node = node->wavl_right;
++		return (struct wavl_node *)node;
++	}
++
++	while ((parent = wavl_parent(node)) && node == parent->wavl_left)
++		node = parent;
++
++	return parent;
++}
++EXPORT_SYMBOL(wavl_prev);
++
++void wavl_replace_node(struct wavl_node *victim, struct wavl_node *new,
++		       struct wavl_root *root)
++{
++	struct wavl_node *parent = wavl_parent(victim);
++
++	*new = *victim;
++
++	if (victim->wavl_left)
++		wavl_set_parent(victim->wavl_left, new);
++	if (victim->wavl_right)
++		wavl_set_parent(victim->wavl_right, new);
++	__wavl_change_child(victim, new, parent, root);
++}
++EXPORT_SYMBOL(wavl_replace_node);
++
++static struct wavl_node *wavl_left_deepest_node(const struct wavl_node *node)
++{
++	for (;;) {
++		if (node->wavl_left)
++			node = node->wavl_left;
++		else if (node->wavl_right)
++			node = node->wavl_right;
++		else
++			return (struct wavl_node *)node;
++	}
++}
++
++struct wavl_node *wavl_next_postorder(const struct wavl_node *node)
++{
++	const struct wavl_node *parent;
++
++	if (!node)
++		return NULL;
++	parent = wavl_parent(node);
++
++	if (parent && node == parent->wavl_left && parent->wavl_right)
++		return wavl_left_deepest_node(parent->wavl_right);
++	else
++		return (struct wavl_node *)parent;
++}
++EXPORT_SYMBOL(wavl_next_postorder);
++
++struct wavl_node *wavl_first_postorder(const struct wavl_root *root)
++{
++	if (!root->wavl_node)
++		return NULL;
++
++	return wavl_left_deepest_node(root->wavl_node);
++}
++EXPORT_SYMBOL(wavl_first_postorder);
+-- 
+2.34.1
