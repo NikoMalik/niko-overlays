@@ -20,7 +20,7 @@ DESCRIPTION="A fast, lightweight and minimalistic Wayland terminal emulator"
 HOMEPAGE="https://codeberg.org/dnkl/foot"
 LICENSE="MIT"
 SLOT="0"
-IUSE="+grapheme-clustering  pgo lto +mimalloc"
+IUSE="+grapheme-clustering  pgo lto "
 
 CDEPEND="
 	dev-libs/wayland
@@ -37,7 +37,6 @@ CDEPEND="
 DEPEND="
 	${CDEPEND}
 	dev-libs/tllist
-	mimalloc? ( dev-libs/mimalloc:= )
 
 "
 RDEPEND="
@@ -82,7 +81,6 @@ pkg_setup() {
 
 src_prepare() {
 	eapply "${FILESDIR}/rss.patch"
-	eapply "${FILESDIR}/mimalloc.patch"
 	eapply "${FILESDIR}/disable-warn-colors.patch"
 	default
 	python_fix_shebang ./scripts
@@ -98,7 +96,6 @@ src_configure() {
 	local emesonargs=(
 		-Dime=true
 		$(meson_feature grapheme-clustering)
-		$(meson_feature mimalloc)
 		-Dterminfo=disabled
 		-Dthemes=true
 	)
@@ -107,9 +104,9 @@ src_configure() {
 	fi
 	if use pgo; then
 		emesonargs+=( -Db_pgo=generate )
-	fi	
+	fi
 
-	
+
 	meson_src_configure
 }
 
