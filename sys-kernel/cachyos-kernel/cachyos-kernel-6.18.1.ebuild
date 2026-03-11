@@ -827,7 +827,6 @@ cachy_use_config() {
 	einfo "SLAB_RANDOM DISABLED"
 
     kconf set CPU_CPU_FREQ
-	kconf set CPU_FREQ_GOV_SCHEDUTIL
 	kconf set CPU_FREQ_GOV_REFLEX
 	kconf unset SHUFFLE_PAGE_ALLOCATOR
 	kconf set PER_VMA_LOCK
@@ -948,7 +947,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-ext4.patch"
 	eapply "${FILESDIR}/6.18.1-elf-optimize.patch"
 	eapply "${FILESDIR}/6.18.1-mem_page.patch"
-	# eapply "${FILESDIR}/6.18.1-sched-limit.patch"
+	eapply "${FILESDIR}/6.18.1-sched-limit.patch"
 	eapply "${FILESDIR}/6.18.1-udp-inline.patch"
 	eapply "${FILESDIR}/6.18.1-readdir-hint.patch"
 	eapply "${FILESDIR}/6.18.1-poc-selector.patch"
@@ -983,6 +982,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-wavl-avl.patch"
 	eapply "${FILESDIR}/6.18.1-prefer-percpu-wakeup.patch"
 	eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
+	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	einfo "Applying local patches"
 
 
