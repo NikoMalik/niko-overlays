@@ -54,7 +54,7 @@ index d90b290aa..c8983d733 100644
  
  /*
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 65d771ece..87efc70fc 100644
+index 65d771ece..a23ab13f9 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
 @@ -7685,10 +7685,13 @@ static inline bool is_idle_core(int cpu)
@@ -93,7 +93,7 @@ index 65d771ece..87efc70fc 100644
  	/*
  	 * On asymmetric system, update task utilization because we will check
  	 * that the task fits with CPU's capacity.
-@@ -8777,7 +8785,17 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
+@@ -8777,7 +8785,18 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
  		new_cpu = sched_balance_find_dst_cpu(sd, p, cpu, prev_cpu, sd_flag);
  	} else if (wake_flags & WF_TTWU) { /* XXX always ? */
  		/* Fast path */
@@ -105,10 +105,12 @@ index 65d771ece..87efc70fc 100644
 +
 +#else /* !CONFIG_SCHED_SMT: */
  		new_cpu = select_idle_sibling(p, prev_cpu, new_cpu, sync);
++#endif
 +
 +
 +
  	}
  	rcu_read_unlock();
+ 
  
 
