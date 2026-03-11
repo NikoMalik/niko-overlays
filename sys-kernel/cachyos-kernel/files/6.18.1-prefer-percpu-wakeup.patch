@@ -115,11 +115,11 @@ index 65d771ece..87efc70fc 100644
  		this_rq->next_balance = next_balance;
  
  	if (pulled_task) {
-+		this_rq->idle_stamp = 0;
++-		this_rq->idle_stamp = 0;
  
  	} else {
--		this_rq->idle_stamp = 0;
-+		this_rq->idle_stamp = idle_stamp;
+-+		this_rq->idle_stamp = 0;
++-		this_rq->idle_stamp = idle_stamp;
  		nohz_newidle_balance(this_rq);
  	}
  
