@@ -1,8 +1,8 @@
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index a48dbcf3e..fece3fc7a 100644
+index d90b290aa..7a91b58f8 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -2080,6 +2080,23 @@ unsigned long get_wchan(struct task_struct *p)
+@@ -2072,6 +2072,23 @@ unsigned long get_wchan(struct task_struct *p)
  	return ip;
  }
  
@@ -26,7 +26,7 @@ index a48dbcf3e..fece3fc7a 100644
  void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
  {
  	if (!(flags & ENQUEUE_NOCLOCK))
-@@ -2101,6 +2118,9 @@ void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
+@@ -2093,6 +2110,9 @@ void enqueue_task(struct rq *rq, struct task_struct *p, int flags)
  
  	if (sched_core_enabled(rq))
  		sched_core_enqueue(rq, p);
@@ -36,7 +36,7 @@ index a48dbcf3e..fece3fc7a 100644
  }
  
  /*
-@@ -3721,17 +3741,6 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags,
+@@ -3713,17 +3733,6 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags,
  		rq_repin_lock(rq, rf);
  	}
  
@@ -55,110 +55,26 @@ index a48dbcf3e..fece3fc7a 100644
  
  /*
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index f0f211ed3..24bb38a7a 100644
+index 65d771ece..ad1504aa9 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
-@@ -1106,10 +1106,31 @@ static bool update_deadline(struct cfs_rq *cfs_rq, struct sched_entity *se)
- 
- #include "pelt.h"
- 
--static int select_idle_sibling(struct task_struct *p, int prev_cpu, int cpu);
-+static int select_idle_sibling(struct task_struct *p, int prev_cpu, int cpu,int sync);
- static unsigned long task_h_load(struct task_struct *p);
- static unsigned long capacity_of(int cpu);
+@@ -253,6 +253,11 @@ void __init sched_init_granularity(void)
+ #define WMULT_CONST	(~0U)
+ #define WMULT_SHIFT	32
  
 +
 +
-+/*
-+ * Return true if all the CPUs in the SMT core where @cpu belongs are idle,
-+ * false otherwise.
-+ */
-+static inline bool is_idle_core(int cpu)
-+{
-+	int sibling;
-+
-+	if (!sched_smt_active())
-+		return (available_idle_cpu(cpu) || sched_idle_cpu(cpu));
-+
-+	for_each_cpu(sibling, cpu_smt_mask(cpu))
-+		if (!available_idle_cpu(sibling) && !sched_idle_cpu(sibling))
-+			return false;
-+
-+	return true;
-+}
 +
 +
- /* Give new sched_entity start runnable values to heavy its load in infant time */
- void init_entity_runnable_average(struct sched_entity *se)
++
+ static void __update_inv_weight(struct load_weight *lw)
  {
-@@ -7899,13 +7920,28 @@ static inline bool asym_fits_cpu(unsigned long util,
- /*
-  * Try and locate an idle core/thread in the LLC cache domain.
-  */
--static int select_idle_sibling(struct task_struct *p, int prev, int target)
-+static int select_idle_sibling(struct task_struct *p, int prev, int target,int sync)
- {
- 	bool has_idle_core = false;
- 	struct sched_domain *sd;
- 	unsigned long task_util, util_min, util_max;
- 	int i, recent_used_cpu, prev_aff = -1;
- 
-+	/* Check a recently used CPU as a potential idle candidate: */
-+	recent_used_cpu = p->recent_used_cpu;
-+	p->recent_used_cpu = prev;
-+	if (recent_used_cpu != prev &&
-+	    recent_used_cpu != target &&
-+	    cpus_share_cache(recent_used_cpu, target) &&
-+	    is_idle_core(recent_used_cpu) &&
-+	    cpumask_test_cpu(recent_used_cpu, p->cpus_ptr)) {
-+		return recent_used_cpu;
-+	} else {
-+		recent_used_cpu = -1;
-+	}
-+
-+
-+
- 	/*
- 	 * On asymmetric system, update task utilization because we will check
- 	 * that the task fits with CPU's capacity.
-@@ -7922,7 +7958,7 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
- 	 */
- 	lockdep_assert_irqs_disabled();
- 
--	if ((available_idle_cpu(target) || sched_idle_cpu(target)) &&
-+	if (sync && is_idle_core(target) &&
- 	    asym_fits_cpu(task_util, util_min, util_max, target))
- 		return target;
- 
-@@ -7956,23 +7992,6 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
- 		return prev;
- 	}
- 
--	/* Check a recently used CPU as a potential idle candidate: */
--	recent_used_cpu = p->recent_used_cpu;
--	p->recent_used_cpu = prev;
--	if (recent_used_cpu != prev &&
--	    recent_used_cpu != target &&
--	    cpus_share_cache(recent_used_cpu, target) &&
--	    (available_idle_cpu(recent_used_cpu) || sched_idle_cpu(recent_used_cpu)) &&
--	    cpumask_test_cpu(recent_used_cpu, p->cpus_ptr) &&
--	    asym_fits_cpu(task_util, util_min, util_max, recent_used_cpu)) {
--
--		if (!static_branch_unlikely(&sched_cluster_active) ||
--		    cpus_share_resources(recent_used_cpu, target))
--			return recent_used_cpu;
--
--	} else {
--		recent_used_cpu = -1;
--	}
- 
- 	/*
- 	 * For asymmetric CPU capacity systems, our domain of interest is
-@@ -8707,7 +8726,15 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
+ 	unsigned long w;
+@@ -8777,7 +8782,15 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
  		new_cpu = sched_balance_find_dst_cpu(sd, p, cpu, prev_cpu, sd_flag);
  	} else if (wake_flags & WF_TTWU) { /* XXX always ? */
  		/* Fast path */
--		new_cpu = select_idle_sibling(p, prev_cpu, new_cpu);
+-		new_cpu = select_idle_sibling(p, prev_cpu, new_cpu, sync);
 +		/*
 +		 * If the previous CPU is an idle core, retain the same for
 +		 * cache locality. Otherwise, search for an idle sibling.
@@ -170,47 +86,5 @@ index f0f211ed3..24bb38a7a 100644
 +
  	}
  	rcu_read_unlock();
- 
-@@ -10316,7 +10343,7 @@ static bool sched_use_asym_prio(struct sched_domain *sd, int cpu)
- 	if (!sched_smt_active())
- 		return true;
- 
--	return sd->flags & SD_SHARE_CPUCAPACITY || is_core_idle(cpu);
-+	return sd->flags & SD_SHARE_CPUCAPACITY || is_idle_core(cpu);
- }
- 
- static inline bool sched_asym(struct sched_domain *sd, int dst_cpu, int src_cpu)
-@@ -12888,6 +12915,7 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
- 	u64 t0, t1, curr_cost = 0;
- 	struct sched_domain *sd;
- 	int pulled_task = 0;
-+	u64 idle_stamp;
- 
- 	update_misfit_status(NULL, this_rq);
- 
-@@ -12903,7 +12931,8 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
- 	 * for CPU_NEWLY_IDLE, such that we measure the this duration
- 	 * as idle time.
- 	 */
--	this_rq->idle_stamp = rq_clock(this_rq);
-+	idle_stamp = rq_clock(this_rq);
-+
- 
- 	/*
- 	 * Do not pull tasks towards !active CPUs...
-@@ -12999,10 +13028,12 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
- 	if (time_after(this_rq->next_balance, next_balance))
- 		this_rq->next_balance = next_balance;
- 
--	if (pulled_task)
-+	if (pulled_task) {
-+
-+	} else {
- 		this_rq->idle_stamp = 0;
--	else
- 		nohz_newidle_balance(this_rq);
-+	}
- 
- 	rq_repin_lock(this_rq, rf);
  
 
