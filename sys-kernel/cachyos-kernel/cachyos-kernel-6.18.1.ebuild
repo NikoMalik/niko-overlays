@@ -981,6 +981,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-futex-multiply.patch"
 	eapply "${FILESDIR}/6.18.1-reuse-timer.patch"
 	eapply "${FILESDIR}/6.18.1-wavl-avl.patch"
+	eapply "${FILESDIR}/6.18.1-prefer-percpu-wakeup.patch"
 	eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
 	einfo "Applying local patches"
 
