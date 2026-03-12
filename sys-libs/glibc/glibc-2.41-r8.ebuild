@@ -972,14 +972,13 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-mathlto.patch"
 		eapply "${FILESDIR}/glibc-2.41-adaptive_spin.patch"
 		eapply "${FILESDIR}/glibc-2.41-set-vector-width.patch"
-		eapply "${FILESDIR}/glibc-2.41-disable-vectorization-more.patch"
-		eapply "${FILESDIR}/glibc-2.41-pause.patch"
 		eapply "${FILESDIR}/glibc-2.41-nanosleep.patch"
 		eapply "${FILESDIR}/glibc-2.41-madvise-free.patch"
 		eapply "${FILESDIR}/glibc-2.41-large-tcache.patch"
 		eapply "${FILESDIR}/glibc-2.41-memmem.patch"
 		eapply "${FILESDIR}/glibc-2.41-qsort.patch"
 		eapply "${FILESDIR}/glibc-2.41-mcheck.patch"
+		eapply "${FILESDIR}/glibc-2.41-freq-512.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi

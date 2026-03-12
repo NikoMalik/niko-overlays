@@ -1,0 +1,14 @@
+diff --git a/sysdeps/x86_64/dl-hwcaps-subdirs.c b/sysdeps/x86_64/dl-hwcaps-subdirs.c
+index 54c439f6..0819800b 100644
+--- a/sysdeps/x86_64/dl-hwcaps-subdirs.c
++++ b/sysdeps/x86_64/dl-hwcaps-subdirs.c
+@@ -44,7 +44,7 @@ _dl_hwcaps_subdirs_active (void)
+   ++active;
+ 
+   /* x86-64-v4.  */
+-  if (!(isa_level & GNU_PROPERTY_X86_ISA_1_V4))
++  if (!(isa_level & GNU_PROPERTY_X86_ISA_1_V4) || ! CPU_FEATURE_USABLE_P (cpu_features, AMX_TILE))
+     return _dl_hwcaps_subdirs_build_bitmask (subdirs_count, active);
+   ++active;
+ 
+
