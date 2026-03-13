@@ -21,7 +21,7 @@ fi
 
 LICENSE="Apache-2.0 vim"
 SLOT="0"
-IUSE="+nvimpager test +mimalloc"
+IUSE="+nvimpager test"
 
 # Upstream say the test library needs LuaJIT
 # https://github.com/neovim/neovim/blob/91109ffda23d0ce61cec245b1f4ffb99e7591b62/CMakeLists.txt#L377
@@ -53,7 +53,7 @@ DEPEND="${LUA_DEPS}
 	>=dev-libs/libuv-1.50.0:=
 	>=dev-libs/libvterm-0.3.3
 	>=dev-libs/msgpack-3.0.0:=
-	>=dev-libs/tree-sitter-0.25.3:=
+	=dev-libs/tree-sitter-0.26*
 	=dev-libs/tree-sitter-c-0.23*
 	=dev-libs/tree-sitter-lua-0.3*
 	=dev-libs/tree-sitter-markdown-0.4*
@@ -61,7 +61,6 @@ DEPEND="${LUA_DEPS}
 	=dev-libs/tree-sitter-vim-0.5*
 	=dev-libs/tree-sitter-vimdoc-3*
 	>=dev-libs/unibilium-2.1.2:0=
-	mimalloc? ( dev-libs/mimalloc:= )
 "
 RDEPEND="
 	${DEPEND}
@@ -73,6 +72,9 @@ BDEPEND+="
 	)
 "
 
+PATCHES=(
+	"${FILESDIR}/${PN}-0.9.0-cmake_lua_version.patch"
+)
 
 src_prepare() {
 	# Use our system vim dir
@@ -94,16 +96,15 @@ src_configure() {
 		# bug 906019: fix hardcoded usage of ccache
 		-DCACHE_PRG=OFF
 	)
-	use mimalloc && mycmakeargs+=(
-		-DCMAKE_EXE_LINKER_FLAGS="-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
-		-DCMAKE_SHARED_LINKER_FLAGS="-Wl,--whole-archive -lmimalloc -Wl,--no-whole-archive"
-	)
 	cmake_src_configure
 }
 
 src_install() {
 	cmake_src_install
 
+	# install a default configuration file
+	insinto /etc/vim
+	doins "${FILESDIR}"/sysinit.vim
 
 	# symlink tree-sitter parsers
 	dodir /usr/share/nvim/runtime
