@@ -822,12 +822,55 @@ cachy_use_config() {
 	kconf set LRU_GEN
 	einfo "LRU_GEN_ENABLED enabled"
 
+	kconf set NET_RX_BUSY_POLL
+	kconf set BUSY_POLL
+
+	kconf unset DEBUG_MEMORY_INIT
+    kconf unset SHRINKER_DEBUG
+	kconf unset BLK_DEBUG_FS
+    kconf unset MODULE_DEBUGFS
+    kconf unset CMA_DEBUGFS
+    kconf unset NVME_TARGET_DEBUGFS
+    kconf unset VFIO_DEBUGFS
+	kconf unset ATH5K_DEBUG
+    kconf unset ATH9K_COMMON_DEBUG
+    kconf unset ATH9K_DEBUGFS
+    kconf unset ATH10K_DEBUG
+    kconf unset ATH10K_DEBUGFS
+    kconf unset ATH11K_DEBUG
+    kconf unset ATH11K_DEBUGFS
+    kconf unset ATH12K_DEBUG
+    kconf unset ATH12K_DEBUGFS
+    kconf unset IWLWIFI_DEBUG
+    kconf unset IWLWIFI_DEBUGFS
+    kconf unset RTW88_DEBUG
+    kconf unset RTW89_DEBUG
+    kconf unset RTW89_DEBUGMSG
+	kconf unset NETFS_DEBUG
+    kconf unset NFS_DEBUG
+    kconf unset SUNRPC_DEBUG
+    kconf unset CIFS_DEBUG
+    kconf unset DLM_DEBUG
+	kconf unset VIRTIO_DEBUG
+    kconf unset DM_DEBUG
+    kconf unset DM_DEBUG_BLOCK_MANAGER_LOCKING
+    kconf unset MLX4_DEBUG
+    kconf unset DYNAMIC_DEBUG_CORE
+    kconf unset DEBUG_BUGVERBOSE
+	kconf unset SECURITY_DMESG_RESTRICT
+	kconf unset SECURITY_PERF_EVENTS_RESTRICT
+	kconf unset STACKTRACE
+    kconf unset STACKTRACE_BUILD_ID
+    kconf unset USER_STACKTRACE_SUPPORT
+    kconf unset SCSI_IPR_TRACE
+    kconf unset TRACE_GPU_MEM
+    einfo "Disabled tracing debug"
+
+
 	kconf unset SLAB_FREELIST_RANDOM
 	kconf unset SLAB_FREELIST_HARDEN
 	einfo "SLAB_RANDOM DISABLED"
 
-    kconf set CPU_CPU_FREQ
-	kconf set CPU_FREQ_GOV_REFLEX
 	kconf unset SHUFFLE_PAGE_ALLOCATOR
 	kconf set PER_VMA_LOCK
 
