@@ -45,7 +45,7 @@ index 23239b0c0..a197bcb9e 100644
  static struct cpuidle_governor menu_governor = {
  	.name =		"menu",
 -	.rating =	20,
-+	.rating =	18,
++	.rating =	19,
  	.enable =	menu_enable_device,
  	.select =	menu_select,
  	.reflect =	menu_reflect,
@@ -58,7 +58,7 @@ index bfa55c1ea..65fe6856b 100644
  static struct cpuidle_governor teo_governor = {
  	.name =		"teo",
 -	.rating =	19,
-+	.rating =	19,
++	.rating =	20,
  	.enable =	teo_enable_device,
  	.select =	teo_select,
  	.reflect =	teo_reflect,
