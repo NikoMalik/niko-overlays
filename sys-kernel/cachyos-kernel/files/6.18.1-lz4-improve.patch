@@ -27,7 +27,7 @@ index daccd6085..ea80ee143 100644
  		params->level = LZ4_ACCELERATION_DEFAULT;
  
 +	 
-+	drv = kzalloc_obj(drv, GFP_KERNEL);
++	drv = kzalloc(sizeof(*drv), GFP_KERNEL);
 +	if (!drv)
 +		return -ENOMEM;
 +
@@ -65,9 +65,15 @@ index daccd6085..ea80ee143 100644
 +	return 0;
 +}
 +
- static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
+static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
  			struct zcomp_req *req)
- {
+{
+ 	struct lz4_ctx *zctx = ctx->context;
++	struct lz4_drv *drv  = params->drv_data;
+ 	int ret;
+ 
+	if (!zctx->cstrm) {
+
 @@ -78,10 +121,16 @@ static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
  					req->dst_len, params->level,
  					zctx->mem);
