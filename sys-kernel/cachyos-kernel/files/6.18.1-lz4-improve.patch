@@ -1,8 +1,8 @@
 diff --git a/drivers/block/zram/backend_lz4.c b/drivers/block/zram/backend_lz4.c
-index daccd6085..ea80ee143 100644
+index daccd6085..8b975840c 100644
 --- a/drivers/block/zram/backend_lz4.c
 +++ b/drivers/block/zram/backend_lz4.c
-@@ -12,15 +12,36 @@ struct lz4_ctx {
+@@ -12,15 +12,39 @@ struct lz4_ctx {
  	LZ4_stream_t *cstrm;
  };
  
@@ -14,19 +14,21 @@ index daccd6085..ea80ee143 100644
 +	bool base_c_valid;
 +};
 +
++
  static void lz4_release_params(struct zcomp_params *params)
  {
-+	kfree(params->drv_data);
++   kfree(params->drv_data);
 +	params->drv_data = NULL;
++
  }
  
  static int lz4_setup_params(struct zcomp_params *params)
  {
 +	struct lz4_drv *drv;
++
  	if (params->level == ZCOMP_PARAM_NOT_SET)
  		params->level = LZ4_ACCELERATION_DEFAULT;
  
-+	 
 +	drv = kzalloc(sizeof(*drv), GFP_KERNEL);
 +	if (!drv)
 +		return -ENOMEM;
@@ -36,15 +38,16 @@ index daccd6085..ea80ee143 100644
 +
 +	params->drv_data = drv;
 +
++
  	return 0;
  }
  
-@@ -67,6 +88,28 @@ static int lz4_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
+@@ -67,21 +91,52 @@ static int lz4_create(struct zcomp_params *params, struct zcomp_ctx *ctx)
  	return -ENOMEM;
  }
  
 +
-+static int lz4_build_base_cstream(struct zcomp_params *params)
++static inline int lz4_build_base_cstream(struct zcomp_params *params)
 +{
 +	struct lz4_drv *drv = params->drv_data;
 +	int ret;
@@ -65,20 +68,20 @@ index daccd6085..ea80ee143 100644
 +	return 0;
 +}
 +
-static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
++
+ static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
  			struct zcomp_req *req)
-{
+ {
  	struct lz4_ctx *zctx = ctx->context;
-+	struct lz4_drv *drv  = params->drv_data;
  	int ret;
++	struct lz4_drv *drv  = params->drv_data;
++
  
-	if (!zctx->cstrm) {
-
-@@ -78,10 +121,16 @@ static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
+ 	if (!zctx->cstrm) {
+ 		ret = LZ4_compress_fast(req->src, req->dst, req->src_len,
  					req->dst_len, params->level,
  					zctx->mem);
  	} else {
-+
 +		/* rebuild base_cstream when the dictionary changes */
 +		if (!drv->base_c_valid || drv->dict_gen != params->dict_gen) {
 +			ret = lz4_build_base_cstream(params);
@@ -87,6 +90,7 @@ static int lz4_compress(struct zcomp_params *params, struct zcomp_ctx *ctx,
 +		}
 +		memcpy(zctx->cstrm, &drv->base_cstream,
 +		sizeof(*zctx->cstrm));
++
  		/* Cstrm needs to be reset */
 -		ret = LZ4_loadDict(zctx->cstrm, params->dict, params->dict_sz);
 -		if (ret != params->dict_sz)
@@ -107,14 +111,15 @@ index eacfd3f7d..5b7ff9fdd 100644
  		struct deflate_params deflate;
  	};
 diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
-index a43074657..991bdf705 100644
+index a43074657..6f3b8dcf0 100644
 --- a/drivers/block/zram/zram_drv.c
 +++ b/drivers/block/zram/zram_drv.c
-@@ -1292,6 +1292,7 @@ static int comp_params_store(struct zram *zram, u32 prio, s32 level,
+@@ -1292,6 +1292,8 @@ static int comp_params_store(struct zram *zram, u32 prio, s32 level,
  	zram->params[prio].dict_sz = sz;
  	zram->params[prio].level = level;
  	zram->params[prio].deflate.winbits = deflate_params->winbits;
 +	zram->params[prio].dict_gen++;
++
  	return 0;
  }
  
