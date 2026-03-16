@@ -33,7 +33,7 @@ index 0000000000..bae8ceab65
 +
 +/* Default weights: w1=3 (load contribution dominant), w0=w2=w3=1 */
 +u8 sysctl_cambyses_w0 = 1;
-+u8 sysctl_cambyses_w1 = 3;
++u8 sysctl_cambyses_w1 = 2;
 +u8 sysctl_cambyses_w2 = 1;
 +u8 sysctl_cambyses_w3 = 1;
 +
@@ -1390,7 +1390,7 @@ index f0f211ed3..5df14f711 100644
  	lockdep_assert_rq_held(env->src_rq);
  
 +#ifdef CONFIG_SCHED_CAMBYSES
-+	if (static_branch_unlikely(&sched_cambyses_enabled))
++	if (static_branch_likely(&sched_cambyses_enabled))
 +		return detach_one_task_cambyses(env);
 +#endif
 +
@@ -1402,7 +1402,7 @@ index f0f211ed3..5df14f711 100644
  		return 0;
  
 +#ifdef CONFIG_SCHED_CAMBYSES
-+	if (static_branch_unlikely(&sched_cambyses_enabled))
++	if (static_branch_likely(&sched_cambyses_enabled))
 +		return detach_tasks_cambyses(env);
 +#endif
 +
