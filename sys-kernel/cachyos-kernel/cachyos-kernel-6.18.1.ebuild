@@ -558,7 +558,7 @@ cachy_use_config() {
 	fi
 
 	if use lto; then
-		: "${_use_llvm_lto:=thin}"
+		: "${_use_llvm_lto:=full}"
 	else
 		: "${_use_llvm_lto:=none}"
 	fi
@@ -896,6 +896,7 @@ cachy_use_config() {
 	kconf unset SLUB_DEBUG
 	kconf unset DEBUG_MEMORY
 	kconf unset SND_DEBUG
+	kconf set BPF_EVENTS
 
 
 
