@@ -878,11 +878,11 @@ cachy_use_config() {
 	kconf unset DEBUG_WX
 	kconf unset DEBUG_MEMORY_INIT
 	kconf unset SCHEDSTATS
-    kconf unset FTRACE
+    # kconf unset FTRACE  # needed for BPF_EVENTS
     kconf unset FUNCTION_TRACER
     kconf unset STACK_TRACER
     kconf unset SCHED_TRACER
-    kconf unset KPROBES
+    # kconf unset KPROBES  # needed for BPF_EVENTS
     kconf unset PROFILING
     kconf unset NUMA_BALANCING
 
@@ -896,7 +896,7 @@ cachy_use_config() {
 	kconf unset SLUB_DEBUG
 	kconf unset DEBUG_MEMORY
 	kconf unset SND_DEBUG
-	kconf set BPF_EVENTS
+	# BPF_EVENTS will be enabled automatically when FTRACE and KPROBES are enabled
 
 
 
