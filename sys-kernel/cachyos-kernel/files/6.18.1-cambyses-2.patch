@@ -1,16 +1,16 @@
 diff --git a/kernel/sched/cambyses.c b/kernel/sched/cambyses.c
 new file mode 100644
-index 0000000000..703111868e
+index 0000000000..f7cf79100b
 --- /dev/null
 +++ b/kernel/sched/cambyses.c
-@@ -0,0 +1,692 @@
+@@ -0,0 +1,681 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Cambyses — Context-Aware Migration Balancer Yielding Scored Entity Selection
 + *
 + * Scored migration selection for CFS load balancer.
 + * Replaces FIFO selection with a multi-feature scoring function that evaluates
-+ * cache coldness, CPU lightness, voluntary switch ratio, and wakee stability.
++ * cache coldness, load contribution, voluntary switch ratio, and wakee stability.
 + */
 +
 +/*
@@ -26,14 +26,14 @@ index 0000000000..703111868e
 +#define CAMBYSES_PROGNAME "Cambyses Migration Selector"
 +#define CAMBYSES_AUTHOR   "Masahito Suzuki"
 +
-+#define CAMBYSES_VERSION  "0.2.5"
++#define CAMBYSES_VERSION  "0.2.3"
 +
 +/* Runtime toggle — NOP-patched when disabled */
 +DEFINE_STATIC_KEY_TRUE(sched_cambyses);
 +
-+/* Default weights: uniform w0=w1=w2=w3=1 */
++/* Default weights: w1=2 (load contribution dominant), w0=w2=w3=1 */
 +u8 sysctl_cambyses_w0 = 1;
-+u8 sysctl_cambyses_w1 = 1;
++u8 sysctl_cambyses_w1 = 2;
 +u8 sysctl_cambyses_w2 = 1;
 +u8 sysctl_cambyses_w3 = 1;
 +
@@ -139,8 +139,8 @@ index 0000000000..703111868e
 +	/* F0: se.exec_start — same cache line as group_node, but prefetch
 +	 * ensures the line is in-flight before we dereference group_node. */
 +	prefetch(&p->se.exec_start);
-+	/* F1: se.avg.util_avg — separate cache line */
-+	prefetch(&p->se.avg.util_avg);
++	/* F1: se.avg.load_avg (used by task_h_load) — separate cache line */
++	prefetch(&p->se.avg.load_avg);
 +	/* can_migrate_task: cpus_ptr + migration_disabled — separate cache line */
 +	prefetch(&p->cpus_ptr);
 +	/* F2/F3: cached in se.cambyses_f2/f3 (same cache line as group_node)
@@ -151,28 +151,17 @@ index 0000000000..703111868e
 + * score_task_cambyses — compute migration suitability score for a task
 + *
 + * Features (u8, range varies per feature):
-+ *   F0: cache coldness       — log2p1(time since last exec) (higher = colder = cheaper)
-+ *   F1: CPU lightness        — log2p1(1025 - util_avg) (higher = lighter = cheaper)
++ *   F0: cache coldness       — log2p1(time since last exec) (higher = colder = better)
++ *   F1: load contribution    — log2p1(task hierarchical load) (higher = more effective)
 + *   F2: vol switch ratio     — nvcsw/(nvcsw+nivcsw) × 64 (higher = I/O-bound = cheaper)
 + *   F3: wakee penalty        — log2p1(wakee_flips + 1) (higher = riskier)
 + *
-+ * F0+F1+F2 all point in the same direction: prefer migrating lightweight,
-+ * cache-cold, I/O-bound tasks.  F3 is the sole brake: don't migrate
-+ * communication hubs that would cause cross-CPU IPI storms.
-+ *
-+ * F1 uses inverted PELT util_avg: CPU-bound tasks (util≈1024) → F1≈0,
-+ * sleep/wake tasks (util≈50) → F1≈40.  This protects cache-hot CPU-bound
-+ * tasks from migration while preferring lightweight tasks that are cheap
-+ * to move.  Unlike task_h_load, this is independent of nice weight and
-+ * BORE penalty adjustments.
-+ *
-+ * Score range: max ~292, min ~-65 → fits in s16.
++ * Score range: max ~1746, min ~-777 → fits in s16.
 + */
 +static s16 score_task_cambyses(struct task_struct *p, struct lb_env *env)
 +{
-+	unsigned long util = READ_ONCE(p->se.avg.util_avg);
 +	int f0 = log2p1_u64_u8fp2(rq_clock_task(env->src_rq) - p->se.exec_start);
-+	int f1 = log2p1_u64_u8fp2(max(1025UL - min(util, 1024UL), 1UL));
++	int f1 = log2p1_u64_u8fp2(max_t(unsigned long, task_h_load(p), 1));
 +	/* F2/F3: read from Score Shadow cache (same cache line as group_node) */
 +	int f2 = p->se.cambyses_f2;
 +	int f3 = p->se.cambyses_f3;
@@ -696,6 +685,391 @@ index 0000000000..703111868e
 +}
 +late_initcall(sched_cambyses_sysctl_init);
 +#endif /* CONFIG_SYSCTL */
+diff --git a/kernel/sched/cambyses.h b/kernel/sched/cambyses.h
+new file mode 100644
+index 0000000000..d6a0f01c79
+--- /dev/null
++++ b/kernel/sched/cambyses.h
+@@ -0,0 +1,158 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Cambyses — Context-Aware Migration Balancer Yielding Scored Entity Selection
++ *
++ * Scored migration selection for CFS load balancer Pull path.
++ * See IMPLEMENTATION.md for design details.
++ */
++#ifndef _KERNEL_SCHED_CAMBYSES_H
++#define _KERNEL_SCHED_CAMBYSES_H
++
++#include <linux/types.h>
++#include <linux/jump_label.h>
++
++#ifdef CONFIG_SCHED_CAMBYSES
++
++/*
++ * Candidate entry for scored migration selection.
++ * Stored on stack during detach_tasks_cambyses().
++ * Scores are kept in a separate s16 array for SIMD argmax access.
++ *
++ * Size: 8 bytes (pointer only)
++ * Stack usage: 32 candidates = 256 bytes, 8 candidates = 64 bytes
++ */
++struct cambyses_candidate {
++	struct task_struct	*p;
++};
++
++/* Static key for zero-cost runtime disable (NOP patching) */
++extern struct static_key_true sched_cambyses;
++
++/* sysctl tunable weights (0–3, 2bit) */
++extern u8 sysctl_cambyses_w0;	/* cache coldness weight (default: 1) */
++extern u8 sysctl_cambyses_w1;	/* load contribution weight (default: 2) */
++extern u8 sysctl_cambyses_w2;	/* vol switch ratio weight (default: 1) */
++extern u8 sysctl_cambyses_w3;	/* wakee penalty weight (default: 1) */
++
++/*
++ * Score Shadow — cached feature values updated at natural update points.
++ * Called from core.c (__schedule) and fair.c (record_wakee) to maintain
++ * se.cambyses_f2/f3 so Phase 1 scoring avoids 2 DRAM cache-line misses.
++ */
++void cambyses_update_f2(struct task_struct *p);
++void cambyses_update_f3(struct task_struct *p);
++
++/*
++ * SIMD argmax — separate TUs to prevent auto-vectorization contamination.
++ * Each file is compiled with its own ISA flags.
++ *
++ * Three size variants per ISA (8, 16, 32 entries) are exported
++ * unconditionally.  SIMD TUs cannot include sched.h (auto-vectorization
++ * contamination), so they have no access to SCHED_NR_MIGRATE_BREAK.
++ * Instead, cambyses.c (which includes sched.h) selects the correct
++ * variant at compile time via dispatch macros below.
++ *
++ * x86 uses PHMINPOSUW (SSE4.1) for O(1) horizontal argmax per XMM:
++ *   XOR 0x7FFF converts s16-max to u16-min, PHMINPOSUW returns both
++ *   the minimum value and its lane index in one instruction.
++ *   AVX2 always has SSE4.1; SSSE3 path uses it when detected at boot.
++ *
++ * Register usage per variant:
++ *   _32: 4 xmm loads → 4 PHMINPOSUW + 3 comparisons
++ *   _16: 2 xmm loads → 2 PHMINPOSUW + 1 comparison
++ *    _8: 1 xmm load  → 1 PHMINPOSUW (direct result)
++ */
++#ifdef CONFIG_SCHED_CAMBYSES_SIMD
++
++/*
++ * Scores array size for SIMD argmax — rounded up from
++ * SCHED_NR_MIGRATE_BREAK to the next SIMD-friendly boundary.
++ * This ensures every XMM/Q load stays within bounds.
++ *
++ * SCHED_NR_MIGRATE_BREAK is defined in sched.h, which SIMD TUs
++ * cannot include.  Guard with #ifdef so SIMD TUs compile cleanly;
++ * they see only the raw _8/_16/_32 declarations below.
++ */
++#ifdef SCHED_NR_MIGRATE_BREAK
++#if SCHED_NR_MIGRATE_BREAK <= 8
++#define CAMBYSES_SIMD_SCORES_SIZE	8
++#elif SCHED_NR_MIGRATE_BREAK <= 16
++#define CAMBYSES_SIMD_SCORES_SIZE	16
++#elif SCHED_NR_MIGRATE_BREAK <= 32
++#define CAMBYSES_SIMD_SCORES_SIZE	32
++#else
++#error "SCHED_NR_MIGRATE_BREAK > 32 not supported by Cambyses SIMD argmax"
++#endif
++
++/*
++ * Minimum candidates to enter SIMD path.
++ * Must be <= SCHED_NR_MIGRATE_BREAK.
++ */
++#define CAMBYSES_SIMD_THRESHOLD		min_t(int, 8, SCHED_NR_MIGRATE_BREAK)
++#endif /* SCHED_NR_MIGRATE_BREAK */
++
++/* Static keys for ISA dispatch — enabled at boot based on CPUID/HWCAP */
++#ifdef CONFIG_X86_64
++extern struct static_key_false cambyses_has_avx2;
++extern struct static_key_false cambyses_has_ssse3;
++extern struct static_key_false cambyses_has_sse41;
++#endif
++#ifdef CONFIG_ARM64
++extern struct static_key_false cambyses_has_neon;
++#endif
++
++/* Size-specific SIMD argmax — all variants always compiled */
++#ifdef CONFIG_X86_64
++int cambyses_simd_argmax_avx2_8(const s16 *scores);
++int cambyses_simd_argmax_avx2_16(const s16 *scores);
++int cambyses_simd_argmax_avx2_32(const s16 *scores);
++int cambyses_simd_argmax_ssse3_8(const s16 *scores);
++int cambyses_simd_argmax_ssse3_16(const s16 *scores);
++int cambyses_simd_argmax_ssse3_32(const s16 *scores);
++#endif
++
++#ifdef CONFIG_ARM64
++int cambyses_simd_argmax_neon_8(const s16 *scores);
++int cambyses_simd_argmax_neon_16(const s16 *scores);
++int cambyses_simd_argmax_neon_32(const s16 *scores);
++#endif
++
++/*
++ * Compile-time dispatch — maps generic name to the size-correct variant
++ * via token pasting (e.g. _avx2 → _avx2_8 when SCORES_SIZE == 8).
++ * Only available when SCHED_NR_MIGRATE_BREAK is known (i.e. in cambyses.c
++ * via fair.c / sched.h).  SIMD TUs never see these macros.
++ */
++#ifdef CAMBYSES_SIMD_SCORES_SIZE
++#define _CAMBYSES_PASTE(fn, sz)		fn##sz
++#define _CAMBYSES_DISPATCH(fn, sz)	_CAMBYSES_PASTE(fn, sz)
++#define cambyses_simd_argmax_avx2(s)	_CAMBYSES_DISPATCH(cambyses_simd_argmax_avx2_, CAMBYSES_SIMD_SCORES_SIZE)(s)
++#define cambyses_simd_argmax_ssse3(s)	_CAMBYSES_DISPATCH(cambyses_simd_argmax_ssse3_, CAMBYSES_SIMD_SCORES_SIZE)(s)
++#define cambyses_simd_argmax_neon(s)	_CAMBYSES_DISPATCH(cambyses_simd_argmax_neon_, CAMBYSES_SIMD_SCORES_SIZE)(s)
++#endif /* CAMBYSES_SIMD_SCORES_SIZE */
++
++/*
++ * x86 SIMD vector type definitions — only available in TUs compiled
++ * with the corresponding ISA flags.
++ *
++ * Following Nap's pattern: GCC vector extensions + __builtin_ia32_*.
++ * <immintrin.h> is a userspace header and cannot be used in kernel.
++ */
++#ifdef __SSSE3__
++typedef short v8hi  __attribute__((__vector_size__(16)));  /* 8 × s16 */
++typedef char  v16qi __attribute__((__vector_size__(16)));   /* 16 × s8/u8 */
++/* Unaligned load type — forces MOVDQU regardless of source alignment */
++typedef short v8hi_u  __attribute__((__vector_size__(16), __aligned__(2)));
++#endif
++
++#ifdef __AVX2__
++typedef short v16hi __attribute__((__vector_size__(32)));   /* 16 × s16 */
++typedef char  v32qi __attribute__((__vector_size__(32)));    /* 32 × s8/u8 */
++/* Unaligned load type — forces VMOVDQU regardless of source alignment */
++typedef short v16hi_u __attribute__((__vector_size__(32), __aligned__(2)));
++#endif
++
++#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
++
++#endif /* CONFIG_SCHED_CAMBYSES */
++#endif /* _KERNEL_SCHED_CAMBYSES_H */
+diff --git a/kernel/sched/cambyses_simd_avx2.c b/kernel/sched/cambyses_simd_avx2.c
+new file mode 100644
+index 0000000000..2c6611e8d7
+--- /dev/null
++++ b/kernel/sched/cambyses_simd_avx2.c
+@@ -0,0 +1,97 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * cambyses_simd_avx2.c — AVX2 argmax for Cambyses
++ *
++ * Finds the index of the maximum s16 score using PHMINPOSUW
++ * (SSE4.1 horizontal min+position, always available under -mavx2).
++ *
++ * Scores are XOR'd with 0x7FFF to convert s16-max → u16-min, then
++ * PHMINPOSUW returns both the minimum value and its lane index.
++ *
++ * Must be called within cambyses_simd_begin/end.
++ * Compiled with: CFLAGS += -mavx -mavx2
++ *
++ * Separate TU to prevent auto-vectorization contamination of scalar code.
++ */
++
++#include "cambyses.h"
++#include <linux/types.h>
++
++#ifdef CONFIG_SCHED_CAMBYSES_SIMD
++
++/*
++ * XOR mask: s16 max → u16 min conversion for PHMINPOSUW.
++ *   score 1746  (0x06D2) → 0x792D (low u16 → selected)
++ *   score -777  (0xFCF7) → 0x8308
++ *   S16_MIN     (0x8000) → 0xFFFF (max u16 → never selected)
++ */
++static const v8hi phminpos_xor = {
++	0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF,
++	0x7FFF, 0x7FFF, 0x7FFF, 0x7FFF
++};
++
++/*
++ * argmax of a single XMM (8 × s16) via PHMINPOSUW.
++ * Returns lane index (0–7) of the maximum s16 value.
++ * On tie, returns the lowest index (PHMINPOSUW guarantee).
++ */
++static __always_inline int argmax_xmm(v8hi s)
++{
++	v8hi r = (v8hi)__builtin_ia32_phminposuw128(s ^ phminpos_xor);
++
++	return (unsigned short)r[1];
++}
++
++/* 8 entries — 1 PHMINPOSUW (direct result) */
++int cambyses_simd_argmax_avx2_8(const s16 *scores)
++{
++	return argmax_xmm(*(const v8hi_u *)&scores[0]);
++}
++
++/* 16 entries — 2 PHMINPOSUW + 1 scalar comparison */
++int cambyses_simd_argmax_avx2_16(const s16 *scores)
++{
++	v8hi r0, r1;
++	u16 v0, v1;
++
++	r0 = (v8hi)__builtin_ia32_phminposuw128(
++		*(const v8hi_u *)&scores[0] ^ phminpos_xor);
++	r1 = (v8hi)__builtin_ia32_phminposuw128(
++		*(const v8hi_u *)&scores[8] ^ phminpos_xor);
++
++	v0 = (u16)r0[0]; v1 = (u16)r1[0];
++
++	if (v0 <= v1)
++		return (u16)r0[1];
++	return 8 + (u16)r1[1];
++}
++
++/* 32 entries — 4 PHMINPOSUW + 3 scalar comparisons */
++int cambyses_simd_argmax_avx2_32(const s16 *scores)
++{
++	v8hi r0, r1, r2, r3;
++	u16 v0, v1, v2, v3;
++
++	r0 = (v8hi)__builtin_ia32_phminposuw128(
++		*(const v8hi_u *)&scores[0]  ^ phminpos_xor);
++	r1 = (v8hi)__builtin_ia32_phminposuw128(
++		*(const v8hi_u *)&scores[8]  ^ phminpos_xor);
++	r2 = (v8hi)__builtin_ia32_phminposuw128(
++		*(const v8hi_u *)&scores[16] ^ phminpos_xor);
++	r3 = (v8hi)__builtin_ia32_phminposuw128(
++		*(const v8hi_u *)&scores[24] ^ phminpos_xor);
++
++	v0 = (u16)r0[0]; v1 = (u16)r1[0];
++	v2 = (u16)r2[0]; v3 = (u16)r3[0];
++
++	/* Lowest inverted value = highest original score; prefer lower index */
++	if (v0 <= v1 && v0 <= v2 && v0 <= v3)
++		return (u16)r0[1];
++	if (v1 <= v2 && v1 <= v3)
++		return 8 + (u16)r1[1];
++	if (v2 <= v3)
++		return 16 + (u16)r2[1];
++	return 24 + (u16)r3[1];
++}
++
++#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
+diff --git a/kernel/sched/cambyses_simd_neon.c b/kernel/sched/cambyses_simd_neon.c
+new file mode 100644
+index 0000000000..c273e95250
+--- /dev/null
++++ b/kernel/sched/cambyses_simd_neon.c
+@@ -0,0 +1,112 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * cambyses_simd_neon.c — NEON argmax for Cambyses
++ *
++ * Finds index of maximum s16 score using SMAXP reduction +
++ * SMAXV horizontal max + CMEQ + bitmask extraction.
++ *
++ * Must be called within cambyses_simd_begin/end.
++ * Compiled with: CFLAGS_REMOVE += -mgeneral-regs-only
++ *                CFLAGS += $(CC_FLAGS_FPU)
++ *
++ * Separate TU to prevent auto-vectorization contamination of scalar code.
++ */
++
++#include "cambyses.h"
++#include <linux/types.h>
++
++#ifdef CONFIG_SCHED_CAMBYSES_SIMD
++
++#include <asm/neon-intrinsics.h>
++
++static const uint16x8_t pos_weights = {1, 2, 4, 8, 16, 32, 64, 128};
++
++/* 8 entries — 1 Q register load, direct SMAXV */
++int cambyses_simd_argmax_neon_8(const s16 *scores)
++{
++	int16x8_t s0;
++	int16_t max_val;
++	int16x8_t bcast;
++	uint16x8_t c0;
++	uint16_t bits0;
++
++	s0 = vld1q_s16(&scores[0]);
++
++	max_val = vmaxvq_s16(s0);
++	bcast = vdupq_n_s16(max_val);
++
++	c0 = vceqq_s16(s0, bcast);
++	bits0 = vaddvq_u16(vandq_u16(c0, pos_weights));
++
++	return __builtin_ctz(bits0);
++}
++
++/* 16 entries — 2 Q register loads, 1-stage reduction */
++int cambyses_simd_argmax_neon_16(const s16 *scores)
++{
++	int16x8_t s0, s1, m;
++	int16_t max_val;
++	int16x8_t bcast;
++	uint16x8_t c0, c1;
++	uint16_t bits0, bits1;
++	uint32_t combined;
++
++	s0 = vld1q_s16(&scores[0]);
++	s1 = vld1q_s16(&scores[8]);
++
++	m = vmaxq_s16(s0, s1);
++
++	max_val = vmaxvq_s16(m);
++	bcast = vdupq_n_s16(max_val);
++
++	c0 = vceqq_s16(s0, bcast);
++	c1 = vceqq_s16(s1, bcast);
++
++	bits0 = vaddvq_u16(vandq_u16(c0, pos_weights));
++	bits1 = vaddvq_u16(vandq_u16(c1, pos_weights));
++
++	combined = (uint32_t)bits0 | ((uint32_t)bits1 << 8);
++
++	return __builtin_ctz(combined);
++}
++
++/* 32 entries — 4 Q register loads, 3-stage vmaxq reduction */
++int cambyses_simd_argmax_neon_32(const s16 *scores)
++{
++	int16x8_t s0, s1, s2, s3;
++	int16x8_t m01, m23, m;
++	int16_t max_val;
++	int16x8_t bcast;
++	uint16x8_t c0, c1, c2, c3;
++	uint16_t bits0, bits1, bits2, bits3;
++	uint32_t combined;
++
++	s0 = vld1q_s16(&scores[0]);
++	s1 = vld1q_s16(&scores[8]);
++	s2 = vld1q_s16(&scores[16]);
++	s3 = vld1q_s16(&scores[24]);
++
++	m01 = vmaxq_s16(s0, s1);
++	m23 = vmaxq_s16(s2, s3);
++	m   = vmaxq_s16(m01, m23);
++
++	max_val = vmaxvq_s16(m);
++	bcast = vdupq_n_s16(max_val);
++
++	c0 = vceqq_s16(s0, bcast);
++	c1 = vceqq_s16(s1, bcast);
++	c2 = vceqq_s16(s2, bcast);
++	c3 = vceqq_s16(s3, bcast);
++
++	bits0 = vaddvq_u16(vandq_u16(c0, pos_weights));
++	bits1 = vaddvq_u16(vandq_u16(c1, pos_weights));
++	bits2 = vaddvq_u16(vandq_u16(c2, pos_weights));
++	bits3 = vaddvq_u16(vandq_u16(c3, pos_weights));
++
++	combined = (uint32_t)bits0 | ((uint32_t)bits1 << 8)
++		 | ((uint32_t)bits2 << 16) | ((uint32_t)bits3 << 24);
++
++	return __builtin_ctz(combined);
++}
++
++#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
 
 diff --git a/kernel/sched/cambyses_simd_ssse3.c b/kernel/sched/cambyses_simd_ssse3.c
 new file mode 100644
