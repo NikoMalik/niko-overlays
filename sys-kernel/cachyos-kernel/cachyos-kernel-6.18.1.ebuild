@@ -1028,7 +1028,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
-	eapply "${FILESDIR}/6.18.1-cambyses.patch"
+	eapply "${FILESDIR}/6.18.1-cambyses-2.patch"
 	einfo "Applying local patches"
 
 
