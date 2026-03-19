@@ -1029,9 +1029,9 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
 	eapply "${FILESDIR}/6.18.1-cambyses-2.patch"
-	# Apply mglru patch with fuzz=3 to handle line number mismatches
-	einfo "Applying mglru patch with fuzz=3"
-	patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
+	# # Apply mglru patch with fuzz=3 to handle line number mismatches
+	# einfo "Applying mglru patch with fuzz=3"
+	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
 	einfo "Applying local patches"
 
 
