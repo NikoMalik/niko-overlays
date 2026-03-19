@@ -111,7 +111,7 @@ diff -rupN a/mm/vmscan.c b/mm/vmscan.c
  	VM_WARN_ON_ONCE(!list_empty(list));
  
  	if (get_nr_gens(lruvec, type) == MIN_NR_GENS)
-@@ -4654,18 +4655,11 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4654,19 +4655,13 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	count_memcg_events(memcg, item, isolated);
  	count_memcg_events(memcg, PGREFILL, sorted);
  	__count_vm_events(PGSCAN_ANON + type, isolated);
@@ -127,13 +127,14 @@ diff -rupN a/mm/vmscan.c b/mm/vmscan.c
 -	 */
 -	if (isolated || !remaining)
 -		return scanned;
--
+ 
 -	return 0;
-+
 +	*isolatedp = isolated;
 +	return scanned;
++
  }
  
+
 @@ -4949,19 +4932,21 @@ static int get_type_to_scan(struct lruve
  
  static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
@@ -160,7 +161,7 @@ diff -rupN a/mm/vmscan.c b/mm/vmscan.c
  			return scanned;
  
  		type = !type;
-@@ -4752,6 +4749,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4752,6 +4748,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	int type;
  	int scanned;
  	int reclaimed;
@@ -168,7 +169,7 @@ diff -rupN a/mm/vmscan.c b/mm/vmscan.c
  	LIST_HEAD(list);
  	LIST_HEAD(clean);
  	struct folio *folio;
-@@ -4760,30 +4758,14 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4760,30 +4757,14 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	struct reclaim_stat stat;
  	struct lru_gen_mm_walk *walk;
  	bool skip_retry = false;
@@ -179,14 +180,14 @@ diff -rupN a/mm/vmscan.c b/mm/vmscan.c
  	spin_lock_irq(&lruvec->lru_lock);
  
 -	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list);
-+	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list, &isolated);
- 
+-
 -	scanned += try_to_inc_min_seq(lruvec, swappiness);
 -
 -	{
 -		bool can_evict = false;
 -		int type_i;
--
++	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list, &isolated);
+ 
 -		for_each_evictable_type(type_i, swappiness) {
 -			if (lrugen->min_seq[type_i] + MIN_NR_GENS <=
 -			    lrugen->max_seq[type_i]) {
@@ -201,6 +202,28 @@ diff -rupN a/mm/vmscan.c b/mm/vmscan.c
  
  	spin_unlock_irq(&lruvec->lru_lock);
  
+@@ -4791,12 +4772,20 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+ 		return scanned;
+ retry:
+ 	reclaimed = shrink_folio_list(&list, pgdat, sc, &stat, false, memcg);
+-	sc->nr.unqueued_dirty += stat.nr_unqueued_dirty;
+ 	sc->nr_reclaimed += reclaimed;
+ 	trace_mm_vmscan_lru_shrink_inactive(pgdat->node_id,
+ 			scanned, reclaimed, &stat, sc->priority,
+ 			type ? LRU_INACTIVE_FILE : LRU_INACTIVE_ANON);
+ 
++
++	/*
++	 * If too many file cache in the coldest generation can't be evicted
++	 * due to being dirty, wake up the flusher.
++	 */
++	if (stat.nr_unqueued_dirty == isolated)
++		wakeup_flusher_threads(WB_REASON_VMSCAN);
++
++
+ 	list_for_each_entry_safe_reverse(folio, next, &list, lru) {
+ 		DEFINE_MIN_SEQ(lruvec);
+
 @@ -5058,63 +5046,35 @@ retry:
  }
  
