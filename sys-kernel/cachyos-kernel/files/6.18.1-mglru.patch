@@ -1,8 +1,8 @@
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index e08961229..e97026f5c 100644
+index 13435b14f..f4a21d4fa 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
-@@ -174,7 +174,6 @@ struct scan_control {
+@@ -183,7 +183,6 @@ struct scan_control {
  		unsigned int congested;
  		unsigned int writeback;
  		unsigned int immediate;
@@ -10,7 +10,7 @@ index e08961229..e97026f5c 100644
  		unsigned int taken;
  	} nr;
  
-@@ -2112,8 +2111,6 @@ static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
+@@ -2124,8 +2123,6 @@ static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
  	sc->nr.writeback += stat.nr_writeback;
  	sc->nr.immediate += stat.nr_immediate;
  	sc->nr.taken += nr_taken;
@@ -19,7 +19,7 @@ index e08961229..e97026f5c 100644
  
  	trace_mm_vmscan_lru_shrink_inactive(pgdat->node_id,
  			nr_scanned, nr_reclaimed, &stat, sc->priority, file);
-@@ -4141,29 +4138,36 @@ static void set_initial_priority(struct pglist_data *pgdat, struct scan_control
+@@ -4263,31 +4260,39 @@ static void set_initial_priority(struct pglist_data *pgdat, struct scan_control
  	sc->priority = clamp(priority, DEF_PRIORITY / 2, DEF_PRIORITY);
  }
  
@@ -38,8 +38,8 @@ index e08961229..e97026f5c 100644
 + 				total += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
 + 		}
 + 	}
++ 
 +	return total;
-+
 +}
 +
 +
@@ -53,13 +53,13 @@ index e08961229..e97026f5c 100644
  	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 -	DEFINE_MAX_SEQ(lruvec);
 -	DEFINE_MIN_SEQ(lruvec);
--
+ 
 -	for_each_evictable_type(type, swappiness) {
 -		unsigned long seq;
 -
--		for (seq = min_seq[type]; seq <= max_seq[type]; seq++) {
+-		for (seq = min_seq[type]; seq <= max_seq; seq++) {
 -			gen = lru_gen_from_seq(seq);
- 
+-
 -			for (zone = 0; zone < MAX_NR_ZONES; zone++)
 -				total += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
 -		}
@@ -72,8 +72,11 @@ index e08961229..e97026f5c 100644
 + 	return mem_cgroup_online(memcg) ? (total >> sc->priority) : total;
  }
  
++
  static bool lruvec_is_reclaimable(struct lruvec *lruvec, struct scan_control *sc,
-@@ -4482,7 +4486,6 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
+ 				  unsigned long min_ttl)
+ {
+@@ -4597,7 +4602,6 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
  		       int tier_idx)
  {
  	bool success;
@@ -81,7 +84,7 @@ index e08961229..e97026f5c 100644
  	int gen = folio_lru_gen(folio);
  	int type = folio_is_file_lru(folio);
  	int zone = folio_zonenum(folio);
-@@ -4532,20 +4535,6 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
+@@ -4647,20 +4651,6 @@ static bool sort_folio(struct lruvec *lruvec, struct folio *folio, struct scan_c
  		return true;
  	}
  
@@ -102,7 +105,7 @@ index e08961229..e97026f5c 100644
  
  	return false;
  }
-@@ -4585,7 +4574,7 @@ static bool isolate_folio(struct lruvec *lruvec, struct folio *folio, struct sca
+@@ -4700,7 +4690,7 @@ static bool isolate_folio(struct lruvec *lruvec, struct folio *folio, struct sca
  
  static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  		       struct scan_control *sc, int type, int tier,
@@ -111,7 +114,7 @@ index e08961229..e97026f5c 100644
  {
  	int i;
  	int gen;
-@@ -4594,11 +4583,12 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4709,10 +4699,11 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	int scanned = 0;
  	int isolated = 0;
  	int skipped = 0;
@@ -120,12 +123,11 @@ index e08961229..e97026f5c 100644
  	struct lru_gen_folio *lrugen = &lruvec->lrugen;
  	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
  
- 	VM_WARN_ON_ONCE(!list_empty(list));
 +	VM_WARN_ON_ONCE(nr_to_scan > MAX_LRU_BATCH);
+ 	VM_WARN_ON_ONCE(!list_empty(list));
  
  	if (get_nr_gens(lruvec, type) == MIN_NR_GENS)
- 		return 0;
-@@ -4654,19 +4644,11 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4769,16 +4760,11 @@ static int scan_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	count_memcg_events(memcg, item, isolated);
  	count_memcg_events(memcg, PGREFILL, sorted);
  	__count_vm_events(PGSCAN_ANON + type, isolated);
@@ -139,25 +141,23 @@ index e08961229..e97026f5c 100644
 -	 * There might not be eligible folios due to reclaim_idx. Check the
 -	 * remaining to prevent livelock if it's not making progress.
 -	 */
--	if (isolated || !remaining)
--		return scanned;
--
--	return 0;
+-	return isolated || !remaining ? scanned : 0;
 +	*isolatedp = isolated;
 +	return scanned;
  }
  
  static int get_tier_idx(struct lruvec *lruvec, int type)
-@@ -4725,19 +4707,20 @@ static int get_type_to_scan(struct lruvec *lruvec, struct scan_control *sc, int
+@@ -4832,19 +4818,21 @@ static int get_type_to_scan(struct lruvec *lruvec, struct scan_control *sc, int
  
  static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  			  struct scan_control *sc, int swappiness,
 -			  int *type_scanned, struct list_head *list)
-+			  int *type_scanned, struct list_head *list,int *isolated)
++			  int *type_scanned, 
++			  struct list_head *list,int *isolated)
  {
  	int i;
 +	int scanned = 0;
- 	int type = get_type_to_scan(lruvec, swappiness);
+ 	int type = get_type_to_scan(lruvec, sc, swappiness);
  
  	for_each_evictable_type(i, swappiness) {
 -		int scanned;
@@ -173,15 +173,15 @@ index e08961229..e97026f5c 100644
  			return scanned;
  
  		type = !type;
-@@ -4752,6 +4735,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4859,6 +4847,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	int type;
  	int scanned;
  	int reclaimed;
-+	int isolated =0;
++	int isolated = 0;
  	LIST_HEAD(list);
  	LIST_HEAD(clean);
  	struct folio *folio;
-@@ -4760,30 +4744,15 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4867,18 +4856,12 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	struct reclaim_stat stat;
  	struct lru_gen_mm_walk *walk;
  	bool skip_retry = false;
@@ -194,27 +194,14 @@ index e08961229..e97026f5c 100644
 -	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list);
 -
 -	scanned += try_to_inc_min_seq(lruvec, swappiness);
-+	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list, &isolated);
- 
--	{
--		bool can_evict = false;
--		int type_i;
+-
+-	if (evictable_min_seq(lrugen->min_seq, swappiness) + MIN_NR_GENS > lrugen->max_seq)
+-		scanned = 0;
 +	try_to_inc_min_seq(lruvec, swappiness);
- 
--		for_each_evictable_type(type_i, swappiness) {
--			if (lrugen->min_seq[type_i] + MIN_NR_GENS <=
--			    lrugen->max_seq[type_i]) {
--				can_evict = true;
--				break;
--			}
--		}
--		if (!can_evict)
--			scanned = 0;
--	}
  
  	spin_unlock_irq(&lruvec->lru_lock);
  
-@@ -4791,12 +4760,19 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4886,12 +4869,15 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  		return scanned;
  retry:
  	reclaimed = shrink_folio_list(&list, pgdat, sc, &stat, false, memcg);
@@ -224,10 +211,6 @@ index e08961229..e97026f5c 100644
  			scanned, reclaimed, &stat, sc->priority,
  			type ? LRU_INACTIVE_FILE : LRU_INACTIVE_ANON);
  
-+	/*
-+	 * If too many file cache in the coldest generation can't be evicted
-+	 * due to being dirty, wake up the flusher.
-+	 */
 +	if (stat.nr_unqueued_dirty == isolated)
 +		wakeup_flusher_threads(WB_REASON_VMSCAN);
 +
@@ -235,126 +218,110 @@ index e08961229..e97026f5c 100644
  	list_for_each_entry_safe_reverse(folio, next, &list, lru) {
  		DEFINE_MIN_SEQ(lruvec);
  
-@@ -4850,39 +4826,24 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4945,30 +4931,17 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  }
  
- static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq[],
+ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
 -			     int swappiness, unsigned long *nr_to_scan)
-+			     struct scan_control *sc,int swapiness)
++			     struct scan_control *sc, int swappiness)
  {
 -	int gen, type, zone;
 -	unsigned long size = 0;
--	bool need_aging = false;
 -	struct lru_gen_folio *lrugen = &lruvec->lrugen;
  	DEFINE_MIN_SEQ(lruvec);
  
 -	*nr_to_scan = 0;
  	/* have to run aging, since eviction is not possible anymore */
- 	for_each_evictable_type(type, swappiness) {
- 		if (min_seq[type] + MIN_NR_GENS > max_seq[type])
- 			return true;
- 	}
+ 	if (evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS > max_seq)
+ 		return true;
  
 -	for_each_evictable_type(type, swappiness) {
 -		unsigned long seq;
- 
--		for (seq = min_seq[type]; seq <= max_seq[type]; seq++) {
+-
+-		for (seq = min_seq[type]; seq <= max_seq; seq++) {
 -			gen = lru_gen_from_seq(seq);
-+	/* try to get away with not aging at the default priority */
-+	if (sc->priority == DEF_PRIORITY)
-+		return false;
-+
- 
+-
 -			for (zone = 0; zone < MAX_NR_ZONES; zone++)
 -				size += max(READ_ONCE(lrugen->nr_pages[gen][type][zone]), 0L);
 -		}
 -	}
++	if (sc->priority == DEF_PRIORITY)
++		return false;
  
 -	*nr_to_scan = size;
--	/* better to run aging even though eviction is still possible */
--	for_each_evictable_type(type, swappiness) {
--		if (min_seq[type] + MIN_NR_GENS == max_seq[type])
--			need_aging = true;
--	}
--	return need_aging;
-+	return evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS == max_seq;
+ 	/* better to run aging even though eviction is still possible */
+ 	return evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS == max_seq;
  }
- 
- /*
-@@ -4890,39 +4851,18 @@ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq[],
+@@ -4978,30 +4951,23 @@ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
   * 1. Defer try_to_inc_max_seq() to workqueues to reduce latency for memcg
   *    reclaim.
   */
 -static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc, int swappiness)
-+static long get_nr_to_scan(struct lruvec *lruvec, struct scan_control *sc,struct mem_cgroup *memcg, int swappiness)
++static long get_nr_to_scan(struct lruvec *lruvec, 
++			   struct scan_control *sc, struct mem_cgroup *memcg, int swappiness)
  {
 -	bool success;
  	unsigned long nr_to_scan;
 -	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 -	DEFINE_MAX_SEQ(lruvec);
--
+ 
 -	if (mem_cgroup_below_min(sc->target_mem_cgroup, memcg))
 -		return -1;
++	nr_to_scan = lruvec_evictable_size(lruvec, swappiness);
  
 -	success = should_run_aging(lruvec, max_seq, swappiness, &nr_to_scan);
  
-+        nr_to_scan = lruvec_evictable_size(lruvec, swappiness);
  	/* try to scrape all its memory if this memcg was deleted */
 -	if (nr_to_scan && !mem_cgroup_online(memcg))
-+        if (!mem_cgroup_online(memcg))
++	if (!mem_cgroup_online(memcg))
  		return nr_to_scan;
  
--	nr_to_scan = apply_proportional_protection(memcg, sc, nr_to_scan);
--
+ 	nr_to_scan = apply_proportional_protection(memcg, sc, nr_to_scan);
+ 
 -	/* try to get away with not aging at the default priority */
 -	if (!success || sc->priority == DEF_PRIORITY)
 -		return nr_to_scan >> sc->priority;
--
+ 
 -	/* stop scanning this lruvec as it's low on cold folios */
--	{
--		bool aged = false;
--		int type;
--
--		for_each_evictable_type(type, swappiness) {
--			if (try_to_inc_max_seq(lruvec, max_seq[type], type, swappiness, false))
--				aged = true;
--		}
--		return aged ? -1 : 0;
--	}
+-	return try_to_inc_max_seq(lruvec, max_seq, swappiness, false) ? -1 : 0;
 +	/* always respect scan priority */
 +	return nr_to_scan >> sc->priority;
  }
  
  static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
-@@ -4958,40 +4898,47 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+@@ -5037,40 +5003,50 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
  
  static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
  {
 -	long nr_to_scan;
 -	unsigned long scanned = 0;
  	int swappiness = get_swappiness(lruvec, sc);
+-
+-	while (true) {
 +	bool need_rotate = false, should_age = false;
 +	long nr_batch, nr_to_scan;
 +	struct mem_cgroup *memcg = lruvec_memcg(lruvec);
 +	nr_to_scan = get_nr_to_scan(lruvec, sc, memcg, swappiness);
- 
--	while (true) {
 +	while (nr_to_scan > 0) {
  		int delta;
-+		DEFINE_MAX_SEQ(lruvec);
  
 -		nr_to_scan = get_nr_to_scan(lruvec, sc, swappiness);
 -		if (nr_to_scan <= 0)
++		DEFINE_MAX_SEQ(lruvec);
++
++
 +		if (mem_cgroup_below_min(sc->target_mem_cgroup, memcg)) {
 +			need_rotate = true;
  			break;
-+                }
++	        }
++
 +
 +		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
 +			if (try_to_inc_max_seq(lruvec, max_seq, swappiness, false))
 +				need_rotate = true;
 +			should_age = true;
 +		}
++
 +
 +		nr_batch = min(nr_to_scan, MIN_LRU_BATCH);
 +		delta = evict_folios(nr_batch, lruvec, sc, swappiness);
@@ -390,20 +357,21 @@ index e08961229..e97026f5c 100644
  }
  
  static int shrink_one(struct lruvec *lruvec, struct scan_control *sc)
-@@ -5613,6 +5560,7 @@ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_co
+@@ -5659,6 +5635,7 @@ static int run_aging(struct lruvec *lruvec, unsigned long seq,
+ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_control *sc,
  			int swappiness, unsigned long nr_to_reclaim)
  {
- 	int type;
 +	int nr_batch;
  	DEFINE_MAX_SEQ(lruvec);
  
- 	for_each_evictable_type(type, swappiness) {
-@@ -5631,8 +5579,8 @@ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_co
+ 	if (seq + MIN_NR_GENS > max_seq)
+@@ -5675,8 +5652,9 @@ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_co
  		if (sc->nr_reclaimed >= nr_to_reclaim)
  			return 0;
  
 -		if (!evict_folios(nr_to_reclaim - sc->nr_reclaimed, lruvec, sc,
 -				  swappiness))
++
 +		nr_batch = min(nr_to_reclaim - sc->nr_reclaimed, MAX_LRU_BATCH);
 +		if (!evict_folios(nr_batch, lruvec, sc, swappiness))
  			return 0;
