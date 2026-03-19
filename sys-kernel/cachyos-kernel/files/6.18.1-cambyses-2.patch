@@ -32,8 +32,8 @@ index 0000000000..703111868e
 +DEFINE_STATIC_KEY_TRUE(sched_cambyses);
 +
 +/* Default weights: uniform w0=w1=w2=w3=1 */
-+u8 sysctl_cambyses_w0 = 1;
-+u8 sysctl_cambyses_w1 = 1;
++u8 sysctl_cambyses_w0 = 2;
++u8 sysctl_cambyses_w1 = 3;
 +u8 sysctl_cambyses_w2 = 1;
 +u8 sysctl_cambyses_w3 = 1;
 +

@@ -558,7 +558,7 @@ cachy_use_config() {
 	fi
 
 	if use lto; then
-		: "${_use_llvm_lto:=full}"
+		: "${_use_llvm_lto:=thin}"
 	else
 		: "${_use_llvm_lto:=none}"
 	fi
@@ -1018,7 +1018,7 @@ src_prepare() {
 	# eapply "${FILESDIR}/6.18.1-lru-fix.patch"
 	eapply "${FILESDIR}/6.18.1-min-write-back.patch"
 	eapply "${FILESDIR}/6.18.1-csum.patch"
-	# eapply "${FILESDIR}/6.18.1-nap.patch"
+	eapply "${FILESDIR}/6.18.1-nap.patch"
 	eapply "${FILESDIR}/6.18.1-cpuidle.patch"
 	eapply "${FILESDIR}/6.18.1-adios_update.patch"
 	eapply "${FILESDIR}/6.18.1-futex-multiply.patch"
