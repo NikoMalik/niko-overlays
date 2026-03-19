@@ -1029,7 +1029,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
 	eapply "${FILESDIR}/6.18.1-cambyses-2.patch"
-	eapply "${FILESDIR}/6.18.1-mglru-patch"
+	eapply "${FILESDIR}/6.18.1-mglru.patch"
 	einfo "Applying local patches"
 
 
