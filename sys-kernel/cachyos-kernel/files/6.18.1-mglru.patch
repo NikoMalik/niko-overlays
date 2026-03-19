@@ -1,5 +1,5 @@
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 13435b14f..f4a21d4fa 100644
+index 13435b14f..b6ffbfa3c 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -183,7 +183,6 @@ struct scan_control {
@@ -377,4 +377,14 @@ index 13435b14f..f4a21d4fa 100644
  			return 0;
  
  		cond_resched();
+@@ -6279,8 +6257,7 @@ static void shrink_node(pg_data_t *pgdat, struct scan_control *sc)
+ 			set_bit(PGDAT_WRITEBACK, &pgdat->flags);
+ 
+ 		/* Allow kswapd to start writing pages during reclaim.*/
+-		if (sc->nr.unqueued_dirty &&
+-			sc->nr.unqueued_dirty == sc->nr.file_taken)
++		if (sc->nr.unqueued_dirty)
+ 			set_bit(PGDAT_DIRTY, &pgdat->flags);
+ 
+ 		/*
 
