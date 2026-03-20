@@ -1,5 +1,5 @@
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 13435b14f..b6ffbfa3c 100644
+index 13435b14f..f66ac6384 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -183,7 +183,6 @@ struct scan_control {
@@ -147,7 +147,7 @@ index 13435b14f..b6ffbfa3c 100644
  }
  
  static int get_tier_idx(struct lruvec *lruvec, int type)
-@@ -4832,19 +4818,21 @@ static int get_type_to_scan(struct lruvec *lruvec, struct scan_control *sc, int
+@@ -4832,25 +4818,27 @@ static int get_type_to_scan(struct lruvec *lruvec, struct scan_control *sc, int
  
  static int isolate_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  			  struct scan_control *sc, int swappiness,
@@ -173,6 +173,13 @@ index 13435b14f..b6ffbfa3c 100644
  			return scanned;
  
  		type = !type;
+ 	}
+ 
+-	return 0;
++	return scanned;
+ }
+ 
+ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
 @@ -4859,6 +4847,7 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	int type;
  	int scanned;
@@ -181,7 +188,7 @@ index 13435b14f..b6ffbfa3c 100644
  	LIST_HEAD(list);
  	LIST_HEAD(clean);
  	struct folio *folio;
-@@ -4867,18 +4856,12 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4867,18 +4856,14 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  	struct reclaim_stat stat;
  	struct lru_gen_mm_walk *walk;
  	bool skip_retry = false;
@@ -192,7 +199,8 @@ index 13435b14f..b6ffbfa3c 100644
  	spin_lock_irq(&lruvec->lru_lock);
  
 -	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list);
--
++	scanned = isolate_folios(nr_to_scan, lruvec, sc, swappiness, &type, &list, &isolated);
+ 
 -	scanned += try_to_inc_min_seq(lruvec, swappiness);
 -
 -	if (evictable_min_seq(lrugen->min_seq, swappiness) + MIN_NR_GENS > lrugen->max_seq)
@@ -201,7 +209,7 @@ index 13435b14f..b6ffbfa3c 100644
  
  	spin_unlock_irq(&lruvec->lru_lock);
  
-@@ -4886,12 +4869,15 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4886,12 +4871,15 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  		return scanned;
  retry:
  	reclaimed = shrink_folio_list(&list, pgdat, sc, &stat, false, memcg);
@@ -218,7 +226,7 @@ index 13435b14f..b6ffbfa3c 100644
  	list_for_each_entry_safe_reverse(folio, next, &list, lru) {
  		DEFINE_MIN_SEQ(lruvec);
  
-@@ -4945,30 +4931,17 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
+@@ -4945,30 +4933,17 @@ static int evict_folios(unsigned long nr_to_scan, struct lruvec *lruvec,
  }
  
  static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
@@ -252,7 +260,7 @@ index 13435b14f..b6ffbfa3c 100644
  	/* better to run aging even though eviction is still possible */
  	return evictable_min_seq(min_seq, swappiness) + MIN_NR_GENS == max_seq;
  }
-@@ -4978,30 +4951,23 @@ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
+@@ -4978,30 +4953,23 @@ static bool should_run_aging(struct lruvec *lruvec, unsigned long max_seq,
   * 1. Defer try_to_inc_max_seq() to workqueues to reduce latency for memcg
   *    reclaim.
   */
@@ -289,7 +297,7 @@ index 13435b14f..b6ffbfa3c 100644
  }
  
  static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
-@@ -5037,40 +5003,50 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
+@@ -5037,40 +5005,50 @@ static bool should_abort_scan(struct lruvec *lruvec, struct scan_control *sc)
  
  static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
  {
@@ -357,7 +365,7 @@ index 13435b14f..b6ffbfa3c 100644
  }
  
  static int shrink_one(struct lruvec *lruvec, struct scan_control *sc)
-@@ -5659,6 +5635,7 @@ static int run_aging(struct lruvec *lruvec, unsigned long seq,
+@@ -5659,6 +5637,7 @@ static int run_aging(struct lruvec *lruvec, unsigned long seq,
  static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_control *sc,
  			int swappiness, unsigned long nr_to_reclaim)
  {
@@ -365,7 +373,7 @@ index 13435b14f..b6ffbfa3c 100644
  	DEFINE_MAX_SEQ(lruvec);
  
  	if (seq + MIN_NR_GENS > max_seq)
-@@ -5675,8 +5652,9 @@ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_co
+@@ -5675,8 +5654,9 @@ static int run_eviction(struct lruvec *lruvec, unsigned long seq, struct scan_co
  		if (sc->nr_reclaimed >= nr_to_reclaim)
  			return 0;
  
@@ -377,7 +385,7 @@ index 13435b14f..b6ffbfa3c 100644
  			return 0;
  
  		cond_resched();
-@@ -6279,8 +6257,7 @@ static void shrink_node(pg_data_t *pgdat, struct scan_control *sc)
+@@ -6279,8 +6259,7 @@ static void shrink_node(pg_data_t *pgdat, struct scan_control *sc)
  			set_bit(PGDAT_WRITEBACK, &pgdat->flags);
  
  		/* Allow kswapd to start writing pages during reclaim.*/
