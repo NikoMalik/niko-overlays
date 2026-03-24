@@ -494,7 +494,7 @@ index 0000000000..699b2ea1a0
 +	 * as the loop wraps around.  Skipped tasks stay on cfs_tasks.
 +	 */
 +	while (!list_empty(tasks)) {
-+		if (env->idle && env->src_rq->nr_running <= 1)
++		if (env->idle != CPU_NOT_IDLE && env->src_rq->nr_running <= 1)
 +			break;
 +
 +		env->loop++;
