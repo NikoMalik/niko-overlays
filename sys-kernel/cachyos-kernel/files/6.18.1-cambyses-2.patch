@@ -494,7 +494,7 @@ index 0000000000..699b2ea1a0
 +	 * as the loop wraps around.  Skipped tasks stay on cfs_tasks.
 +	 */
 +	while (!list_empty(tasks)) {
-+		if (env->idle != CPU_NOT_IDLE && env->src_rq->nr_running <= 1)
++		if (env->idle != __CPU_NOT_IDLE && env->src_rq->nr_running <= 1)
 +			break;
 +
 +		env->loop++;
@@ -573,7 +573,7 @@ index 0000000000..699b2ea1a0
 +	 * from -777 to +1746, so it can never be a valid score.
 +	 */
 +#ifdef CONFIG_SCHED_CAMBYSES_SIMD
-+	if (nr_cands >= CAMBYSES_SIMD_THRESHOLD) {
++	if (nr_cands >= CAMBYSES_SIMD_THRESHOLD && irq_fpu_usable()) {
 +		int selected[SCHED_NR_MIGRATE_BREAK];
 +		int nr_selected = 0;
 +		int j;
