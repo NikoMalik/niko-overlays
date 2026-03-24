@@ -354,18 +354,31 @@ index 0000000000..699b2ea1a0
 +/*
 + * consume_imbalance_cambyses — deduct task cost from imbalance budget
 + *
-+ * Called in Phase 3 for each detached task, in score-descending order.
-+ * Matches Vanilla behavior: allows imbalance to go negative on the last task.
++ * Called in Phase 2 for each detached task, in score-descending order.
++ *
++ * Unlike vanilla detach_tasks() which checks and consumes imbalance in the
++ * same loop iteration, Cambyses checks imbalance in Phase 1 (against the
++ * original budget) and consumes here in Phase 2.  Multiple candidates may
++ * have been admitted whose combined cost exceeds the budget.  Since
++ * env->imbalance is unsigned long, naive subtraction would wrap to ~ULONG_MAX,
++ * causing the outer load_balance() retry loop to massively over-migrate.
++ * Clamp to zero instead.
 + */
 +static void consume_imbalance_cambyses(struct task_struct *p,
 +				       struct lb_env *env)
 +{
++	unsigned long cost;
++
 +	switch (env->migration_type) {
 +	case migrate_load:
-+		env->imbalance -= max_t(unsigned long, task_h_load(p), 1);
++		cost = max_t(unsigned long, task_h_load(p), 1);
++		env->imbalance = (cost >= env->imbalance) ? 0 :
++				 env->imbalance - cost;
 +		break;
 +	case migrate_util:
-+		env->imbalance -= task_util_est(p);
++		cost = task_util_est(p);
++		env->imbalance = (cost >= env->imbalance) ? 0 :
++				 env->imbalance - cost;
 +		break;
 +	case migrate_task:
 +		env->imbalance--;
