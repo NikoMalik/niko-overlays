@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000..699b2ea1a0
 --- /dev/null
 +++ b/kernel/sched/cambyses.c
-@@ -0,0 +1,950 @@
+@@ -0,0 +1,963 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Cambyses — Context-Aware Migration Balancer Yielding Scored Entity Selection
