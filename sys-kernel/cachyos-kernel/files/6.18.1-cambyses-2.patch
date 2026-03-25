@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000..699b2ea1a0
 --- /dev/null
 +++ b/kernel/sched/cambyses.c
-@@ -0,0 +1,967 @@
+@@ -0,0 +1,983 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Cambyses — Context-Aware Migration Balancer Yielding Scored Entity Selection
@@ -29,7 +29,7 @@ index 0000000000..699b2ea1a0
 +#define CAMBYSES_VERSION  "0.3.0-beta3"
 +
 +/* Runtime toggle — NOP-patched when disabled */
-+DEFINE_STATIC_KEY_TRUE(sched_cambyses);
++DEFINE_STATIC_KEY_FALSE(sched_cambyses);
 +
 +/*
 + * sysctl_cambyses_config — per-slot (signal, weight) pairs for F0..F3.
@@ -438,24 +438,40 @@ index 0000000000..699b2ea1a0
 +
 +
 +/*
-+ * argmax_scores — find index of highest score (branchless).
++ * argmax_scores — find index of highest score via 4-way parallel reduction.
 + *
-+ * Compiles to CMP + CMOV per iteration — no branches, no mispredictions.
-+ * For 32 candidates: ~62 micro-ops, ~20 cycles on modern OOO.
++ * Four independent accumulators break the serial dependency chain so the
++ * OOO engine can overlap 4 CMP+CMOV streams in parallel.  A 3-comparison
++ * tree merge produces the global best.  GPR-only — no FPU context needed.
 + *
-+ * Replaces full bitonic sort: instead of O(n log²n) comparators to
-+ * establish total order, extract the single best candidate in O(n).
++ * For 32 candidates: ~27-43 cycles vs ~104 for serial scan.
 + * Repeated extraction (K times) costs O(K*n) — for typical K=1..4
 + * this is 5-20x faster than a full sort.
++ *
++ * Tie-breaking among equal scores is unspecified; equal scores represent
++ * equally suitable migration candidates.
 + */
 +static __always_inline int argmax_scores(const s16 *scores, int nr_cands)
 +{
-+	int best = 0, j;
++	s16 bv0 = S16_MIN, bv1 = S16_MIN, bv2 = S16_MIN, bv3 = S16_MIN;
++	int bi0 = 0, bi1 = 0, bi2 = 0, bi3 = 0;
++	int j;
 +
-+	for (j = 1; j < nr_cands; j++)
-+		if (scores[j] > scores[best])
-+			best = j;
-+	return best;
++	for (j = 0; j + 3 < nr_cands; j += 4) {
++		if (scores[j]     > bv0) { bv0 = scores[j];     bi0 = j;     }
++		if (scores[j + 1] > bv1) { bv1 = scores[j + 1]; bi1 = j + 1; }
++		if (scores[j + 2] > bv2) { bv2 = scores[j + 2]; bi2 = j + 2; }
++		if (scores[j + 3] > bv3) { bv3 = scores[j + 3]; bi3 = j + 3; }
++	}
++	/* Handle 0–3 remaining elements in chain 0 */
++	for (; j < nr_cands; j++) {
++		if (scores[j] > bv0) { bv0 = scores[j]; bi0 = j; }
++	}
++	/* Tree merge: 3 comparisons */
++	if (bv1 > bv0) { bv0 = bv1; bi0 = bi1; }
++	if (bv3 > bv2) { bv2 = bv3; bi2 = bi3; }
++	if (bv2 > bv0) { bi0 = bi2; }
++	return bi0;
 +}
 +
 +/*
@@ -1005,7 +1021,7 @@ index 0000000000..c86c325b99
 +};
 +
 +/* Static key for zero-cost runtime disable (NOP patching) */
-+extern struct static_key_true sched_cambyses;
++extern struct static_key_false sched_cambyses;
 +
 +/*
 + * sysctl_cambyses_config — per-slot (signal, weight) pairs for F0..F3.
@@ -1752,7 +1768,7 @@ index a48dbcf3e..d20e2b07c 100644
  		 */
  		++*switch_count;
 +#ifdef CONFIG_SCHED_CAMBYSES
-+		if (static_branch_likely(&sched_cambyses))
++		if (static_branch_unlikely(&sched_cambyses))
 +			cambyses_update_ctxsw(prev);
 +#endif
 +
@@ -1803,7 +1819,7 @@ index 704d0af8e..695e43815 100644
  	}
 +
 +#ifdef CONFIG_SCHED_CAMBYSES
-+	if (flips_changed && static_branch_likely(&sched_cambyses))
++	if (flips_changed && static_branch_unlikely(&sched_cambyses))
 +		cambyses_update_sig3(current);
 +#endif
  }
@@ -1823,7 +1839,7 @@ index 704d0af8e..695e43815 100644
  	lockdep_assert_rq_held(env->src_rq);
  
 +#ifdef CONFIG_SCHED_CAMBYSES
-+	if (static_branch_likely(&sched_cambyses))
++	if (static_branch_unlikely(&sched_cambyses))
 +		return detach_one_task_cambyses(env);
 +#endif
 +
@@ -1835,7 +1851,7 @@ index 704d0af8e..695e43815 100644
  		return 0;
  
 +#ifdef CONFIG_SCHED_CAMBYSES
-+	if (static_branch_likely(&sched_cambyses))
++	if (static_branch_unlikely(&sched_cambyses))
 +		return detach_tasks_cambyses(env);
 +#endif
 +
