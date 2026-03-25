@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000..699b2ea1a0
 --- /dev/null
 +++ b/kernel/sched/cambyses.c
-@@ -0,0 +1,963 @@
+@@ -0,0 +1,967 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Cambyses — Context-Aware Migration Balancer Yielding Scored Entity Selection
@@ -381,7 +381,8 @@ index 0000000000..699b2ea1a0
 +				 env->imbalance - cost;
 +		break;
 +	case migrate_task:
-+		env->imbalance--;
++		if (env->imbalance)
++			env->imbalance--;
 +		break;
 +	case migrate_misfit:
 +		env->imbalance = 0;
@@ -587,7 +588,7 @@ index 0000000000..699b2ea1a0
 +		 */
 +
 +		cambyses_simd_begin();
-+		while (env->imbalance > 0) {
++		while (env->imbalance > 0 && nr_selected < nr_cands) {
 +			int best;
 +
 +#ifdef CONFIG_X86_64
@@ -630,7 +631,9 @@ index 0000000000..699b2ea1a0
 +	} else
 +#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
 +	{
-+		while (env->imbalance > 0) {
++		int iters = 0;
++
++		while (env->imbalance > 0 && iters < nr_cands) {
 +			int best = argmax_scores(scores, nr_cands);
 +
 +			if (scores[best] == S16_MIN)
@@ -638,6 +641,7 @@ index 0000000000..699b2ea1a0
 +
 +			p = cands[best].p;
 +			scores[best] = S16_MIN;
++			iters++;
 +
 +			consume_imbalance_cambyses(p, env);
 +			detach_task(p, env);
