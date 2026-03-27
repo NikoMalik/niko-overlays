@@ -438,7 +438,6 @@ setup_flags() {
 		fi
 	fi
 
-	filter-lto
 	filter-flags -m32 -m64 '-mabi=*'
 
 	# glibc aborts if rpath is set by LDFLAGS
