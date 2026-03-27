@@ -1,0 +1,50 @@
+diff --git a/malloc/arena.c b/malloc/arena.c
+index 353b6348..152e4f96 100644
+--- a/malloc/arena.c
++++ b/malloc/arena.c
+@@ -834,11 +834,11 @@ arena_get2 (size_t size, mstate avoid_arena)
+               int n = __get_nprocs ();
+ 
+               if (n >= 1)
+-                narenas_limit = NARENAS_FROM_NCORES (n);
++                narenas_limit = NARENAS_FROM_NCORES (n + 32);
+               else
+                 /* We have no information about the system.  Assume two
+                    cores.  */
+-                narenas_limit = NARENAS_FROM_NCORES (2);
++                narenas_limit = NARENAS_FROM_NCORES (2 + 32);
+             }
+         }
+     repeat:;
+diff --git a/malloc/malloc.c b/malloc/malloc.c
+index 27dfd1eb..6673adb7 100644
+--- a/malloc/malloc.c
++++ b/malloc/malloc.c
+@@ -901,7 +901,7 @@ libc_hidden_proto (__libc_mallopt)
+ #define M_TRIM_THRESHOLD       -1
+ 
+ #ifndef DEFAULT_TRIM_THRESHOLD
+-#define DEFAULT_TRIM_THRESHOLD (128 * 1024)
++#define DEFAULT_TRIM_THRESHOLD (512 * 1024)
+ #endif
+ 
+ /*
+@@ -934,7 +934,7 @@ libc_hidden_proto (__libc_mallopt)
+ #define M_TOP_PAD              -2
+ 
+ #ifndef DEFAULT_TOP_PAD
+-#define DEFAULT_TOP_PAD        (0)
++#define DEFAULT_TOP_PAD        (256 * 1024)
+ #endif
+ 
+ /*
+@@ -943,7 +943,7 @@ libc_hidden_proto (__libc_mallopt)
+ */
+ 
+ #ifndef DEFAULT_MMAP_THRESHOLD_MIN
+-#define DEFAULT_MMAP_THRESHOLD_MIN (128 * 1024)
++#define DEFAULT_MMAP_THRESHOLD_MIN (512 * 1024)
+ #endif
+ 
+ #ifndef DEFAULT_MMAP_THRESHOLD_MAX
+
