@@ -438,7 +438,6 @@ setup_flags() {
 		fi
 	fi
 
-	strip-unsupported-flags
 	filter-lto
 	filter-flags -m32 -m64 '-mabi=*'
 
