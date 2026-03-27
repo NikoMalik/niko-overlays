@@ -978,7 +978,7 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.41-qsort.patch"
 		eapply "${FILESDIR}/glibc-2.41-mcheck.patch"
 		eapply "${FILESDIR}/glibc-2.41-freq-512.patch"
-		eapply "${FILESDIR}/glibc-2.41-malloc_tune.patch"
+		# eapply "${FILESDIR}/glibc-2.41-malloc_tune.patch"
 		eapply "${WORKDIR}"/patches
 		einfo "Done."
 	fi
