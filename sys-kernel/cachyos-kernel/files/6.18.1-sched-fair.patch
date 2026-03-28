@@ -349,35 +349,17 @@ index 001c5b517..30ada5aea 100644
 +		} else {
 +			if (p->sched_task_hot)
 +				schedstat_inc(p->stats.nr_failed_migrations_hot);
- 
--			if (sched_feat(LB_MIN) &&
--			    load < 16 && !env->sd->nr_balance_failed)
--				goto next;
-+		/*                                                                            
- 
--			/*
--			 * Make sure that we don't migrate too much load.
--			 * Nevertheless, let relax the constraint if
--			 * scheduler fails to find a good waiting task to
--			 * migrate.
--			 */
--			if (shr_bound(load, env->sd->nr_balance_failed) > env->imbalance)
--				goto next;
-+                * Can't migrate this task; remove from starv_timeline                        
- 
--			env->imbalance -= load;
--			break;
-+                * to avoid repeatedly checking it.                                           
- 
--		case migrate_util:
--			util = task_util_est(p);
-+                */                                                                           
- 
--			if (shr_bound(util, env->sd->nr_balance_failed) > env->imbalance)
--				goto next;
-+               __dequeue_starv_entity(env->src_rq, se);
++			/*
++			 * Can't migrate; remove from starv_timeline to avoid
++			 * repeatedly checking it (and potential infinite loop).
++			 */
++			if (!RB_EMPTY_NODE(&se->starv_node))
++				__dequeue_starv_entity(env->src_rq, se);
++			else
++				break;  /* Corrupt state - bail out */
 +		}
 +	}
+ 
  
 -			env->imbalance -= util;
 -			break;

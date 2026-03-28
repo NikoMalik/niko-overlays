@@ -1031,7 +1031,7 @@ src_prepare() {
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	einfo "Applying mglru and sched-fair patch with fuzz=3"
 	patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
-	patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-sched-fair.patch" || die "sched fair patch failed"
+	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-sched-fair.patch" || die "sched fair patch failed"
 
 	einfo "Applying local patches"
 
