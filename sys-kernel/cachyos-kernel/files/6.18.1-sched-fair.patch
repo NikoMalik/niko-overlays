@@ -1,8 +1,8 @@
 diff --git a/include/linux/sched.h b/include/linux/sched.h
-index f3cb0bd48..302f94d7b 100644
+index f392d8cd0..51248c39a 100644
 --- a/include/linux/sched.h
 +++ b/include/linux/sched.h
-@@ -512,6 +512,9 @@ struct sched_avg {
+@@ -515,6 +515,9 @@ struct sched_avg {
  	unsigned long			runnable_avg;
  	unsigned long			util_avg;
  	unsigned int			util_est;
@@ -12,16 +12,24 @@ index f3cb0bd48..302f94d7b 100644
  } ____cacheline_aligned;
  
  /*
-@@ -570,6 +573,9 @@ struct sched_statistics {
+@@ -573,6 +576,15 @@ struct sched_statistics {
  struct sched_entity {
  	/* For load-balancing: */
  	struct load_weight		load;
++
 +#ifdef CONFIG_SCHED_STARV_MIGRATE
-+	struct rb_node			starv_node;
++#ifdef CONFIG_SCHED_WAVL
++	struct wavl_node starv_node;
++#else
++	struct rb_node starv_node;
 +#endif
- 	struct rb_node			run_node;
- 	u64				deadline;
- 	u64				min_vruntime;
++#endif
++
+ #ifdef CONFIG_SCHED_WAVL
+ 	struct wavl_node		run_node;
+ #else
+
+
 diff --git a/init/Kconfig b/init/Kconfig
 index 5f55a077b..13150d28f 100644
 --- a/init/Kconfig
