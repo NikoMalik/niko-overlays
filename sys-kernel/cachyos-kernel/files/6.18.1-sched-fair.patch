@@ -555,7 +555,7 @@ index fa83bbaf4..3eb8a11ba 100644
  		trace_pelt_se_tp(se);
  		return 1;
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index e83455a73..c80455519 100644
+index e83455a73..c6aae5614 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
 @@ -1231,6 +1231,14 @@ struct rq {
@@ -563,7 +563,7 @@ index e83455a73..c80455519 100644
  	struct list_head cfs_tasks;
  
 +#ifdef CONFIG_SCHED_STARV_MIGRATE
-+#fdef CONFIG_SCHED_WAVL
++#ifdef CONFIG_SCHED_WAVL
 +	struct wavl_root_cached starv_timeline;
 +#else
 +	struct rb_root_cached starv_timeline;
