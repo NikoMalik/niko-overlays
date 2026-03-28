@@ -1,0 +1,586 @@
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index f3cb0bd48..1c7a2b430 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -512,6 +512,9 @@ struct sched_avg {
+ 	unsigned long			runnable_avg;
+ 	unsigned long			util_avg;
+ 	unsigned int			util_est;
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	u16				starv_score;
++#endif
+ } ____cacheline_aligned;
+ 
+ /*
+@@ -571,6 +574,9 @@ struct sched_entity {
+ 	/* For load-balancing: */
+ 	struct load_weight		load;
+ 	struct rb_node			run_node;
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	struct rb_node			starv_node;
++#endif
+ 	u64				deadline;
+ 	u64				min_vruntime;
+ 	u64				min_slice;
+diff --git a/init/Kconfig b/init/Kconfig
+index 5f55a077b..13150d28f 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1460,6 +1460,23 @@ config SCHED_BORE
+ 
+ 	  If unsure, say Y here.
+ 
++
++config SCHED_STARV_MIGRATE
++	bool "Starvation-aware migration candidate selection"
++	depends on SMP
++	default y
++	help
++	  When enabled, the CFS load balancer selects migration candidates
++	  using a cached rbtree ordered by a migration suitability score:
++	  (1024 - starvation) * weight.  This prioritizes heavy, well-served
++	  tasks that resolve imbalance efficiently and are unlikely to need
++	  re-migration.
++
++	  A runtime sysctl (kernel.sched_starv_migrate) allows toggling
++	  the feature on/off without rebooting.
++
++	  If unsure, say Y here.
++
+ config SCHED_AUTOGROUP
+ 	bool "Automatic process group scheduling"
+ 	select CGROUPS
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index a48dbcf3e..94860def6 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -8772,6 +8772,10 @@ void __init sched_init(void)
+ 
+ 		INIT_LIST_HEAD(&rq->cfs_tasks);
+ 
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++		rq->starv_timeline = RB_ROOT_CACHED;
++#endif
++
+ 		rq_attach_root(rq, &def_root_domain);
+ #ifdef CONFIG_NO_HZ_COMMON
+ 		rq->last_blocked_load_update_tick = jiffies;
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 704d0af8e..1054cda79 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -80,6 +80,16 @@ unsigned int sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_NONE;
+ unsigned int sysctl_sched_tunable_scaling = SCHED_TUNABLESCALING_LOG;
+ #endif /* CONFIG_SCHED_BORE */
+ 
++
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++/*
++ * When enabled, detach_tasks() selects migration candidates from the
++ * starv_timeline rbtree (lowest migrate_score first) instead of the
++ * plain cfs_tasks list.  Default: enabled (1).
++ */
++unsigned int sysctl_sched_starv_migrate = 1;
++#endif
++
+ /*
+  * Minimal preemption granularity for CPU-bound tasks:
+  *
+@@ -585,6 +595,31 @@ static inline s64 entity_key(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ #define __node_2_se(node) \
+ 	rb_entry((node), struct sched_entity, run_node)
+ 
++
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++#define __starv_node_2_se(node) \
++	rb_entry((node), struct sched_entity, starv_node)
++
++/*
++ * Compute migration suitability score:
++ *   (runnable_avg - util_avg) * inv_weight * 960 >> 32
++ *
++ * Low score = heavy task with low starvation = ideal migration candidate:
++ *  - Heavy: small inv_weight, resolves imbalance efficiently
++ *  - Low starvation: small gap, well-served, unlikely to need re-migration
++ *
++ * Normalized to u16: 960 ≈ 65535 * 2^32 / (1024 * sched_prio_to_wmult[39])
++ * gives 65535 at nice 19 full contention.
++ */
++static inline u16 migrate_score(struct sched_entity *se)
++{
++	s32 gap = (s32)se->avg.runnable_avg - (s32)se->avg.util_avg;
++	gap &= ~(gap >> 31);
++
++	return (u16)(((u64)gap * se->load.inv_weight * 960) >> 32);
++}
++#endif /* CONFIG_SCHED_STARV_MIGRATE */
++
+ /*
+  * Compute virtual time from the per-task service numbers:
+  *
+@@ -834,6 +869,40 @@ static inline void __min_vruntime_update(struct sched_entity *se, struct rb_node
+ 	}
+ }
+ 
++
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++/*
++ * Starvation timeline: cached rbtree ordered by migrate_score ascending.
++ * The leftmost node (cached) has the lowest score (heaviest, least-starved),
++ * making it the best migration candidate retrievable in O(1).
++ */
++static inline bool __starv_less(struct rb_node *a, const struct rb_node *b)
++{
++	return __starv_node_2_se(a)->avg.starv_score <
++	       __starv_node_2_se(b)->avg.starv_score;
++}
++
++static void __enqueue_starv_entity(struct rq *rq, struct sched_entity *se)
++{
++	rb_add_cached(&se->starv_node, &rq->starv_timeline,
++		      __starv_less);
++}
++
++static void __dequeue_starv_entity(struct rq *rq, struct sched_entity *se)
++{
++	rb_erase_cached(&se->starv_node, &rq->starv_timeline);
++	RB_CLEAR_NODE(&se->starv_node);
++}
++
++static void __requeue_starv_entity(struct rq *rq, struct sched_entity *se)
++{
++	if (RB_EMPTY_NODE(&se->starv_node))
++		return;
++	__dequeue_starv_entity(rq, se);
++	__enqueue_starv_entity(rq, se);
++}
++#endif /* CONFIG_SCHED_STARV_MIGRATE */
++
+ static inline void __min_slice_update(struct sched_entity *se, struct rb_node *node)
+ {
+ 	if (node) {
+@@ -877,12 +946,20 @@ static void __enqueue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ 	se->min_slice = se->slice;
+ 	rb_add_augmented_cached(&se->run_node, &cfs_rq->tasks_timeline,
+ 				__entity_less, &min_vruntime_cb);
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	if (entity_is_task(se))
++		__enqueue_starv_entity(rq_of(cfs_rq), se);
++#endif
+ }
+ 
+ static void __dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ {
+ 	rb_erase_augmented_cached(&se->run_node, &cfs_rq->tasks_timeline,
+ 				  &min_vruntime_cb);
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	if (entity_is_task(se))
++		__dequeue_starv_entity(rq_of(cfs_rq), se);
++#endif
+ 	avg_vruntime_sub(cfs_rq, se);
+ }
+ 
+@@ -1120,6 +1197,10 @@ void init_entity_runnable_average(struct sched_entity *se)
+ 	if (entity_is_task(se))
+ 		sa->load_avg = scale_load_down(se->load.weight);
+ 
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	RB_CLEAR_NODE(&se->starv_node);
++#endif
++
+ 	/* when this task is enqueued, it will contribute to its cfs_rq's load_avg */
+ }
+ 
+@@ -4763,8 +4844,15 @@ static inline void update_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
+ 	 * Track task load average for carrying it to new CPU after migrated, and
+ 	 * track group sched_entity load average for task_h_load calculation in migration
+ 	 */
+-	if (se->avg.last_update_time && !(flags & SKIP_AGE_LOAD))
++	if (se->avg.last_update_time && !(flags & SKIP_AGE_LOAD)) {
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++		if (__update_load_avg_se(now, cfs_rq, se) &&
++		    se->on_rq && entity_is_task(se))
++			__requeue_starv_entity(rq_of(cfs_rq), se);
++#else
+ 		__update_load_avg_se(now, cfs_rq, se);
++#endif
++	}
+ 
+ 	decayed  = update_cfs_rq_load_avg(now, cfs_rq);
+ 	decayed |= propagate_entity_load_avg(se);
+@@ -9619,131 +9707,226 @@ static struct task_struct *detach_one_task(struct lb_env *env)
+  *
+  * Returns number of detached tasks if successful and 0 otherwise.
+  */
+-static int detach_tasks(struct lb_env *env)
++static int detach_candidate(struct task_struct *p, struct lb_env *env)
+ {
+-	struct list_head *tasks = &env->src_rq->cfs_tasks;
+ 	unsigned long util, load;
+-	struct task_struct *p;
+-	int detached = 0;
+-
+-	lockdep_assert_rq_held(env->src_rq);
+ 
+-	/*
+-	 * Source run queue has been emptied by another CPU, clear
+-	 * LBF_ALL_PINNED flag as we will not test any task.
+-	 */
+-	if (env->src_rq->nr_running <= 1) {
+-		env->flags &= ~LBF_ALL_PINNED;
++	if (!can_migrate_task(p, env))
+ 		return 0;
++
++	switch (env->migration_type) {
++	case migrate_load:
++		load = max_t(unsigned long, task_h_load(p), 1);
++
++		if (sched_feat(LB_MIN) &&
++		    load < 16 && !env->sd->nr_balance_failed)
++			return 0;
++
++		if (shr_bound(load, env->sd->nr_balance_failed) > env->imbalance)
++			return 0;
++
++		env->imbalance -= load;
++		break;
++
++	case migrate_util:
++		util = task_util_est(p);
++
++		if (shr_bound(util, env->sd->nr_balance_failed) > env->imbalance)
++			return 0;
++
++		env->imbalance -= util;
++		break;
++
++	case migrate_task:
++		env->imbalance--;
++		break;
++
++	case migrate_misfit:
++		if (task_fits_cpu(p, env->src_cpu))
++			return 0;
++
++		env->imbalance = 0;
++		break;
+ 	}
+ 
+-	if (env->imbalance <= 0)
+-		return 0;
++	detach_task(p, env);
++	list_add(&p->se.group_node, &env->tasks);
++	return 1;
++}
++
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++static int detach_tasks_starv(struct lb_env *env)
++{
++	struct rb_root_cached *tree = &env->src_rq->starv_timeline;
++	struct rb_node *node, *next;
++	struct task_struct *p;
++	struct sched_entity *se;
++	int detached = 0;
++
++	for (node = rb_first_cached(tree); node; node = next) {
++		next = rb_next(node);
+ 
+-	while (!list_empty(tasks)) {
+-		/*
+-		 * We don't want to steal all, otherwise we may be treated likewise,
+-		 * which could at worst lead to a livelock crash.
+-		 */
+ 		if (env->idle && env->src_rq->nr_running <= 1)
+ 			break;
+ 
+ 		env->loop++;
+-		/* We've more or less seen every task there is, call it quits */
+ 		if (env->loop > env->loop_max)
+ 			break;
+ 
+-		/* take a breather every nr_migrate tasks */
+ 		if (env->loop > env->loop_break) {
+ 			env->loop_break += SCHED_NR_MIGRATE_BREAK;
+ 			env->flags |= LBF_NEED_BREAK;
+ 			break;
+ 		}
+ 
+-		p = list_last_entry(tasks, struct task_struct, se.group_node);
++		se = __starv_node_2_se(node);
++		p = task_of(se);
+ 
+-		if (!can_migrate_task(p, env))
+-			goto next;
++		if (detach_candidate(p, env)) {
++			detached++;
+ 
+-		switch (env->migration_type) {
+-		case migrate_load:
+-			/*
+-			 * Depending of the number of CPUs and tasks and the
+-			 * cgroup hierarchy, task_h_load() can return a null
+-			 * value. Make sure that env->imbalance decreases
+-			 * otherwise detach_tasks() will stop only after
+-			 * detaching up to loop_max tasks.
+-			 */
+-			load = max_t(unsigned long, task_h_load(p), 1);
++#ifdef CONFIG_PREEMPTION
++			if (env->idle == CPU_NEWLY_IDLE)
++				break;
++#endif
++			if (env->imbalance <= 0)
++				break;
++		} else {
++			if (p->sched_task_hot)
++				schedstat_inc(p->stats.nr_failed_migrations_hot);
++		}
++	}
+ 
+-			if (sched_feat(LB_MIN) &&
+-			    load < 16 && !env->sd->nr_balance_failed)
+-				goto next;
++	schedstat_add(env->sd->lb_gained[env->idle], detached);
+ 
+-			/*
+-			 * Make sure that we don't migrate too much load.
+-			 * Nevertheless, let relax the constraint if
+-			 * scheduler fails to find a good waiting task to
+-			 * migrate.
+-			 */
+-			if (shr_bound(load, env->sd->nr_balance_failed) > env->imbalance)
+-				goto next;
++	return detached;
++}
++#endif
+ 
+-			env->imbalance -= load;
+-			break;
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++/*
++ * Walk the starv_timeline rbtree (lowest migrate_score first) to
++ * select the heaviest, least-starved tasks as migration candidates.
++ */
++static int detach_tasks_starv(struct lb_env *env)
++{
++	struct rb_root_cached *tree = &env->src_rq->starv_timeline;
++	struct rb_node *node, *next;
++	struct task_struct *p;
++	struct sched_entity *se;
++	int detached = 0;
+ 
+-		case migrate_util:
+-			util = task_util_est(p);
++	for (node = rb_first_cached(tree); node; node = next) {
++		next = rb_next(node);
+ 
+-			if (shr_bound(util, env->sd->nr_balance_failed) > env->imbalance)
+-				goto next;
++		if (env->idle && env->src_rq->nr_running <= 1)
++			break;
+ 
+-			env->imbalance -= util;
++		env->loop++;
++		if (env->loop > env->loop_max)
+ 			break;
+ 
+-		case migrate_task:
+-			env->imbalance--;
++		if (env->loop > env->loop_break) {
++			env->loop_break += SCHED_NR_MIGRATE_BREAK;
++			env->flags |= LBF_NEED_BREAK;
+ 			break;
++		}
+ 
+-		case migrate_misfit:
+-			/* This is not a misfit task */
+-			if (task_fits_cpu(p, env->src_cpu))
+-				goto next;
++		se = __starv_node_2_se(node);
++		p = task_of(se);
+ 
+-			env->imbalance = 0;
++		if (detach_candidate(p, env)) {
++			detached++;
++
++#ifdef CONFIG_PREEMPTION
++			if (env->idle == CPU_NEWLY_IDLE)
++				break;
++#endif
++			if (env->imbalance <= 0)
++				break;
++		} else {
++			if (p->sched_task_hot)
++				schedstat_inc(p->stats.nr_failed_migrations_hot);
++		}
++	}
++
++	return detached;
++}
++#endif /* CONFIG_SCHED_STARV_MIGRATE */
++
++/*
++ * Original cfs_tasks list walk.
++ */
++static int detach_tasks_list(struct lb_env *env)
++{
++	struct list_head *tasks = &env->src_rq->cfs_tasks;
++	struct task_struct *p;
++	int detached = 0;
++
++	while (!list_empty(tasks)) {
++		if (env->idle && env->src_rq->nr_running <= 1)
++			break;
++
++		env->loop++;
++		if (env->loop > env->loop_max)
++			break;
++
++		if (env->loop > env->loop_break) {
++			env->loop_break += SCHED_NR_MIGRATE_BREAK;
++			env->flags |= LBF_NEED_BREAK;
+ 			break;
+ 		}
+ 
+-		detach_task(p, env);
+-		list_add(&p->se.group_node, &env->tasks);
++		p = list_last_entry(tasks, struct task_struct, se.group_node);
+ 
+-		detached++;
++		if (detach_candidate(p, env)) {
++			detached++;
+ 
+ #ifdef CONFIG_PREEMPTION
+-		/*
+-		 * NEWIDLE balancing is a source of latency, so preemptible
+-		 * kernels will stop after the first task is detached to minimize
+-		 * the critical section.
+-		 */
+-		if (env->idle == CPU_NEWLY_IDLE)
+-			break;
++			if (env->idle == CPU_NEWLY_IDLE)
++				break;
+ #endif
++			if (env->imbalance <= 0)
++				break;
+ 
+-		/*
+-		 * We only want to steal up to the prescribed amount of
+-		 * load/util/tasks.
+-		 */
+-		if (env->imbalance <= 0)
+-			break;
++			continue;
++		}
+ 
+-		continue;
+-next:
+ 		if (p->sched_task_hot)
+ 			schedstat_inc(p->stats.nr_failed_migrations_hot);
+-
+ 		list_move(&p->se.group_node, tasks);
+ 	}
+ 
++	return detached;
++}
++
++
++static int detach_tasks(struct lb_env *env)
++{
++	int detached;
++
++	lockdep_assert_rq_held(env->src_rq);
++
++	/*
++	 * Source run queue has been emptied by another CPU, clear
++	 * LBF_ALL_PINNED flag as we will not test any task.
++	 */
++	if (env->src_rq->nr_running <= 1) {
++		env->flags &= ~LBF_ALL_PINNED;
++		return 0;
++	}
++
++	if (env->imbalance <= 0)
++		return 0;
++
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	if (sysctl_sched_starv_migrate &&
++	    !(env->sd->flags & SD_SHARE_CPUCAPACITY))
++		detached = detach_tasks_starv(env);
++	else
++#endif
++		detached = detach_tasks_list(env);
++
+ 	/*
+ 	 * Right now, this is one of only two places we collect this stat
+ 	 * so we can safely collect detach_one_task() stats here rather
+@@ -13799,6 +13982,22 @@ __init void init_sched_fair_class(void)
+ 		zalloc_cpumask_var_node(&per_cpu(should_we_balance_tmpmask, i),
+ 					GFP_KERNEL, cpu_to_node(i));
+ 
++
++#if defined(CONFIG_SCHED_STARV_MIGRATE) && defined(CONFIG_PROC_SYSCTL)
++static const struct ctl_table sched_starv_migrate_sysctls[] = {
++	{
++		.procname	= "sched_starv_migrate",
++		.data		= &sysctl_sched_starv_migrate,
++		.maxlen		= sizeof(unsigned int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_ONE,
++	},
++};
++
++#endif /* CONFIG_SCHED_STARV_MIGRATE && CONFIG_PROC_SYSCTL */
++
+ #ifdef CONFIG_CFS_BANDWIDTH
+ 		INIT_CSD(&cpu_rq(i)->cfsb_csd, __cfsb_csd_unthrottle, cpu_rq(i));
+ 		INIT_LIST_HEAD(&cpu_rq(i)->cfsb_csd_list);
+diff --git a/kernel/sched/pelt.c b/kernel/sched/pelt.c
+index fa83bbaf4..3eb8a11ba 100644
+--- a/kernel/sched/pelt.c
++++ b/kernel/sched/pelt.c
+@@ -297,6 +297,10 @@ int __update_load_avg_blocked_se(u64 now, struct sched_entity *se)
+ {
+ 	if (___update_load_sum(now, &se->avg, 0, 0, 0)) {
+ 		___update_load_avg(&se->avg, se_weight(se));
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++		/* Blocked entity: not runnable, score is zero */
++		se->avg.starv_score = 0;
++#endif
+ 		trace_pelt_se_tp(se);
+ 		return 1;
+ 	}
+@@ -310,6 +314,17 @@ int __update_load_avg_se(u64 now, struct cfs_rq *cfs_rq, struct sched_entity *se
+ 				cfs_rq->curr == se)) {
+ 
+ 		___update_load_avg(&se->avg, se_weight(se));
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++		{
++			/*
++			 * Migration suitability: gap * inv_weight * 960 >> 32
++			 * Low score = heavy + well-served = best migration candidate
++			 */
++			s32 gap = (s32)se->avg.runnable_avg - (s32)se->avg.util_avg;
++			gap &= ~(gap >> 31);
++			se->avg.starv_score = (u16)(((u64)gap * se->load.inv_weight * 960) >> 32);
++		}
++#endif
+ 		cfs_se_util_change(&se->avg);
+ 		trace_pelt_se_tp(se);
+ 		return 1;
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index cdcc8c379..0fd2e1685 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -1226,6 +1226,9 @@ struct rq {
+ 	int			online;
+ 
+ 	struct list_head cfs_tasks;
++#ifdef CONFIG_SCHED_STARV_MIGRATE
++	struct rb_root_cached starv_timeline;
++#endif
+ 
+ 	struct sched_avg	avg_rt;
+ 	struct sched_avg	avg_dl;
+

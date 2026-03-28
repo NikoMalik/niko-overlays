@@ -1024,11 +1024,11 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-futex-multiply.patch"
 	eapply "${FILESDIR}/6.18.1-reuse-timer.patch"
 	eapply "${FILESDIR}/6.18.1-wavl-avl.patch"
-	#eapply "${FILESDIR}/6.18.1-prefer-percpu-wakeup.patch" 
+	eapply "${FILESDIR}/6.18.1-prefer-percpu-wakeup.patch"
 	eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
-	#eapply "${FILESDIR}/6.18.1-cambyses-2.patch"
+	eapply "${FILESDIR}/6.18.1-sched-fair.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	einfo "Applying mglru patch with fuzz=3"
 	patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
