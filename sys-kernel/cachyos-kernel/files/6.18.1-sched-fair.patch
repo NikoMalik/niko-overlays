@@ -66,9 +66,9 @@ index a48dbcf3e..681b31f89 100644
  
 +#ifdef CONFIG_SCHED_STARV_MIGRATE
 +#ifdef CONFIG_SCHED_WAVL
-+		rg->starv_timeline = WAVL_ROOT_CACHED;
++		rq->starv_timeline = WAVL_ROOT_CACHED;
 +#else
-+		rg->starv_timeline = RB_ROOT_CACHED;
++		rq->starv_timeline = RB_ROOT_CACHED;
 +#endif
 +#endif
 +
