@@ -57,7 +57,7 @@ index 88b6dc653..4c315a8fc 100644
  	bool "Automatic process group scheduling"
  	select CGROUPS
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index a48dbcf3e..681b31f89 100644
+index a48dbcf3e..4710f3ee1 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
 @@ -8772,6 +8772,14 @@ void __init sched_init(void)
@@ -76,7 +76,7 @@ index a48dbcf3e..681b31f89 100644
  #ifdef CONFIG_NO_HZ_COMMON
  		rq->last_blocked_load_update_tick = jiffies;
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 001c5b517..9a05733e2 100644
+index 001c5b517..30ada5aea 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
 @@ -102,6 +102,16 @@ static unsigned int normalized_sysctl_sched_base_slice	= 700000ULL;
@@ -219,7 +219,7 @@ index 001c5b517..9a05733e2 100644
  
  	decayed  = update_cfs_rq_load_avg(now, cfs_rq);
  	decayed |= propagate_entity_load_avg(se);
-@@ -9623,131 +9712,180 @@ static struct task_struct *detach_one_task(struct lb_env *env)
+@@ -9623,131 +9712,188 @@ static struct task_struct *detach_one_task(struct lb_env *env)
   *
   * Returns number of detached tasks if successful and 0 otherwise.
   */
@@ -284,7 +284,12 @@ index 001c5b517..9a05733e2 100644
 +	list_add(&p->se.group_node, &env->tasks);
 +	return 1;
 +}
-+
+ 
+-	while (!list_empty(tasks)) {
+-		/*
+-		 * We don't want to steal all, otherwise we may be treated likewise,
+-		 * which could at worst lead to a livelock crash.
+-		 */
 +
 +#ifdef CONFIG_SCHED_STARV_MIGRATE
 +
@@ -295,19 +300,12 @@ index 001c5b517..9a05733e2 100644
 +static int detach_tasks_starv(struct lb_env *env)
 +{
 +	struct rb_root_cached *tree = &env->src_rq->starv_timeline;
-+	struct rb_node *node, *next;
++	struct rb_node *node;
 +	struct task_struct *p;
 +	struct sched_entity *se;
 +	int detached = 0;
 +
-+	for (node = rb_first_cached(tree); node; node = next) {
-+		next = rb_next(node);
- 
--	while (!list_empty(tasks)) {
--		/*
--		 * We don't want to steal all, otherwise we may be treated likewise,
--		 * which could at worst lead to a livelock crash.
--		 */
++	while ((node = rb_first_cached(tree))) { 
  		if (env->idle && env->src_rq->nr_running <= 1)
  			break;
  
@@ -324,10 +322,14 @@ index 001c5b517..9a05733e2 100644
  		}
  
 -		p = list_last_entry(tasks, struct task_struct, se.group_node);
--
++		se = __starv_node_2_se(node);
++		p = task_of(se);
+ 
 -		if (!can_migrate_task(p, env))
 -			goto next;
--
++		if (detach_candidate(p, env)) {
++			detached++;
+ 
 -		switch (env->migration_type) {
 -		case migrate_load:
 -			/*
@@ -338,23 +340,6 @@ index 001c5b517..9a05733e2 100644
 -			 * detaching up to loop_max tasks.
 -			 */
 -			load = max_t(unsigned long, task_h_load(p), 1);
-+		se = __starv_node_2_se(node);
-+		p = task_of(se);
- 
--			if (sched_feat(LB_MIN) &&
--			    load < 16 && !env->sd->nr_balance_failed)
--				goto next;
-+		if (detach_candidate(p, env)) {
-+			detached++;
- 
--			/*
--			 * Make sure that we don't migrate too much load.
--			 * Nevertheless, let relax the constraint if
--			 * scheduler fails to find a good waiting task to
--			 * migrate.
--			 */
--			if (shr_bound(load, env->sd->nr_balance_failed) > env->imbalance)
--				goto next;
 +#ifdef CONFIG_PREEMPTION
 +			if (env->idle == CPU_NEWLY_IDLE)
 +				break;
@@ -364,42 +349,63 @@ index 001c5b517..9a05733e2 100644
 +		} else {
 +			if (p->sched_task_hot)
 +				schedstat_inc(p->stats.nr_failed_migrations_hot);
+ 
+-			if (sched_feat(LB_MIN) &&
+-			    load < 16 && !env->sd->nr_balance_failed)
+-				goto next;
++		/*                                                                            
+ 
+-			/*
+-			 * Make sure that we don't migrate too much load.
+-			 * Nevertheless, let relax the constraint if
+-			 * scheduler fails to find a good waiting task to
+-			 * migrate.
+-			 */
+-			if (shr_bound(load, env->sd->nr_balance_failed) > env->imbalance)
+-				goto next;
++                * Can't migrate this task; remove from starv_timeline                        
+ 
+-			env->imbalance -= load;
+-			break;
++                * to avoid repeatedly checking it.                                           
+ 
+-		case migrate_util:
+-			util = task_util_est(p);
++                */                                                                           
+ 
+-			if (shr_bound(util, env->sd->nr_balance_failed) > env->imbalance)
+-				goto next;
++               __dequeue_starv_entity(env->src_rq, se);
 +		}
 +	}
  
--			env->imbalance -= load;
+-			env->imbalance -= util;
 -			break;
 +	return detached;
 +}
 +#endif /* CONFIG_SCHED_STARV_MIGRATE */
  
--		case migrate_util:
--			util = task_util_est(p);
- 
--			if (shr_bound(util, env->sd->nr_balance_failed) > env->imbalance)
--				goto next;
+-		case migrate_task:
+-			env->imbalance--;
++
 +static int detach_tasks_list(struct lb_env *env)
 +{
 +	struct list_head *tasks = &env->src_rq->cfs_tasks;
 +	struct task_struct *p;
 +	int detached = 0;
- 
--			env->imbalance -= util;
++
 +	while (!list_empty(tasks)) {
 +		if (env->idle && env->src_rq->nr_running <= 1)
- 			break;
- 
--		case migrate_task:
--			env->imbalance--;
-+		env->loop++;
-+		if (env->loop > env->loop_max)
  			break;
  
 -		case migrate_misfit:
 -			/* This is not a misfit task */
 -			if (task_fits_cpu(p, env->src_cpu))
 -				goto next;
--
++		env->loop++;
++		if (env->loop > env->loop_max)
++			break;
+ 
 -			env->imbalance = 0;
 +		if (env->loop > env->loop_break) {
 +			env->loop_break += SCHED_NR_MIGRATE_BREAK;
@@ -481,7 +487,7 @@ index 001c5b517..9a05733e2 100644
  	/*
  	 * Right now, this is one of only two places we collect this stat
  	 * so we can safely collect detach_one_task() stats here rather
-@@ -9758,6 +9896,8 @@ static int detach_tasks(struct lb_env *env)
+@@ -9758,6 +9904,8 @@ static int detach_tasks(struct lb_env *env)
  	return detached;
  }
  
@@ -490,7 +496,7 @@ index 001c5b517..9a05733e2 100644
  /*
   * attach_task() -- attach the task detached by detach_task() to its new rq.
   */
-@@ -13817,3 +13957,33 @@ __init void init_sched_fair_class(void)
+@@ -13817,3 +13965,33 @@ __init void init_sched_fair_class(void)
  	zalloc_cpumask_var(&nohz.idle_cpus_mask, GFP_NOWAIT);
  #endif
  }
