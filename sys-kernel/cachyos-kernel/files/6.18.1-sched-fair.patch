@@ -76,7 +76,7 @@ index a48dbcf3e..68106d964 100644
  #ifdef CONFIG_NO_HZ_COMMON
  		rq->last_blocked_load_update_tick = jiffies;
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 001c5b517..99d903102 100644
+index 001c5b517..9a05733e2 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
 @@ -102,6 +102,16 @@ static unsigned int normalized_sysctl_sched_base_slice	= 700000ULL;
@@ -219,7 +219,7 @@ index 001c5b517..99d903102 100644
  
  	decayed  = update_cfs_rq_load_avg(now, cfs_rq);
  	decayed |= propagate_entity_load_avg(se);
-@@ -9623,131 +9712,181 @@ static struct task_struct *detach_one_task(struct lb_env *env)
+@@ -9623,131 +9712,180 @@ static struct task_struct *detach_one_task(struct lb_env *env)
   *
   * Returns number of detached tasks if successful and 0 otherwise.
   */
@@ -232,7 +232,6 @@ index 001c5b517..99d903102 100644
 -	int detached = 0;
 +	if (!can_migrate_task(p, env))
 +		return 0;
-+		switch (env->migration_type) {
  
 -	lockdep_assert_rq_held(env->src_rq);
  
@@ -482,7 +481,7 @@ index 001c5b517..99d903102 100644
  	/*
  	 * Right now, this is one of only two places we collect this stat
  	 * so we can safely collect detach_one_task() stats here rather
-@@ -9758,6 +9897,8 @@ static int detach_tasks(struct lb_env *env)
+@@ -9758,6 +9896,8 @@ static int detach_tasks(struct lb_env *env)
  	return detached;
  }
  
@@ -491,7 +490,7 @@ index 001c5b517..99d903102 100644
  /*
   * attach_task() -- attach the task detached by detach_task() to its new rq.
   */
-@@ -13817,3 +13958,33 @@ __init void init_sched_fair_class(void)
+@@ -13817,3 +13957,33 @@ __init void init_sched_fair_class(void)
  	zalloc_cpumask_var(&nohz.idle_cpus_mask, GFP_NOWAIT);
  #endif
  }
