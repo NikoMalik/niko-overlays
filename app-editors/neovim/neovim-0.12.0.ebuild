@@ -62,10 +62,6 @@ DEPEND="${LUA_DEPS}
 	=dev-libs/tree-sitter-vim-0.7*
 	=dev-libs/tree-sitter-vimdoc-4*
 	>=dev-libs/unibilium-2.1.2:0=
-	lint? (
-		dev-util/shellcheck
-		dev-util/stylua
-	)
 "
 
 
@@ -132,3 +128,4 @@ pkg_postinst() {
 	optfeature "Ruby plugin support" dev-ruby/neovim-ruby-client
 	optfeature "remote/nvr support" dev-python/neovim-remote
 }
+
