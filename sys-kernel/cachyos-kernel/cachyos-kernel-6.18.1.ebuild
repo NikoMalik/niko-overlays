@@ -1023,9 +1023,9 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-adios_update.patch"
 	eapply "${FILESDIR}/6.18.1-futex-multiply.patch"
 	eapply "${FILESDIR}/6.18.1-reuse-timer.patch"
-	eapply "${FILESDIR}/6.18.1-wavl-avl.patch"
-	eapply "${FILESDIR}/6.18.1-prefer-percpu-wakeup.patch"
-	eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
+	# eapply "${FILESDIR}/6.18.1-wavl-avl.patch"
+	# eapply "${FILESDIR}/6.18.1-prefer-percpu-wakeup.patch"
+	# eapply "${FILESDIR}/6.18.1-sched-fair-wavl.patch"
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
