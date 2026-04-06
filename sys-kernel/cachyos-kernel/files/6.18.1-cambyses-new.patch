@@ -211,12 +211,13 @@ index 0000000000..fd082d078b
 +#endif /* _LINUX_SVEC_H */
 
 
+
 diff --git a/kernel/sched/cambyses.c b/kernel/sched/cambyses.c
 new file mode 100644
-index 0000000000..9e2d78815a
+index 0000000000..9e77f36c8c
 --- /dev/null
 +++ b/kernel/sched/cambyses.c
-@@ -0,0 +1,1011 @@
+@@ -0,0 +1,1032 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Cambyses — Context-Aware Migration Balancer Yielding Scored Entity Selection
@@ -241,7 +242,7 @@ index 0000000000..9e2d78815a
 +#define CAMBYSES_PROGNAME "Cambyses Migration Selector"
 +#define CAMBYSES_AUTHOR   "Masahito Suzuki"
 +
-+#define CAMBYSES_VERSION  "0.5.0"
++#define CAMBYSES_VERSION  "0.5.1"
 +
 +/* Runtime toggle — NOP-patched when disabled */
 +DEFINE_STATIC_KEY_TRUE(sched_cambyses);
@@ -676,6 +677,12 @@ index 0000000000..9e2d78815a
 +
 +	scan_nr = min(nr, CAMBYSES_PRESCORE_LIMIT);
 +
++	/*
++	 * SMT siblings share L1/L2 cache, so cache-hot migration
++	 * penalty is negligible.  Skip the hot check entirely.
++	 */
++	bool smt = env->sd->flags & SD_SHARE_CPUCAPACITY;
++
 +	if (static_branch_unlikely(&cambyses_debug))
 +		trace_printk("cambyses: balance_scan src_cpu=%d dst_cpu=%d nr=%d scan_nr=%d "
 +			     "mig_type=%d imbal=%ld idle=%d\n",
@@ -733,29 +740,49 @@ index 0000000000..9e2d78815a
 +						struct task_struct,
 +						se.cambyses_node));
 +
-+			env->loop++;
-+			if (env->loop > env->loop_max)
-+				break;
-+			if (env->loop > env->loop_break) {
-+				env->loop_break += SCHED_NR_MIGRATE_BREAK;
-+				env->flags |= LBF_NEED_BREAK;
-+				break;
++			/*
++			 * CAMBYSES_FILTER_SCORE — shared filter + score + collect.
++			 * Used in both pre-score and direct-scan paths.
++			 *
++			 * Wrapped in if(1){} so that break/continue target
++			 * the enclosing for-loop (not a do-while wrapper).
++			 */
++			#define CAMBYSES_FILTER_SCORE(p) \
++			if (1) { \
++			env->loop++; \
++			if (env->loop > env->loop_max) \
++				break; \
++			if (env->loop > env->loop_break) { \
++				env->loop_break += SCHED_NR_MIGRATE_BREAK; \
++				env->flags |= LBF_NEED_BREAK; \
++				break; \
++			} \
++			\
++			if (smt) { \
++				if (!cpumask_test_cpu(env->dst_cpu, \
++								(p)->cpus_ptr)) \
++					continue; \
++				if (task_on_cpu(env->src_rq, (p))) \
++					continue; \
++			} else { \
++				if (!can_migrate_task((p), env)) { \
++					if ((p)->sched_task_hot) \
++						schedstat_inc( \
++						(p)->stats.nr_failed_migrations_hot); \
++					continue; \
++				} \
++			} \
++			if (!check_imbalance_cambyses((p), env)) \
++				continue; \
++			\
++			cands[nr_cands].p = (p); \
++			scores[nr_cands] = score_task((p), src_rq); \
++			nr_cands++; \
++			\
++			if (nr_cands >= SCHED_NR_MIGRATE_BREAK) \
++				break; \
 +			}
-+
-+			if (!can_migrate_task(p, env)) {
-+				if (p->sched_task_hot)
-+					schedstat_inc(p->stats.nr_failed_migrations_hot);
-+				continue;
-+			}
-+			if (!check_imbalance_cambyses(p, env))
-+				continue;
-+
-+			cands[nr_cands].p = p;
-+			scores[nr_cands] = score_task(p, src_rq);
-+			nr_cands++;
-+
-+			if (nr_cands >= SCHED_NR_MIGRATE_BREAK)
-+				break;
++			CAMBYSES_FILTER_SCORE(p);
 +		}
 +	} else {
 +		/*
@@ -794,29 +821,8 @@ index 0000000000..9e2d78815a
 +						struct task_struct,
 +						se.cambyses_node));
 +
-+			env->loop++;
-+			if (env->loop > env->loop_max)
-+				break;
-+			if (env->loop > env->loop_break) {
-+				env->loop_break += SCHED_NR_MIGRATE_BREAK;
-+				env->flags |= LBF_NEED_BREAK;
-+				break;
-+			}
-+
-+			if (!can_migrate_task(p, env)) {
-+				if (p->sched_task_hot)
-+					schedstat_inc(p->stats.nr_failed_migrations_hot);
-+				continue;
-+			}
-+			if (!check_imbalance_cambyses(p, env))
-+				continue;
-+
-+			cands[nr_cands].p = p;
-+			scores[nr_cands] = score_task(p, src_rq);
-+			nr_cands++;
-+
-+			if (nr_cands >= SCHED_NR_MIGRATE_BREAK)
-+				break;
++			CAMBYSES_FILTER_SCORE(p);
++			#undef CAMBYSES_FILTER_SCORE
 +		}
 +	}
 +
@@ -824,8 +830,12 @@ index 0000000000..9e2d78815a
 +	 * Newidle fallback: if the normal filter found no candidates,
 +	 * progressively relax gates so the idle CPU gets *something*.
 +	 *
-+	 *   Pass 2: drop check_imbalance (allow budget overshoot)
-+	 *   Pass 3: also skip cache-hot tasks (any movable task)
++	 *   Pass 1: drop check_imbalance (allow budget overshoot)
++	 *   Pass 2: also skip cache-hot tasks (any movable task)
++	 *
++	 * Pass number matches sysctl_cambyses_newidle_fallback directly.
++	 * For SMT domains, cache-hot is already skipped in the normal
++	 * pass, so Pass 1 is redundant — jump straight to Pass 2.
 +	 *
 +	 * The svec is already built; only the filter
 +	 * loop is re-run, so the cost is minimal.
@@ -833,16 +843,28 @@ index 0000000000..9e2d78815a
 +	if (!nr_cands && env->idle == CPU_NEWLY_IDLE &&
 +	    sysctl_cambyses_newidle_fallback > 0) {
 +		int pass;
-+		int max_pass = sysctl_cambyses_newidle_fallback + 1;
++		int max_pass = sysctl_cambyses_newidle_fallback;
 +
-+		for (pass = 2; pass <= max_pass && !nr_cands; pass++) {
++		/*
++		 * SMT: hot check is already skipped in the normal pass,
++		 * so Pass 1 (drop budget, keep hot) is redundant — jump
++		 * straight to Pass 2 (drop budget + hot).
++		 */
++		if (smt) {
++			pass = 2;
++			max_pass = 2;
++		} else {
++			pass = 1;
++		}
++
++		for (; pass <= max_pass && !nr_cands; pass++) {
 +			for (i = 0; i < scan_nr; i++) {
 +				struct task_struct *p =
 +					svec_entry_idx(sv, i,
 +						       struct task_struct,
 +						       se.cambyses_node);
 +
-+				if (pass < 3) {
++				if (pass < 2) {
 +					if (!can_migrate_task(p, env))
 +						continue;
 +				} else {
@@ -1230,7 +1252,7 @@ index 0000000000..9e2d78815a
 +#endif /* CONFIG_SYSCTL */
 diff --git a/kernel/sched/cambyses.h b/kernel/sched/cambyses.h
 new file mode 100644
-index 0000000000..7e6b8fc5b2
+index 0000000000..9b3a59b8eb
 --- /dev/null
 +++ b/kernel/sched/cambyses.h
 @@ -0,0 +1,137 @@
@@ -1373,7 +1395,7 @@ index 0000000000..7e6b8fc5b2
 +#endif /* _KERNEL_SCHED_CAMBYSES_H */
 diff --git a/kernel/sched/cambyses_simd_avx2.c b/kernel/sched/cambyses_simd_avx2.c
 new file mode 100644
-index 0000000000..f231a1f16d
+index 0000000000..9ed2675534
 --- /dev/null
 +++ b/kernel/sched/cambyses_simd_avx2.c
 @@ -0,0 +1,190 @@
@@ -1569,7 +1591,7 @@ index 0000000000..f231a1f16d
 +#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
 diff --git a/kernel/sched/cambyses_simd_neon.c b/kernel/sched/cambyses_simd_neon.c
 new file mode 100644
-index 0000000000..ff875b6e39
+index 0000000000..9e79d0a7f3
 --- /dev/null
 +++ b/kernel/sched/cambyses_simd_neon.c
 @@ -0,0 +1,137 @@
@@ -1712,7 +1734,7 @@ index 0000000000..ff875b6e39
 +#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
 diff --git a/kernel/sched/cambyses_simd_ssse3.c b/kernel/sched/cambyses_simd_ssse3.c
 new file mode 100644
-index 0000000000..8ccd8c6474
+index 0000000000..78174b73e6
 --- /dev/null
 +++ b/kernel/sched/cambyses_simd_ssse3.c
 @@ -0,0 +1,283 @@
@@ -1999,125 +2021,6 @@ index 0000000000..8ccd8c6474
 +}
 +
 +#endif /* CONFIG_SCHED_CAMBYSES_SIMD */
-
-
-
-diff --git a/include/linux/sched.h b/include/linux/sched.h
-index f3cb0bd48..8f517b156 100644
---- a/include/linux/sched.h
-+++ b/include/linux/sched.h
-@@ -45,6 +45,7 @@
- #include <linux/seqlock_types.h>
- #include <linux/kcsan.h>
- #include <linux/rv.h>
-+#include <linux/svec.h>
- #include <linux/uidgid_types.h>
- #include <linux/tracepoint-defs.h>
- #include <linux/unwind_deferred_types.h>
-@@ -581,6 +582,9 @@ struct sched_entity {
- 	unsigned char			rel_deadline;
- 	unsigned char			custom_slice;
- 					/* hole */
-+#ifdef CONFIG_SCHED_CAMBYSES
-+	struct svec_node		cambyses_node;
-+#endif
- 
- 	u64				exec_start;
- 	u64				sum_exec_runtime;
-diff --git a/init/Kconfig b/init/Kconfig
-index 5f55a077b..c7a8c6cf8 100644
---- a/init/Kconfig
-+++ b/init/Kconfig
-@@ -1443,6 +1443,46 @@ config CHECKPOINT_RESTORE
- 
- 	  If unsure, say N here.
- 
-+
-+
-+config SCHED_CAMBYSES
-+	bool "Cambyses scored migration selection for CFS load balancer"
-+	depends on SMP
-+	default y
-+	help
-+	  Context-Aware Migration Balancer Yielding Scored Entity Selection.
-+
-+	  Replaces the default FIFO task selection in detach_tasks() with
-+	  a scoring function that evaluates cache coldness, load contribution,
-+	  affinity breadth, and wakee stability to select the most suitable
-+	  migration candidates.
-+
-+	  When disabled at runtime (sysctl kernel.sched_cambyses=0),
-+	  all Cambyses paths are NOPed out via static key at zero cost.
-+
-+	  If unsure, say Y here.
-+
-+config SCHED_CAMBYSES_SIMD
-+	bool "SIMD argmax for Cambyses candidate extraction"
-+	depends on SCHED_CAMBYSES
-+	depends on X86_64 || (ARM64 && KERNEL_MODE_NEON)
-+	default y
-+	help
-+	  Uses SIMD instructions to find the highest-scored migration
-+	  candidate (argmax) when the candidate count exceeds 8.
-+
-+	  On x86_64, AVX2 loads 32 scores into 2 ymm registers and uses
-+	  VPMAXSW + VPCMPEQW + VPMOVMSKB + BSF (~16 ops).  SSSE3 uses
-+	  4 xmm registers with PMAXSW + PCMPEQW + PMOVMSKB (~24 ops).
-+
-+	  On ARM64, NEON loads 32 scores into 4 Q registers and uses
-+	  SMAXP + SMAXV + CMEQ + bitmask extraction (~20 ops).
-+
-+	  Falls back to scalar argmax when candidate count is below the
-+	  threshold or CPU lacks support.
-+
-+	  If unsure, say Y here.
-+
- config SCHED_BORE
- 	bool "Burst-Oriented Response Enhancer"
- 	default y
-diff --git a/kernel/sched/Makefile b/kernel/sched/Makefile
-index b688084bc..bed3e9b83 100644
---- a/kernel/sched/Makefile
-+++ b/kernel/sched/Makefile
-@@ -38,3 +38,38 @@ obj-y += fair.o
- obj-y += build_policy.o
- obj-y += build_utility.o
- obj-$(CONFIG_SCHED_BORE) += bore.o
-+
-+
-+
-+
-+
-+# Cambyses: cambyses.c is #included from fair.c (needs access to static functions).
-+# Cambyses SIMD: Separate TUs with ISA-specific flags.
-+# FPU_KILL_FLAGS must be removed first (kernel builds with -mno-sse etc.),
-+# then ISA flags added.  Following Nap's pattern (drivers/cpuidle/governors/nap/).
-+ifdef CONFIG_SCHED_CAMBYSES_SIMD
-+
-+ifdef CONFIG_X86_64
-+obj-y += cambyses_simd_ssse3.o cambyses_simd_avx2.o
-+
-+CAMBYSES_FPU_KILL_FLAGS := -mno-sse -mno-sse2 -mno-mmx -mno-avx -mno-3dnow \
-+                           -mno-sse4a -msoft-float -mno-80387 -mno-fp-ret-in-387
-+
-+CFLAGS_REMOVE_cambyses_simd_ssse3.o += $(CAMBYSES_FPU_KILL_FLAGS)
-+CFLAGS_REMOVE_cambyses_simd_avx2.o  += $(CAMBYSES_FPU_KILL_FLAGS)
-+
-+CFLAGS_cambyses_simd_ssse3.o += $(CC_FLAGS_FPU) -mssse3
-+CFLAGS_cambyses_simd_avx2.o  += $(CC_FLAGS_FPU) -mavx -mavx2
-+endif # CONFIG_X86_64
-+
-+ifdef CONFIG_ARM64
-+obj-y += cambyses_simd_neon.o
-+
-+# Remove -mgeneral-regs-only to allow NEON/FP instructions
-+CFLAGS_REMOVE_cambyses_simd_neon.o += $(CC_FLAGS_NO_FPU)
-+
-+# Add FPU flags: -ffreestanding -isystem <compiler include path>
-+CFLAGS_cambyses_simd_neon.o += $(CC_FLAGS_FPU)
-+endif # CONFIG_ARM64
-+
-+endif # CONFIG_SCHED_CAMBYSES_SIMD
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
 index a48dbcf3e..3e9642774 100644
 --- a/kernel/sched/core.c
