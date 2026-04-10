@@ -1,19 +1,19 @@
-From f4287e58711e828c2c14c627d8306504be275e0a Mon Sep 17 00:00:00 2001
+From 8c8e6d7903cb6ee0887091752aaf82d289cabe33 Mon Sep 17 00:00:00 2001
 From: Masahito S <firelzrd@gmail.com>
-Date: Sat, 7 Mar 2026 04:38:36 +0900
-Subject: [PATCH] 6.18.3-nap-v0.2.1
+Date: Fri, 10 Apr 2026 13:10:26 +0900
+Subject: [PATCH] 6.18.3-nap-v0.3.0
 
 ---
  drivers/cpuidle/Kconfig                       |  17 +
  drivers/cpuidle/governors/Makefile            |   1 +
  drivers/cpuidle/governors/nap/Makefile        |  33 +
- drivers/cpuidle/governors/nap/nap.c           | 529 ++++++++++++++++
- drivers/cpuidle/governors/nap/nap.h           | 271 ++++++++
- drivers/cpuidle/governors/nap/nap_fpu.c       | 577 ++++++++++++++++++
- drivers/cpuidle/governors/nap/nap_nn_avx2.c   | 207 +++++++
- drivers/cpuidle/governors/nap/nap_nn_avx512.c | 203 ++++++
- drivers/cpuidle/governors/nap/nap_nn_sse2.c   | 154 +++++
- 9 files changed, 1992 insertions(+)
+ drivers/cpuidle/governors/nap/nap.c           | 717 ++++++++++++++++++
+ drivers/cpuidle/governors/nap/nap.h           | 302 ++++++++
+ drivers/cpuidle/governors/nap/nap_fpu.c       | 621 +++++++++++++++
+ drivers/cpuidle/governors/nap/nap_nn_avx2.c   | 207 +++++
+ drivers/cpuidle/governors/nap/nap_nn_avx512.c | 203 +++++
+ drivers/cpuidle/governors/nap/nap_nn_sse2.c   | 154 ++++
+ 9 files changed, 2255 insertions(+)
  create mode 100644 drivers/cpuidle/governors/nap/Makefile
  create mode 100644 drivers/cpuidle/governors/nap/nap.c
  create mode 100644 drivers/cpuidle/governors/nap/nap.h
@@ -100,10 +100,10 @@ index 0000000000..bb983497a4
 +			   -Wframe-larger-than=4096
 diff --git a/drivers/cpuidle/governors/nap/nap.c b/drivers/cpuidle/governors/nap/nap.c
 new file mode 100644
-index 0000000000..9ff4d9f0b9
+index 0000000000..07d99491d0
 --- /dev/null
 +++ b/drivers/cpuidle/governors/nap/nap.c
-@@ -0,0 +1,529 @@
+@@ -0,0 +1,717 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * nap.c — Neural Adaptive Predictor cpuidle governor
@@ -147,13 +147,13 @@ index 0000000000..9ff4d9f0b9
 +#define CPUIDLE_NAP_PROGNAME "Nap CPUIdle Governor"
 +#define CPUIDLE_NAP_AUTHOR   "Masahito Suzuki"
 +
-+#define CPUIDLE_NAP_VERSION  "0.2.1"
++#define CPUIDLE_NAP_VERSION  "0.3.0"
 +
 +/* Governor defaults */
 +#define NAP_DEFAULT_LR_MILLTHS    1     /* 0.001 = 1 millths */
 +#define NAP_DEFAULT_INTERVAL      4     /* learn every 4 reflects */
 +#define NAP_DEFAULT_CLAMP_MILLTHS 1000  /* 1.0 = 1000 millths */
-+#define NAP_DEFAULT_PCTL_MILLTHS  30   /* 30th percentile (balanced) */
++#define NAP_DEFAULT_PCTL_MILLTHS  30    /* 5th percentile (conservative) */
 +
 +/* ================================================================
 + * ISA dispatch via static keys (definitions only; dispatch in nap_fpu.c)
@@ -246,6 +246,90 @@ index 0000000000..9ff4d9f0b9
 + * Governor callbacks
 + * ================================================================ */
 +
++/*
++ * Return the shallowest C-state index that is both enabled and
++ * satisfies the current latency request.  Returns 0 if no such
++ * state exists (caller must treat 0 as "POLL is the only option").
++ *
++ * Called from the short-circuit path to decide whether the predicted
++ * sleep length is worth entering any C-state at all.  Does not
++ * consult the NN.
++ */
++static int nap_find_min_valid_state(struct cpuidle_driver *drv,
++				    struct cpuidle_device *dev,
++				    s64 latency_req)
++{
++	int i;
++
++	for (i = 1; i < drv->state_count; i++) {
++		if (dev->states_usage[i].disable)
++			continue;
++		if (drv->states[i].exit_latency_ns > latency_req)
++			continue;
++		return i;
++	}
++	return 0;
++}
++
++/*
++ * Cached wrapper around nap_find_min_valid_state().
++ *
++ * Invalidation triggers:
++ *   1. latency_req changed since last cached value (immediate; PM QoS
++ *      updates propagate on the next nap_select call).
++ *   2. NAP_MIN_STATE_REFRESH_JIFFIES elapsed since last refresh
++ *      (bounded staleness for sysfs-driven or runtime-driver state
++ *      disable events, which are rare).
++ *
++ * Hot path cost when the cache is valid: ~5-7 cycles (one s64
++ * compare, one time_after() check, one conditional return).  The
++ * uncached loop runs at most once per HZ jiffies per CPU.
++ */
++static inline int nap_get_min_valid_state(struct nap_cpu_data *d,
++					   struct cpuidle_driver *drv,
++					   struct cpuidle_device *dev,
++					   s64 latency_req)
++{
++	if (unlikely(latency_req != d->cached_min_state_latency ||
++		     time_after(jiffies,
++				d->cached_min_state_jiffies +
++				NAP_MIN_STATE_REFRESH_JIFFIES))) {
++		d->cached_min_state = nap_find_min_valid_state(drv, dev,
++							       latency_req);
++		d->cached_min_state_latency = latency_req;
++		d->cached_min_state_jiffies = jiffies;
++	}
++	return d->cached_min_state;
++}
++
++/*
++ * Compute dev->poll_limit_ns for the short-circuit path.
++ *
++ * Budget = predicted wake time (sleep_length) + 1 µs safety margin.
++ * The margin absorbs timer jitter so a wake arriving slightly after
++ * the predicted time does not trigger a select/enter/reflect retry
++ * cycle.  It is consumed only when the wake is actually late; on-time
++ * and early wakes exit POLL via need_resched without touching the
++ * margin.
++ *
++ * Floor: NAP_POLL_LIMIT_MIN_NS (1 µs).  Below this, per-iteration
++ * governor overhead exceeds actual polling, and POLL's own timeout
++ * sampling granularity (~1.3 µs via POLL_IDLE_RELAX_COUNT cpu_relax
++ * iterations) makes smaller limits indistinguishable in practice.
++ *
++ * Ceiling: min_state.target_residency_ns.  Beyond that point, the
++ * C-state would have been a better choice than polling.
++ */
++static inline u64 nap_compute_poll_limit(u64 sleep_length_ns,
++					 u64 min_state_target_ns)
++{
++	u64 budget = sleep_length_ns + NAP_POLL_LIMIT_MARGIN_NS;
++
++	return clamp_t(u64, budget,
++		       NAP_POLL_LIMIT_MIN_NS,
++		       min_state_target_ns);
++}
++
 +static int nap_fallback_heuristic(struct cpuidle_driver *drv,
 +				  struct cpuidle_device *dev)
 +{
@@ -273,10 +357,47 @@ index 0000000000..9ff4d9f0b9
 +		      bool *stop_tick)
 +{
 +	struct nap_cpu_data *d = this_cpu_ptr(&nap_data);
-+	int idx;
++	s64 latency_req;
++	ktime_t delta_tick;
++	u64 sleep_length_ns;
++	int idx, min_state;
 +
 +	if (unlikely(drv->state_count <= 1))
 +		return 0;
++
++	latency_req = cpuidle_governor_latency_req(dev->cpu);
++	sleep_length_ns = ktime_to_ns(tick_nohz_get_sleep_length(&delta_tick));
++
++	min_state = nap_get_min_valid_state(d, drv, dev, latency_req);
++
++	/*
++	 * Fast path: when no C-state can amortize its target residency
++	 * within the predicted sleep length, the answer is deterministically
++	 * POLL.  Skip NN inference and feature extraction entirely.
++	 * nap_reflect also skips history update and learning for
++	 * short-circuited events (see the short_circuited check there).
++	 * See spec §3.1.
++	 */
++	if (min_state == 0 ||
++	    sleep_length_ns < drv->states[min_state].target_residency_ns) {
++
++		if (min_state > 0)
++			dev->poll_limit_ns = nap_compute_poll_limit(
++				sleep_length_ns,
++				drv->states[min_state].target_residency_ns);
++		else
++			dev->poll_limit_ns = max_t(u64, sleep_length_ns,
++						   NAP_POLL_LIMIT_MIN_NS);
++
++		*stop_tick = false;
++		d->last_selected_idx = 0;
++		d->short_circuited = true;
++		d->stats.total_selects++;
++		return 0;
++	}
++
++	/* Normal NN-driven path */
++	d->short_circuited = false;
 +
 +	if (likely(may_use_simd())) {
 +		kernel_fpu_begin();
@@ -307,14 +428,38 @@ index 0000000000..9ff4d9f0b9
 +	if (unlikely(!drv))
 +		return;
 +
++	/*
++	 * Short-circuited POLL: NN was not invoked for this idle
++	 * event, so the residency does not belong to the NN's
++	 * training distribution.  Update the aggregate residency
++	 * statistic and return — history, hit_intercept, prediction
++	 * error, external signals, and learning are all skipped.
++	 * See spec §3.4.
++	 */
++	if (d->short_circuited) {
++		d->stats.total_residency_ns += measured_ns;
++		return;
++	}
++
 +	nap_history_update(d, measured_ns);
 +	nap_update_hit_intercept(d, drv, dev, index, measured_ns);
 +
 +	d->last_prediction_error = d->last_predicted_ns - (s64)measured_ns;
 +	nap_update_external_signals(d, dev->cpu);
 +
-+	if (++d->learn_counter >= d->learn_interval) {
++	/*
++	 * Dual gate: learn when both the per-N-reflect counter fires
++	 * AND at least learn_jiffies_min jiffies have elapsed since
++	 * the last learning step.  The time gate prevents sustained
++	 * weight churn on workloads with very rapid idle bursts; a
++	 * value of 0 disables it (restores the original counter-only
++	 * behavior).  See spec §3.5.
++	 */
++	if (++d->learn_counter >= d->learn_interval &&
++	    time_after_eq(jiffies,
++			  d->last_learn_jiffies + d->learn_jiffies_min)) {
 +		d->learn_counter = 0;
++		d->last_learn_jiffies = jiffies;
 +		d->learn_actual_ns = measured_ns;
 +		d->needs_learn = true;
 +	}
@@ -330,6 +475,19 @@ index 0000000000..9ff4d9f0b9
 +	struct nap_cpu_data *d = per_cpu_ptr(&nap_data, dev->cpu);
 +
 +	memset(d, 0, sizeof(*d));
++
++	/*
++	 * Force first-call refresh of the min-valid-state cache.
++	 * cached_min_state_latency = S64_MIN ensures the first
++	 * nap_select() comparison will always trip the invalidation
++	 * branch regardless of the actual latency_req value.
++	 * cached_min_state itself is already zeroed by the memset above.
++	 */
++	d->cached_min_state_latency = S64_MIN;
++	d->cached_min_state_jiffies = jiffies - NAP_MIN_STATE_REFRESH_JIFFIES;
++
++	/* Default: allow at most one learning step per jiffy */
++	d->learn_jiffies_min = 1;
 +
 +	/*
 +	 * Defer weight initialization to the first nap_select() FPU path
@@ -439,6 +597,34 @@ index 0000000000..9ff4d9f0b9
 +	return count;
 +}
 +
++static ssize_t learn_jiffies_min_show(struct kobject *kobj,
++				      struct kobj_attribute *attr, char *buf)
++{
++	int cpu;
++
++	cpu = cpumask_first(cpu_online_mask);
++	if (cpu >= nr_cpu_ids)
++		return sysfs_emit(buf, "0\n");
++	return sysfs_emit(buf, "%u\n",
++			  per_cpu(nap_data, cpu).learn_jiffies_min);
++}
++
++static ssize_t learn_jiffies_min_store(struct kobject *kobj,
++				       struct kobj_attribute *attr,
++				       const char *buf, size_t count)
++{
++	unsigned int val;
++	int cpu;
++
++	if (kstrtouint(buf, 10, &val) || val > HZ * 3600)
++		return -EINVAL;
++
++	for_each_online_cpu(cpu)
++		per_cpu(nap_data, cpu).learn_jiffies_min = val;
++
++	return count;
++}
++
 +static ssize_t reset_weights_store(struct kobject *kobj,
 +				   struct kobj_attribute *attr,
 +				   const char *buf, size_t count)
@@ -539,14 +725,15 @@ index 0000000000..9ff4d9f0b9
 +		return sysfs_emit(buf, "sse2\n");
 +}
 +
-+static struct kobj_attribute version_attr        = __ATTR_RO(version);
-+static struct kobj_attribute simd_attr           = __ATTR_RO(simd);
-+static struct kobj_attribute stats_attr          = __ATTR_RO(stats);
-+static struct kobj_attribute learning_rate_attr  = __ATTR_RW(learning_rate);
-+static struct kobj_attribute learn_interval_attr = __ATTR_RW(learn_interval);
-+static struct kobj_attribute overshoot_pctl_attr = __ATTR_RW(overshoot_pctl);
-+static struct kobj_attribute reset_weights_attr  = __ATTR_WO(reset_weights);
-+static struct kobj_attribute reset_stats_attr    = __ATTR_WO(reset_stats);
++static struct kobj_attribute version_attr           = __ATTR_RO(version);
++static struct kobj_attribute simd_attr              = __ATTR_RO(simd);
++static struct kobj_attribute stats_attr             = __ATTR_RO(stats);
++static struct kobj_attribute learning_rate_attr     = __ATTR_RW(learning_rate);
++static struct kobj_attribute learn_interval_attr    = __ATTR_RW(learn_interval);
++static struct kobj_attribute learn_jiffies_min_attr = __ATTR_RW(learn_jiffies_min);
++static struct kobj_attribute overshoot_pctl_attr    = __ATTR_RW(overshoot_pctl);
++static struct kobj_attribute reset_weights_attr     = __ATTR_WO(reset_weights);
++static struct kobj_attribute reset_stats_attr       = __ATTR_WO(reset_stats);
 +
 +static struct attribute *nap_attrs[] = {
 +	&version_attr.attr,
@@ -554,6 +741,7 @@ index 0000000000..9ff4d9f0b9
 +	&stats_attr.attr,
 +	&learning_rate_attr.attr,
 +	&learn_interval_attr.attr,
++	&learn_jiffies_min_attr.attr,
 +	&overshoot_pctl_attr.attr,
 +	&reset_weights_attr.attr,
 +	&reset_stats_attr.attr,
@@ -635,10 +823,10 @@ index 0000000000..9ff4d9f0b9
 +postcore_initcall(nap_init);
 diff --git a/drivers/cpuidle/governors/nap/nap.h b/drivers/cpuidle/governors/nap/nap.h
 new file mode 100644
-index 0000000000..c99f296c89
+index 0000000000..9862ebe0d9
 --- /dev/null
 +++ b/drivers/cpuidle/governors/nap/nap.h
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,302 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef NAP_H
 +#define NAP_H
@@ -816,6 +1004,27 @@ index 0000000000..c99f296c89
 +#define NAP_NUM_FEATURES     16
 +#define NAP_SHORT_THRESH_NS  (100 * NSEC_PER_USEC)
 +
++/* ================================================================
++ * POLL short-circuit tunables
++ * ================================================================ */
++
++/* Minimum and safety-margin values for dev->poll_limit_ns written
++ * by nap_compute_poll_limit().  Both are 1 µs: the POLL state
++ * itself checks its timeout only every ~1 µs (POLL_IDLE_RELAX_COUNT
++ * cpu_relax() iterations in drivers/cpuidle/poll_state.c), so
++ * finer-grained values would not produce distinguishable behavior.
++ */
++#define NAP_POLL_LIMIT_MIN_NS      1000ULL
++#define NAP_POLL_LIMIT_MARGIN_NS   1000ULL
++
++/* Refresh interval for the cached minimum-valid-state lookup.
++ * HZ jiffies (= 1 second) bounds the staleness window caused by
++ * sysfs-driven or runtime-driver state disable events.  PM QoS
++ * latency changes are detected immediately via the cached
++ * latency_req comparison.
++ */
++#define NAP_MIN_STATE_REFRESH_JIFFIES  HZ
++
 +struct nap_stats {
 +	u64 total_selects;
 +	u64 total_residency_ns;
@@ -843,6 +1052,16 @@ index 0000000000..c99f296c89
 +	u64     prev_idle_exit;
 +	s64     last_predicted_ns;
 +	s64     last_prediction_error;
++
++	/* Short-circuit fast path (§3.1, §3.2, §3.4 of spec) */
++	bool short_circuited;			/* set in select, read in reflect */
++	int  cached_min_state;			/* cached shallowest valid state */
++	s64  cached_min_state_latency;		/* latency_req when cache populated */
++	unsigned long cached_min_state_jiffies;	/* jiffies when cache populated */
++
++	/* Jiffies-based learning rate floor (§3.5 of spec) */
++	unsigned long last_learn_jiffies;
++	unsigned int  learn_jiffies_min;	/* sysfs-tunable, 0 = disabled */
 +
 +	/* select/reflect handoff */
 +	int   last_selected_idx;
@@ -912,10 +1131,10 @@ index 0000000000..c99f296c89
 +#endif /* NAP_H */
 diff --git a/drivers/cpuidle/governors/nap/nap_fpu.c b/drivers/cpuidle/governors/nap/nap_fpu.c
 new file mode 100644
-index 0000000000..8f07939904
+index 0000000000..cff1a4368b
 --- /dev/null
 +++ b/drivers/cpuidle/governors/nap/nap_fpu.c
-@@ -0,0 +1,577 @@
+@@ -0,0 +1,621 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * nap_fpu.c — FPU/SIMD code for the NAP cpuidle governor
@@ -1084,6 +1303,8 @@ index 0000000000..8f07939904
 +static void nap_init_log2_cost(struct nap_cpu_data *d,
 +			       struct cpuidle_driver *drv)
 +{
++	float log2_tick;
++	int long_start;
 +	int i;
 +
 +	for (i = 0; i < drv->state_count; i++) {
@@ -1093,12 +1314,54 @@ index 0000000000..8f07939904
 +		d->log2_cost[i] = fast_log2f(cost);
 +	}
 +
-+	/* MoE expert boundary: midpoint between shallowest and deepest cost */
-+	if (drv->state_count > 1)
-+		d->expert_mid = (d->log2_cost[1] +
-+				 d->log2_cost[drv->state_count - 1]) / 2.0f;
-+	else
++	/*
++	 * MoE expert boundary — jiffy-based split.
++	 *
++	 * The kernel's natural sleep-duration boundary is one tick:
++	 * idles shorter than a jiffy are tick-bound (the scheduler
++	 * tick will fire within the idle period); idles longer than
++	 * a jiffy enter nohz territory where the tick is stopped.
++	 * This is the physically meaningful boundary between "short
++	 * sleep" and "long sleep" from the scheduler's perspective.
++	 *
++	 * Assign the long expert to all C-states whose cost exceeds
++	 * one jiffy; the short expert covers the rest.  Safety
++	 * fallback: if no state would naturally exceed the jiffy
++	 * (exotic HW, or HZ=100 with very shallow C-states), pin the
++	 * deepest state to the long expert so the mixture remains
++	 * non-trivial.
++	 */
++	if (drv->state_count <= 1) {
 +		d->expert_mid = 0.0f;
++		return;
++	}
++
++	log2_tick = fast_log2f((float)TICK_NSEC);
++
++	/* Default: deepest state belongs to long expert (safety) */
++	long_start = drv->state_count - 1;
++
++	/* Prefer the first state whose cost actually exceeds a jiffy */
++	for (i = 1; i < drv->state_count; i++) {
++		if (d->log2_cost[i] > log2_tick) {
++			long_start = i;
++			break;
++		}
++	}
++
++	if (long_start > 1) {
++		/* Normal case: boundary between last short and first long */
++		d->expert_mid = (d->log2_cost[long_start - 1] +
++				 d->log2_cost[long_start]) / 2.0f;
++	} else {
++		/*
++		 * long_start == 1: even the shallowest C-state already
++		 * exceeds one jiffy.  All NN-handled idles go to the
++		 * long expert; place the boundary just below C1's cost
++		 * so the short expert remains routable but unused.
++		 */
++		d->expert_mid = d->log2_cost[1] - 1.0f;
++	}
 +}
 +
 +/* ================================================================
