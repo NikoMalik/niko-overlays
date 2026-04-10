@@ -998,17 +998,15 @@ index b2e4fd207..c70d6484b 100644
  		/*
  		 * If the fair_server is active, we need to account for the
  		 * fair_server time whether or not the task is running on
-@@ -3842,17 +3870,23 @@ dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
+@@ -3808,15 +3836,21 @@ dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
  
  static void place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags);
  
-- void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
-+ void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
+-static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
++void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
  			    unsigned long weight)
  {
  	bool curr = cfs_rq->curr == se;
- 	bool rel_vprot = false;
- 	u64 vprot;
 +#ifdef CONFIG_SCHED_BORE
 +	s64 vlag_unscaled = 0;
 +#endif /* !CONFIG_SCHED_BORE */
@@ -1022,8 +1020,8 @@ index b2e4fd207..c70d6484b 100644
 +#endif /* !CONFIG_SCHED_BORE */
  		se->deadline -= se->vruntime;
  		se->rel_deadline = 1;
- 		if (curr && protect_slice(se)) {
-@@ -3888,6 +3922,16 @@ void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
+ 		cfs_rq->nr_queued--;
+@@ -3848,6 +3882,16 @@ static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
  
  	enqueue_load_avg(cfs_rq, se);
  	if (se->on_rq) {
@@ -1038,8 +1036,8 @@ index b2e4fd207..c70d6484b 100644
 +		else
 +#endif /* !CONFIG_SCHED_BORE */
  		place_entity(cfs_rq, se, 0);
- 		if (rel_vprot)
- 			se->vprot = se->vruntime + vprot;
+ 		update_load_add(&cfs_rq->load, se->load.weight);
+ 		if (!curr)
 @@ -5205,12 +5249,11 @@ void __setparam_fair(struct task_struct *p, const struct sched_attr *attr)
  static void
  place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
