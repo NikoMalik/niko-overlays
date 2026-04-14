@@ -981,7 +981,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-mm-branch.patch"
 	eapply "${FILESDIR}/6.18.1-kcompressed.patch"
 	eapply "${FILESDIR}/6.18.1-polly.patch"
-	eapply "${FILESDIR}/6.18.1-int-sqrt.patch"
+	# eapply "${FILESDIR}/6.18.1-int-sqrt.patch" // replace with new int-sqrt
 	eapply "${FILESDIR}/6.18.1-reduce-dcache.patch"
 	eapply "${FILESDIR}/6.18.1-bitmap-syscall-audit.patch"
 	eapply "${FILESDIR}/6.18.1-sk-packets-sock.patch"
@@ -1029,11 +1029,12 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
   eapply "${FILESDIR}/6.18.1-cambyses-new.patch"
+  eapply "${FILESDIR}/6.18.1-intsqrt.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	einfo "Applying mglru and sched-fair patch with fuzz=3"
 	patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-sched-fair.patch" || die "sched fair patch failed"
-
+		
 	einfo "Applying local patches"
 
 
