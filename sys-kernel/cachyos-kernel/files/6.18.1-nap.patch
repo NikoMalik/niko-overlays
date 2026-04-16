@@ -147,7 +147,7 @@ index 0000000000..a88de5591a
 +#define NAP_DEFAULT_LR_MILLTHS    1     /* 0.001 = 1 millths */
 +#define NAP_DEFAULT_INTERVAL      4     /* learn every 4 reflects */
 +#define NAP_DEFAULT_CLAMP_MILLTHS 1000  /* 1.0 = 1000 millths */
-+#define NAP_DEFAULT_PCTL_MILLTHS  100   /* 10th percentile */
++#define NAP_DEFAULT_PCTL_MILLTHS  80   /* 10th percentile */
 +
 +/* ================================================================
 + * ISA dispatch via static keys (definitions only; dispatch in nap_fpu.c)
