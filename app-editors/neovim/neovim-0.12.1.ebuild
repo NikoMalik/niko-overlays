@@ -95,7 +95,7 @@ src_configure() {
 		-DENABLE_LTO=ON
 		-DPREFER_LUA=$(usex lua_single_target_luajit no "$(lua_get_version)")
 		-DLUA_PRG="${LUA}"
-	    -DUSE_BUNDLED_BUSTED=0
+	  -DUSE_BUNDLED_BUSTED=0
 		-DCOMPILE_LUA=0
 		# bug 906019: fix hardcoded usage of ccache
 		-DCACHE_PRG=OFF
