@@ -1030,7 +1030,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
   eapply "${FILESDIR}/6.18.1-cambyses-new.patch"
   eapply "${FILESDIR}/6.18.1-intsqrt.patch"
-  # eapply "${FILESDIR}/6.18.1-rt.patch"
+  eapply "${FILESDIR}/6.18.1-rt.patch"
   eapply "${FILESDIR}/6.18.1-map_count.patch"
   # eapply "${FILESDIR}/6.18.1-pci.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
