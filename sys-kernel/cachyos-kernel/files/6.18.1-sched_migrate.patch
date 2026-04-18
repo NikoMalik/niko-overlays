@@ -86,7 +86,7 @@ index 704d0af8e..0655d0b1f 100644
 +static inline int is_short_task(struct task_struct *p)
 +{
 +	return sched_feat(SIS_SHORT) && p->se.dur_avg &&
-+	       ((p->se.dur_avg * 8) < sysctl_sched_min_granularity);
++	       ((p->se.dur_avg * 8) < sysctl_sched_base_slice);
 +}
 +
  /*
