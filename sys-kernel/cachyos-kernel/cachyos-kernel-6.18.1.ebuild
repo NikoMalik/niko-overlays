@@ -1033,6 +1033,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-rt.patch"
   eapply "${FILESDIR}/6.18.1-map_count.patch"
   eapply "${FILESDIR}/6.18.1-unwait.patch"
+  eapply "${FILESDIR}/6.18.1-sched_migrate.patch"
   # eapply "${FILESDIR}/6.18.1-pci.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	einfo "Applying mglru and sched-fair patch with fuzz=3"
