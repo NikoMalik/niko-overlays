@@ -1036,6 +1036,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-sched_migrate.patch"
   eapply "${FILESDIR}/6.18.1-small_buf_file.patch"
   eapply "${FILESDIR}/6.18.1-speedup_entry.patch"
+  eapply "${FILESDIR}/6.18.1-acquire_barrier.patch"
   # eapply "${FILESDIR}/6.18.1-pci.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	einfo "Applying mglru and sched-fair patch with fuzz=3"
