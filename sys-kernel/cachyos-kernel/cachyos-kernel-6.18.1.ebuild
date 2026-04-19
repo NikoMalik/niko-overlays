@@ -1042,6 +1042,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-cpuidle-nvme.patch"
   eapply "${FILESDIR}/6.18.1-dma-buf.patch"
   eapply "${FILESDIR}/6.18.1-kswap-increment.patch"
+  eapply "${FILESDIR}/6.18.1-pctl-stack.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	einfo "Applying mglru and sched-fair patch with fuzz=3"
 	patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
