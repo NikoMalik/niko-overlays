@@ -1,0 +1,108 @@
+From f4273cc5d504279cadf666ec327ca0881aba6dbf Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Wed, 20 May 2020 09:55:17 -0700
+Subject: [PATCH] mm: Don't stop kswapd on a per-node basis when there are no
+ waiters
+
+The page allocator wakes all kswapds in an allocation context's allowed
+nodemask in the slow path, so it doesn't make sense to have the kswapd-
+waiter count per each NUMA node. Instead, it should be a global counter
+to stop all kswapds when there are no failed allocation requests.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+---
+ include/linux/mmzone.h | 1 -
+ mm/internal.h          | 1 +
+ mm/mm_init.c           | 1 -
+ mm/page_alloc.c        | 7 ++++---
+ mm/vmscan.c            | 2 +-
+ 5 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index c362ba15c0da..6ccec1bf2896 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -1380,7 +1380,6 @@ typedef struct pglist_data {
+ 	unsigned long node_spanned_pages; /* total size of physical page
+ 					     range, including holes */
+ 	int node_id;
+-	atomic_t kswapd_waiters;
+ 	wait_queue_head_t kswapd_wait;
+ 	wait_queue_head_t pfmemalloc_wait;
+ 
+diff --git a/mm/internal.h b/mm/internal.h
+index 5c7a2b43ad76..90c36a782db6 100644
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -788,6 +788,7 @@ void post_alloc_hook(struct page *page, unsigned int order, gfp_t gfp_flags);
+ extern bool free_pages_prepare(struct page *page, unsigned int order);
+ 
+ extern int user_min_free_kbytes;
++extern atomic_long_t kswapd_waiters;
+ 
+ struct page *__alloc_frozen_pages_noprof(gfp_t, unsigned int order, int nid,
+ 		nodemask_t *);
+diff --git a/mm/mm_init.c b/mm/mm_init.c
+index 3193dfc82449..eedce9321e13 100644
+--- a/mm/mm_init.c
++++ b/mm/mm_init.c
+@@ -1417,7 +1417,6 @@ static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
+ 
+ 	pgdat_page_ext_init(pgdat);
+ 	lruvec_init(&pgdat->__lruvec);
+-	pgdat->kswapd_waiters = (atomic_t)ATOMIC_INIT(0);
+ }
+ 
+ static void __meminit zone_init_internals(struct zone *zone, enum zone_type idx, int nid,
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 9bb40086509f..a8c7bfcf0eed 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -210,6 +210,8 @@ EXPORT_SYMBOL(node_states);
+ 
+ gfp_t gfp_allowed_mask __read_mostly = GFP_BOOT_MASK;
+ 
++atomic_long_t kswapd_waiters = ATOMIC_LONG_INIT(0);
++
+ #ifdef CONFIG_HUGETLB_PAGE_SIZE_VARIABLE
+ unsigned int pageblock_order __read_mostly;
+ #endif
+@@ -4432,7 +4434,6 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 	unsigned int cpuset_mems_cookie;
+ 	unsigned int zonelist_iter_cookie;
+ 	int reserve_flags;
+-	pg_data_t *pgdat = ac->preferred_zoneref->zone->zone_pgdat;
+ 	bool woke_kswapd = false;
+ 
+ 	if (unlikely(nofail)) {
+@@ -4495,7 +4496,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 
+ 	if (alloc_flags & ALLOC_KSWAPD) {
+ 		if (!woke_kswapd) {
+-			atomic_inc(&pgdat->kswapd_waiters);
++			atomic_long_inc(&kswapd_waiters);
+ 			woke_kswapd = true;
+ 		}
+ 		wake_all_kswapds(order, gfp_mask, ac);
+@@ -4716,7 +4717,7 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ fail:
+ got_pg:
+ 	if (woke_kswapd)
+-		atomic_dec(&pgdat->kswapd_waiters);
++		atomic_long_dec(&kswapd_waiters);
+ 	if (!page)
+ 		warn_alloc(gfp_mask, ac->nodemask,
+ 				"page allocation failure: order:%u", order);
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 8453eca73f47..72c8330c00c0 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -7063,7 +7063,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
+ 		__fs_reclaim_release(_THIS_IP_);
+ 		ret = kthread_freezable_should_stop(&was_frozen);
+ 		__fs_reclaim_acquire(_THIS_IP_);
+-		if (was_frozen || ret || !atomic_read(&pgdat->kswapd_waiters))
++		if (was_frozen || ret || !atomic_long_read(&kswapd_waiters))
+ 			break;
+ 
+ 		/*
