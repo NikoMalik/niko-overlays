@@ -1,18 +1,18 @@
-From d873e461b0486ebc5d6e21d0aa4ebdd4310b5acd Mon Sep 17 00:00:00 2001
+From 93ab613306aafc4d912a5b8e44be36e51ce34d69 Mon Sep 17 00:00:00 2001
 From: Masahito S <firelzrd@gmail.com>
-Date: Sun, 5 Apr 2026 09:51:02 +0900
-Subject: [PATCH] 6.18.3-poc-selector-v2.5.3r2
+Date: Sun, 19 Apr 2026 02:23:59 +0900
+Subject: [PATCH] 6.18.3-poc-selector-v2.5.5
 
 ---
  include/linux/sched/topology.h |   50 +-
  init/Kconfig                   |   13 +
  kernel/sched/ext.c             |    7 +
  kernel/sched/fair.c            |  166 +++-
- kernel/sched/idle.c            |   10 +
- kernel/sched/poc_selector.c    | 1688 ++++++++++++++++++++++++++++++++
- kernel/sched/sched.h           |  112 +++
+ kernel/sched/idle.c            |    8 +
+ kernel/sched/poc_selector.c    | 1691 ++++++++++++++++++++++++++++++++
+ kernel/sched/sched.h           |  115 +++
  kernel/sched/topology.c        |  226 +++++
- 8 files changed, 2234 insertions(+), 38 deletions(-)
+ 8 files changed, 2238 insertions(+), 38 deletions(-)
  create mode 100644 kernel/sched/poc_selector.c
 
 diff --git a/include/linux/sched/topology.h b/include/linux/sched/topology.h
@@ -377,39 +377,36 @@ index 967ca52fb2..0872d42a28 100644
  	rcu_read_unlock();
  
 diff --git a/kernel/sched/idle.c b/kernel/sched/idle.c
-index c39b089d4f..3fffa1a43f 100644
+index c39b089d4f..f4a5f622c6 100644
 --- a/kernel/sched/idle.c
 +++ b/kernel/sched/idle.c
-@@ -275,6 +275,11 @@ static void do_idle(void)
- 	__current_set_polling();
- 	tick_nohz_idle_enter();
+@@ -456,12 +456,20 @@ static void put_prev_task_idle(struct rq *rq, struct task_struct *prev, struct t
+ {
+ 	dl_server_update_idle_time(rq, prev);
+ 	scx_update_idle(rq, false, true);
++#ifdef CONFIG_SCHED_POC_SELECTOR
++	/* POC Selector: mark CPU as busy (symmetric with set_next_task_idle) */
++	set_cpu_idle_state_poc(cpu_of(rq), 0);
++#endif
+ }
  
+ static void set_next_task_idle(struct rq *rq, struct task_struct *next, bool first)
+ {
+ 	update_idle_core(rq);
+ 	scx_update_idle(rq, true, true);
 +#ifdef CONFIG_SCHED_POC_SELECTOR
 +	/* POC Selector: mark CPU as idle */
-+	set_cpu_idle_state_poc(cpu, 1);
++	set_cpu_idle_state_poc(cpu_of(rq), 1);
 +#endif /* CONFIG_SCHED_POC_SELECTOR */
-+
- 	while (!need_resched()) {
- 
- 		/*
-@@ -332,6 +337,11 @@ static void do_idle(void)
- 		arch_cpu_idle_exit();
- 	}
- 
-+#ifdef CONFIG_SCHED_POC_SELECTOR
-+	/* POC Selector: mark CPU as busy */
-+	set_cpu_idle_state_poc(cpu, 0);
-+#endif /* CONFIG_SCHED_POC_SELECTOR */
-+
- 	/*
- 	 * Since we fell out of the loop above, we know TIF_NEED_RESCHED must
- 	 * be set, propagate it into PREEMPT_NEED_RESCHED.
+ 	schedstat_inc(rq->sched_goidle);
+ 	next->se.exec_start = rq_clock_task(rq);
+ }
 diff --git a/kernel/sched/poc_selector.c b/kernel/sched/poc_selector.c
 new file mode 100644
-index 0000000000..ad4ef22293
+index 0000000000..1cb46e737f
 --- /dev/null
 +++ b/kernel/sched/poc_selector.c
-@@ -0,0 +1,1688 @@
+@@ -0,0 +1,1691 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Piece-Of-Cake (POC) CPU Selector
@@ -449,7 +446,7 @@ index 0000000000..ad4ef22293
 +#define SCHED_POC_SELECTOR_AUTHOR   "Masahito Suzuki"
 +#define SCHED_POC_SELECTOR_PROGNAME "Piece-Of-Cake (POC) CPU Selector"
 +
-+#define SCHED_POC_SELECTOR_VERSION  "2.5.3"
++#define SCHED_POC_SELECTOR_VERSION  "2.5.5"
 +
 +/**************************************************************
 + * Static keys:
@@ -980,6 +977,11 @@ index 0000000000..ad4ef22293
 + */
 +void __set_cpu_idle_state_poc(int cpu, int state)
 +{
++	struct rq *rq = cpu_rq(cpu);
++	if (!static_branch_unlikely(&sched_poc_lockless_bitmap) &&
++			!state && READ_ONCE(rq->poc_idle_committed))
++		return;
++
 +	guard(rcu)();
 +	struct sched_domain_shared *sd_share =
 +		rcu_dereference(per_cpu(sd_llc_shared, cpu));
@@ -993,7 +995,7 @@ index 0000000000..ad4ef22293
 +		WRITE_ONCE(sd_share->poc_idle_cpus[bit], state > 0 ? 1 : 0);
 +	} else if (state > 0) {
 +		/* Entering idle: clear any stale committed flag */
-+		WRITE_ONCE(cpu_rq(cpu)->poc_idle_committed, 0);
++		WRITE_ONCE(rq->poc_idle_committed, 0);
 +		atomic64_or(bit_mask, &sd_share->poc_idle_cpus_mask);
 +	} else {
 +		/*
@@ -1002,10 +1004,8 @@ index 0000000000..ad4ef22293
 +		 * cacheline.  The flag lives in rq's first cacheline —
 +		 * same line the waker already dirtied via ttwu_pending.
 +		 */
-+		if (READ_ONCE(cpu_rq(cpu)->poc_idle_committed))
-+			WRITE_ONCE(cpu_rq(cpu)->poc_idle_committed, 0);
-+		else
-+			atomic64_andnot(bit_mask, &sd_share->poc_idle_cpus_mask);
++		atomic64_andnot(bit_mask, &sd_share->poc_idle_cpus_mask);
++		WRITE_ONCE(rq->poc_idle_committed, 1);
 +	}
 +
 +#ifdef CONFIG_SCHED_SMT
@@ -2099,7 +2099,7 @@ index 0000000000..ad4ef22293
 +#endif /* CONFIG_SYSFS */
 +#endif /* CONFIG_SCHED_POC_SELECTOR */
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index adfb6e3409..f9c36f56be 100644
+index adfb6e3409..4f2eb29a58 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
 @@ -1135,6 +1135,9 @@ struct rq {
@@ -2112,9 +2112,9 @@ index adfb6e3409..f9c36f56be 100644
  	u64			nr_switches;
  
  #ifdef CONFIG_UCLAMP_TASK
-@@ -3134,6 +3137,115 @@ extern void nohz_run_idle_balance(int cpu);
- static inline void nohz_run_idle_balance(int cpu) { }
- #endif
+@@ -2197,8 +2200,119 @@ static inline struct task_group *task_group(struct task_struct *p)
+ 
+ #endif /* !CONFIG_CGROUP_SCHED */
  
 +#ifdef CONFIG_SCHED_POC_SELECTOR
 +extern struct static_key_true poc_selector_active;
@@ -2128,6 +2128,7 @@ index adfb6e3409..f9c36f56be 100644
 +extern struct static_key_true sched_poc_smt_consecutive;
 +extern struct static_key_true sched_poc_smt_uniform;
 +extern struct static_key_false sched_poc_target_sticky;
++extern struct static_key_true sched_poc_eager_commit;
 +extern struct static_key_true sched_poc_packed;
 +extern struct static_key_false sched_poc_lockless_bitmap;
 +extern void __set_cpu_idle_state_poc(int cpu, int state);
@@ -2220,10 +2221,21 @@ index adfb6e3409..f9c36f56be 100644
 +		return (lo >> shift) | (hi << (64 - shift));
 +	}
 +}
++#endif /* CONFIG_SCHED_POC_SELECTOR */
 +
-+#else
-+static inline void set_cpu_idle_state_poc(int cpu, int state) { }
+ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
+ {
++#ifdef CONFIG_SCHED_POC_SELECTOR
++	if (cpu_rq(cpu)->idle_stamp)
++		set_cpu_idle_state_poc(cpu, 0);
 +#endif
+ 	set_task_rq(p, cpu);
+ #ifdef CONFIG_SMP
+ 	/*
+@@ -3134,6 +3248,7 @@ extern void nohz_run_idle_balance(int cpu);
+ static inline void nohz_run_idle_balance(int cpu) { }
+ #endif
+ 
 +
  #include "stats.h"
  
