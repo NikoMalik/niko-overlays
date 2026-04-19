@@ -1,0 +1,44 @@
+From fbb5a69bdc29e86760b8d484288f745dbbbde251 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sun, 26 Sep 2021 00:29:38 -0700
+Subject: [PATCH 3/3] mm: Omit RCU read lock in list_lru_count_one() when RCU
+ isn't needed
+
+The RCU read lock isn't necessary in list_lru_count_one() when the
+condition that requires RCU (CONFIG_MEMCG && !CONFIG_SLOB) isn't met.
+The highly-frequent RCU lock and unlock adds measurable overhead to the
+shrink_slab() path when it isn't needed. As such, we can simply omit the
+RCU read lock in this case to improve performance.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+yf: Updated for 6.18 base, removed SLOB check as it's not present
+Signed-off-by: Yaroslav Furman <yaro330@gmail.com>
+---
+ mm/list_lru.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/mm/list_lru.c b/mm/list_lru.c
+index ec48b5dadf51..96cbda415ae1 100644
+--- a/mm/list_lru.c
++++ b/mm/list_lru.c
+@@ -252,6 +252,7 @@ EXPORT_SYMBOL_GPL(list_lru_isolate_move);
+ unsigned long list_lru_count_one(struct list_lru *lru,
+ 				 int nid, struct mem_cgroup *memcg)
+ {
++#if defined(CONFIG_MEMCG)
+ 	struct list_lru_one *l;
+ 	long count;
+ 
+@@ -264,6 +265,9 @@ unsigned long list_lru_count_one(struct list_lru *lru,
+ 		count = 0;
+ 
+ 	return count;
++#else
++	return READ_ONCE(lru->node[nid].lru.nr_items);
++#endif
+ }
+ EXPORT_SYMBOL_GPL(list_lru_count_one);
+ 
+-- 
+2.52.0
+
