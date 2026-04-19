@@ -1,0 +1,240 @@
+---
+ drivers/cpuidle/Kconfig          |  10 ++++
+ drivers/cpuidle/Makefile         |   1 +
+ drivers/cpuidle/governors/menu.c |   4 ++
+ drivers/cpuidle/psd.c            | 104 +++++++++++++++++++++++++++++++++++++++
+ drivers/nvme/host/pci.c          |   3 ++
+ include/linux/cpuidle_psd.h      |  32 ++++++++++++
+ 6 files changed, 154 insertions(+)
+
+diff --git a/drivers/cpuidle/Kconfig b/drivers/cpuidle/Kconfig
+index cac5997dca50..b47b8e9e77b6 100644
+--- a/drivers/cpuidle/Kconfig
++++ b/drivers/cpuidle/Kconfig
+@@ -81,6 +81,16 @@ config HALTPOLL_CPUIDLE
+ 	 before halting in the guest (more efficient than polling in the
+ 	 host via halt_poll_ns for some scenarios).
+ 
++config CPU_IDLE_PSD
++	bool "prevent sleep demotion (PSD) for fast I/O devices"
++        default y
++        help
++         This option enables deferring of deep sleep states when a future
++         I/O based servicing event very probably going to happen in the very
++         near future, such as handling fast NVME device I/O. This reduces
++         uncessary transistions to deep idle sleep and reduces latency. This
++         provides the latency benefits of disabling deep sleep with the
++         power saving benefits of deep sleep when I/O is idle.
+ endif
+ 
+ config ARCH_NEEDS_CPU_IDLE_COUPLED
+diff --git a/drivers/cpuidle/Makefile b/drivers/cpuidle/Makefile
+index 1de9e92c5b0f..b219d488fe41 100644
+--- a/drivers/cpuidle/Makefile
++++ b/drivers/cpuidle/Makefile
+@@ -12,6 +12,7 @@ obj-$(CONFIG_DT_IDLE_STATES)		  += dt_idle_states.o
+ obj-$(CONFIG_DT_IDLE_GENPD)		  += dt_idle_genpd.o
+ obj-$(CONFIG_ARCH_HAS_CPU_RELAX)	  += poll_state.o
+ obj-$(CONFIG_HALTPOLL_CPUIDLE)		  += cpuidle-haltpoll.o
++obj-$(CONFIG_CPU_IDLE_PSD)	  	  += psd.o
+ 
+ ##################################################################################
+ # ARM SoC drivers
+diff --git a/drivers/cpuidle/governors/menu.c b/drivers/cpuidle/governors/menu.c
+index ca863ba03d45..24c2a454cb47 100644
+--- a/drivers/cpuidle/governors/menu.c
++++ b/drivers/cpuidle/governors/menu.c
+@@ -16,6 +16,7 @@
+ #include <linux/tick.h>
+ #include <linux/sched/stat.h>
+ #include <linux/math64.h>
++#include <linux/cpuidle_psd.h>
+ 
+ #include "gov.h"
+ 
+@@ -237,6 +238,9 @@ static int menu_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
+ 		menu_update_intervals(data, UINT_MAX);
+ 	}
+ 
++	if (have_prevent_sleep_demotion())
++		latency_req = 0;
++
+ 	/* Find the shortest expected idle interval. */
+ 	predicted_ns = get_typical_interval(data) * NSEC_PER_USEC;
+ 	if (predicted_ns > RESIDENCY_THRESHOLD_NS || tick_nohz_tick_stopped()) {
+diff --git a/drivers/cpuidle/psd.c b/drivers/cpuidle/psd.c
+new file mode 100644
+index 000000000000..92251178a0b9
+--- /dev/null
++++ b/drivers/cpuidle/psd.c
+@@ -0,0 +1,104 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ *  Copyright (C) 2025 Intel Corporation
++ *  Author: Colin Ian King <colin.king@intel.com>
++ *
++ *  Kernel Prevent Sleep Demotion (PSD)
++ */
++#include <linux/kernel.h>
++#include <linux/cpu.h>
++#include <linux/device.h>
++#include <linux/percpu.h>
++#include <linux/jiffies.h>
++#include <linux/cpuidle_psd.h>
++
++/* jiffies at which the lease times out */
++static DEFINE_PER_CPU(unsigned long, psd_timeout);
++static int psd_cpu_lat_timeout_jiffies;
++
++/*
++ * A note about the use of the current cpu versus preemption.
++ *
++ * The use of have_prevent_sleep_demotion() is inside local
++ * power management code, and are pinned to that cpu already.
++ *
++ * On the "set" side, interrupt level code is obviously also fully
++ * migration-race free.
++ *
++ * All other cases are exposed to a migration-race.
++ *
++ * The goal of prevent sleep demotion is statistical rather than
++ * deterministic, e.g. on average the CPU that hits event X will go
++ * towards Y more often than not, and the impact of being wrong is a
++ * bit of extra power potentially for some short durations.
++ * Weighted against the costs in performance and complexity of dealing
++ * with the race, the race condition is acceptable.
++ *
++ * The second known race is where interrupt context might set a
++ * psd time in the middle of process context setting a different but
++ * psd smaller time, with the result that process context will win
++ * incorrectly, and the actual psd time will be less than expected,
++ * but still non-zero. Here also the cost of dealing with the race
++ * is outweight with the limited impact.
++ *
++ * The use of timings in jiffies is intentional, it is lightweight
++ * read and very fast. While it mau seem that using finer resolution
++ * timings is preferable, the expense is too high on I/O fast paths
++ * when preventing sleep demotions via prevent_sleep_demotion.
++ *
++ */
++int have_prevent_sleep_demotion(void)
++{
++	if (likely(psd_cpu_lat_timeout_jiffies)) {
++		int cpu = raw_smp_processor_id();
++
++		if (time_before(jiffies, per_cpu(psd_timeout, cpu)))
++			return 1;
++
++		/* keep the stored time value close to current */
++		per_cpu(psd_timeout, cpu) = jiffies;
++	}
++	return 0;
++}
++EXPORT_SYMBOL_GPL(have_prevent_sleep_demotion);
++
++void prevent_sleep_demotion(void)
++{
++	if (likely(psd_cpu_lat_timeout_jiffies)) {
++		const unsigned long next_jiffies = jiffies + psd_cpu_lat_timeout_jiffies;
++		const int cpu = raw_smp_processor_id();
++
++		/*  need to round up an extra jiffie */
++		if (time_before(per_cpu(psd_timeout, cpu), next_jiffies))
++			per_cpu(psd_timeout, cpu) = next_jiffies;
++	}
++}
++EXPORT_SYMBOL_GPL(prevent_sleep_demotion);
++
++static int psd_msecs_to_jiffies(const int msec)
++{
++	int ret = msecs_to_jiffies(msec);
++
++	return msec > 0 && ret == 0 ? 1 : ret;
++}
++
++static __init int prevent_sleep_demotion_init(void)
++{
++	struct device *dev_root = bus_get_dev_root(&cpu_subsys);
++	unsigned int cpu;
++
++	if (!dev_root)
++		return -1;
++
++	psd_cpu_lat_timeout_jiffies = psd_msecs_to_jiffies(PSD_NVME_DISK_MSEC);
++
++	pr_info("cpuidle-psd: using %d msec (%d jiffies) for idle timing\n",
++		PSD_NVME_DISK_MSEC, psd_cpu_lat_timeout_jiffies);
++
++	for_each_possible_cpu(cpu)
++		per_cpu(psd_timeout, cpu) = jiffies;
++
++	return 0;
++}
++
++late_initcall(prevent_sleep_demotion_init);
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index f6d4f5910bdb..0633ba2916a6 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -27,6 +27,7 @@
+ #include <linux/io-64-nonatomic-lo-hi.h>
+ #include <linux/io-64-nonatomic-hi-lo.h>
+ #include <linux/sed-opal.h>
++#include <linux/cpuidle_psd.h>
+ 
+ #include "trace.h"
+ #include "nvme.h"
+@@ -1283,6 +1284,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
+ 	ret = nvme_prep_rq(req);
+ 	if (unlikely(ret))
+ 		return ret;
++	prevent_sleep_demotion();
+ 	spin_lock(&nvmeq->sq_lock);
+ 	nvme_sq_copy_cmd(nvmeq, &iod->cmd);
+ 	nvme_write_sq_db(nvmeq, bd->last);
+@@ -1328,6 +1330,7 @@ static void nvme_queue_rqs(struct rq_list *rqlist)
+ 	struct nvme_queue *nvmeq = NULL;
+ 	struct request *req;
+ 
++	prevent_sleep_demotion();
+ 	while ((req = rq_list_pop(rqlist))) {
+ 		if (nvmeq && nvmeq != req->mq_hctx->driver_data)
+ 			nvme_submit_cmds(nvmeq, &submit_list);
+diff --git a/include/linux/cpuidle_psd.h b/include/linux/cpuidle_psd.h
+new file mode 100644
+index 000000000000..5bcca5d53675
+--- /dev/null
++++ b/include/linux/cpuidle_psd.h
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ *  Copyright (C) 2025 Intel Corporation
++ *  Author: Colin Ian King <colin.king@intel.com>
++ *
++ *  Kernel prevent sleep demotion infrastructructure
++ */
++#ifndef _LINUX_CPUIDLE_PSD_H
++#define _LINUX_CPUIDLE_PSD_H
++
++/* duration of sleep demotion for PCIe NVME disks in msec */
++#define PSD_NVME_DISK_MSEC		(1)
++
++/* API prototypes */
++#ifdef CONFIG_CPU_IDLE_PSD
++
++extern void prevent_sleep_demotion(void);
++extern int have_prevent_sleep_demotion(void);
++
++#else
++
++static inline void prevent_sleep_demotion(void)
++{
++}
++
++static inline int have_prevent_sleep_demotion(void)
++{
++	return 0;
++}
++#endif
++
++#endif
