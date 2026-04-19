@@ -1041,6 +1041,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-pci.patch"
   eapply "${FILESDIR}/6.18.1-cpuidle-nvme.patch"
   eapply "${FILESDIR}/6.18.1-dma-buf.patch"
+  eapply "${FILESDIR}/6.18.1-kswap-waiters.patch"
   eapply "${FILESDIR}/6.18.1-kswap-increment.patch"
   eapply "${FILESDIR}/6.18.1-pctl-stack.patch"
   eapply "${FILESDIR}/6.18.1-numa-present.patch"

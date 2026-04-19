@@ -1,0 +1,100 @@
+From 1172e7bb1f4ab29e04f31f848d58dcd2f4d8a6b0 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Sun, 19 Apr 2020 19:59:18 -0700
+Subject: [PATCH] mm: Stop kswapd early when nothing's waiting for it to free
+ pages
+
+Keeping kswapd running when all the failed allocations that invoked it
+are satisfied incurs a high overhead due to unnecessary page eviction
+and writeback, as well as spurious VM pressure events to various
+registered shrinkers. When kswapd doesn't need to work to make an
+allocation succeed anymore, stop it prematurely to save resources.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+---
+ include/linux/mmzone.h |  1 +
+ mm/mm_init.c           |  1 +
+ mm/page_alloc.c        | 16 +++++++++++++---
+ mm/vmscan.c            |  2 +-
+ 4 files changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index 6ccec1bf2896..c362ba15c0da 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -1380,6 +1380,7 @@ typedef struct pglist_data {
+ 	unsigned long node_spanned_pages; /* total size of physical page
+ 					     range, including holes */
+ 	int node_id;
++	atomic_t kswapd_waiters;
+ 	wait_queue_head_t kswapd_wait;
+ 	wait_queue_head_t pfmemalloc_wait;
+ 
+diff --git a/mm/mm_init.c b/mm/mm_init.c
+index eedce9321e13..3193dfc82449 100644
+--- a/mm/mm_init.c
++++ b/mm/mm_init.c
+@@ -1417,6 +1417,7 @@ static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
+ 
+ 	pgdat_page_ext_init(pgdat);
+ 	lruvec_init(&pgdat->__lruvec);
++	pgdat->kswapd_waiters = (atomic_t)ATOMIC_INIT(0);
+ }
+ 
+ static void __meminit zone_init_internals(struct zone *zone, enum zone_type idx, int nid,
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 010909dd38f7..9bb40086509f 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -4432,6 +4432,8 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 	unsigned int cpuset_mems_cookie;
+ 	unsigned int zonelist_iter_cookie;
+ 	int reserve_flags;
++	pg_data_t *pgdat = ac->preferred_zoneref->zone->zone_pgdat;
++	bool woke_kswapd = false;
+ 
+ 	if (unlikely(nofail)) {
+ 		/*
+@@ -4491,8 +4493,13 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 			goto nopage;
+ 	}
+ 
+-	if (alloc_flags & ALLOC_KSWAPD)
++	if (alloc_flags & ALLOC_KSWAPD) {
++		if (!woke_kswapd) {
++			atomic_inc(&pgdat->kswapd_waiters);
++			woke_kswapd = true;
++		}
+ 		wake_all_kswapds(order, gfp_mask, ac);
++	}
+ 
+ 	/*
+ 	 * The adjusted alloc_flags might result in immediate success, so try
+@@ -4707,9 +4714,12 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 		goto retry;
+ 	}
+ fail:
+-	warn_alloc(gfp_mask, ac->nodemask,
+-			"page allocation failure: order:%u", order);
+ got_pg:
++	if (woke_kswapd)
++		atomic_dec(&pgdat->kswapd_waiters);
++	if (!page)
++		warn_alloc(gfp_mask, ac->nodemask,
++				"page allocation failure: order:%u", order);
+ 	return page;
+ }
+ 
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 3783e45bfc92..8453eca73f47 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -7063,7 +7063,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
+ 		__fs_reclaim_release(_THIS_IP_);
+ 		ret = kthread_freezable_should_stop(&was_frozen);
+ 		__fs_reclaim_acquire(_THIS_IP_);
+-		if (was_frozen || ret)
++		if (was_frozen || ret || !atomic_read(&pgdat->kswapd_waiters))
+ 			break;
+ 
+ 		/*
