@@ -1033,7 +1033,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-rt.patch"
   eapply "${FILESDIR}/6.18.1-map_count.patch"
   eapply "${FILESDIR}/6.18.1-unwait.patch"
-  eapply "${FILESDIR}/6.18.1-sched_migrate.patch"
+  # eapply "${FILESDIR}/6.18.1-sched_migrate.patch"
   eapply "${FILESDIR}/6.18.1-small_buf_file.patch"
   eapply "${FILESDIR}/6.18.1-speedup_entry.patch"
   eapply "${FILESDIR}/6.18.1-acquire_barrier.patch"
