@@ -1040,7 +1040,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-limit-cpu.patch"
   eapply "${FILESDIR}/6.18.1-pci.patch"
   eapply "${FILESDIR}/6.18.1-cpuidle-nvme.patch"
-  eapply "${FILESDIR}/6.18.1-dma-buf.patch"
+  # eapply "${FILESDIR}/6.18.1-dma-buf.patch"
   eapply "${FILESDIR}/6.18.1-kswap-waiters.patch"
   eapply "${FILESDIR}/6.18.1-kswap-per-node.patch"
   eapply "${FILESDIR}/6.18.1-kswap-increment.patch"
