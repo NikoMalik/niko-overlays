@@ -14,7 +14,7 @@ LLVM_OPTIONAL=1
 
 inherit eapi9-pipestatus toolchain-funcs flag-o-matic llvm-r2 kernel-build
 
-# https://dev.gentoo.org/~mgorny/dist/linux/
+# https://distfiles.gentoo.org/pub/proj/dist-kernel/patchsets/
 GENTOO_PATCHSET=linux-gentoo-patches-6.18.1
 # https://github.com/projg2/gentoo-kernel-config
 GENTOO_CONFIG_VER=g18
@@ -69,7 +69,7 @@ HOMEPAGE="
 # Gentoo patches and config
 # the rest will be set via helpers below
 SRC_URI="
-	https://dev.gentoo.org/~mgorny/dist/linux/${GENTOO_PATCHSET}.tar.xz
+	distfiles.gentoo.org/pub/proj/dist-kernel/patchsets/6.18/${GENTOO_PATCHSET}.tar.xz
 	https://github.com/projg2/gentoo-kernel-config/archive/${GENTOO_CONFIG_VER}.tar.gz
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
