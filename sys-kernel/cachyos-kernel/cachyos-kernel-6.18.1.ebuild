@@ -69,7 +69,7 @@ HOMEPAGE="
 # Gentoo patches and config
 # the rest will be set via helpers below
 SRC_URI="
-	distfiles.gentoo.org/pub/proj/dist-kernel/patchsets/6.18/${GENTOO_PATCHSET}.tar.xz
+	https://distfiles.gentoo.org/pub/proj/dist-kernel/patchsets/6.18/${GENTOO_PATCHSET}.tar.xz
 	https://github.com/projg2/gentoo-kernel-config/archive/${GENTOO_CONFIG_VER}.tar.gz
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
