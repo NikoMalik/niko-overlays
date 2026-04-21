@@ -1048,6 +1048,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-numa-present.patch"
   eapply "${FILESDIR}/6.18.1-list-lock.patch"
   eapply "${FILESDIR}/6.18.1-file-8.patch"
+  eapply "${FILESDIR}/6.18.1-sched_core_branch.patch"
   # eapply "${FILESDIR}/6.18.1-f2f2_congestion.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
