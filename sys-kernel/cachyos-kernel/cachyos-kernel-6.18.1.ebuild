@@ -1031,7 +1031,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-cambyses-new.patch"
   eapply "${FILESDIR}/6.18.1-intsqrt.patch"
   eapply "${FILESDIR}/6.18.1-rt.patch"
-  eapply "${FILESDIR}/6.18.1-map_count.patch"
+  # eapply "${FILESDIR}/6.18.1-map_count.patch"
   eapply "${FILESDIR}/6.18.1-unwait.patch"
   # eapply "${FILESDIR}/6.18.1-sched_migrate.patch"
   # eapply "${FILESDIR}/6.18.1-small_buf_file.patch"
@@ -1049,6 +1049,8 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-list-lock.patch"
   eapply "${FILESDIR}/6.18.1-file-8.patch"
   eapply "${FILESDIR}/6.18.1-sched_core_branch.patch"
+  eapply "${FILESDIR}/6.18.1-kmp_branch.patch"
+  eapply "${FILESDIR}/6.18.1-vbs_free.patch"
   # eapply "${FILESDIR}/6.18.1-f2f2_congestion.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
