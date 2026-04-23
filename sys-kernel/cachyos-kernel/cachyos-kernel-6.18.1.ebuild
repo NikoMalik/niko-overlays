@@ -826,6 +826,7 @@ cachy_use_config() {
 	kconf set BUSY_POLL
 
 	kconf unset DEBUG_MEMORY_INIT
+
     kconf unset SHRINKER_DEBUG
 	kconf unset BLK_DEBUG_FS
     kconf unset MODULE_DEBUGFS
@@ -880,13 +881,13 @@ cachy_use_config() {
 	kconf unset SCHEDSTATS
     # kconf unset FTRACE  # needed for BPF_EVENTS
     kconf unset FUNCTION_TRACER
+		kconf unset FTRACE
     kconf unset STACK_TRACER
     kconf unset SCHED_TRACER
     # kconf unset KPROBES  # needed for BPF_EVENTS
     kconf unset PROFILING
+		kconf unset KPROBES
     kconf unset NUMA_BALANCING
-
-
     kconf unset ACPI_DEBUG
     kconf unset PM_DEBUG
     kconf unset PM_SLEEP_DEBUG
@@ -896,6 +897,7 @@ cachy_use_config() {
 	kconf unset SLUB_DEBUG
 	kconf unset DEBUG_MEMORY
 	kconf unset SND_DEBUG
+  kconf unset SLUB_DEBUG
 	# BPF_EVENTS will be enabled automatically when FTRACE and KPROBES are enabled
 
 
@@ -1050,7 +1052,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-file-8.patch"
   eapply "${FILESDIR}/6.18.1-sched_core_branch.patch"
   eapply "${FILESDIR}/6.18.1-vbs_free.patch"
-  # eapply "${FILESDIR}/6.18.1-f2f2_congestion.patch"
+  eapply "${FILESDIR}/6.18.1-f2f2_congestion.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
