@@ -1,24 +1,8 @@
-From 6c5636885b0ce725b9acf5efaa21b7c48604f6f0 Mon Sep 17 00:00:00 2001
-From: Yaroslav Furman <yaro330@gmail.com>
-Date: Fri, 23 Jan 2026 17:42:57 +0200
-Subject: [PATCH] Applied:
- ../patches/0001-sched-Resolve-sched_feat-at-compile-time-to-improve-.patch
-
----
- kernel/sched/core.c     |  24 ++++------
- kernel/sched/debug.c    | 124 ------------------------------------------------
- kernel/sched/features.h |  56 +++++++++++-----------
- kernel/sched/rt.c       |  10 ++--
- kernel/sched/sched.h    |  37 +--------------
- kernel/sched/smp.h      |   4 ++
- kernel/smp.c            |   1 +
- 7 files changed, 50 insertions(+), 206 deletions(-)
-
 diff --git a/kernel/sched/core.c b/kernel/sched/core.c
-index eb47d294e2c5..8b3dd369c9b9 100644
+index a48dbcf3e..119a3cb13 100644
 --- a/kernel/sched/core.c
 +++ b/kernel/sched/core.c
-@@ -152,20 +152,6 @@ static int __init setup_proxy_exec(char *str)
+@@ -155,19 +155,6 @@ static int __init setup_proxy_exec(char *str)
  #endif
  __setup("sched_proxy_exec", setup_proxy_exec);
  
@@ -35,19 +19,19 @@ index eb47d294e2c5..8b3dd369c9b9 100644
 -#include "features.h"
 -	0;
 -#undef SCHED_FEAT
--
+ 
  /*
   * Print a warning if need_resched is set for the given duration (if
-  * LATENCY_WARN is enabled).
-@@ -3783,6 +3769,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
+@@ -3784,7 +3771,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
+ 
  	return ret;
  }
- 
+-
 +#if SCHED_FEAT_TTWU_QUEUE
  void sched_ttwu_pending(void *arg)
  {
  	struct llist_node *llist = arg;
-@@ -3819,6 +3806,7 @@ void sched_ttwu_pending(void *arg)
+@@ -3821,6 +3808,7 @@ void sched_ttwu_pending(void *arg)
  	WRITE_ONCE(rq->ttwu_pending, 0);
  	rq_unlock_irqrestore(rq, &rf);
  }
@@ -55,15 +39,16 @@ index eb47d294e2c5..8b3dd369c9b9 100644
  
  /*
   * Prepare the scene for sending an IPI for a remote smp_call
-@@ -3836,6 +3824,7 @@ bool call_function_single_prep_ipi(int cpu)
+@@ -3837,7 +3825,7 @@ bool call_function_single_prep_ipi(int cpu)
+ 
  	return true;
  }
- 
+-
 +#if SCHED_FEAT_TTWU_QUEUE
  /*
   * Queue a task on the target CPUs wake_list and wake the CPU via IPI if
   * necessary. The wakee CPU on receipt of the IPI will queue the task
-@@ -3853,6 +3842,7 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
+@@ -3855,6 +3843,7 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
  	__smp_call_single_queue(cpu, &p->wake_entry.llist);
  #endif
  }
@@ -71,59 +56,66 @@ index eb47d294e2c5..8b3dd369c9b9 100644
  
  void wake_up_if_idle(int cpu)
  {
-@@ -3897,6 +3887,7 @@ bool cpus_share_resources(int this_cpu, int that_cpu)
+@@ -3898,7 +3887,7 @@ bool cpus_share_resources(int this_cpu, int that_cpu)
+ 
  	return per_cpu(sd_share_id, this_cpu) == per_cpu(sd_share_id, that_cpu);
  }
- 
+-
 +#if SCHED_FEAT_TTWU_QUEUE
  static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
  {
  	/* See SCX_OPS_ALLOW_QUEUED_WAKEUP. */
-@@ -3956,14 +3947,17 @@ static bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
+@@ -3947,6 +3936,7 @@ static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
  
  	return false;
  }
 +#endif
  
- static void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
+ static bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
+ {
+@@ -3963,10 +3953,10 @@ static void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
  {
  	struct rq *rq = cpu_rq(cpu);
  	struct rq_flags rf;
- 
+-
 +#if SCHED_FEAT_TTWU_QUEUE
  	if (ttwu_queue_wakelist(p, cpu, wake_flags))
  		return;
+-
 +#endif
- 
  	rq_lock(rq, &rf);
  	update_rq_clock(rq);
-@@ -4245,6 +4239,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+ 	ttwu_do_activate(rq, p, wake_flags, &rf);
+@@ -4246,7 +4236,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+ 		 * enqueue, such as ttwu_queue_wakelist().
  		 */
  		WRITE_ONCE(p->__state, TASK_WAKING);
- 
+-
 +#if SCHED_FEAT_TTWU_QUEUE
  		/*
  		 * If the owning (remote) CPU is still in the middle of schedule() with
  		 * this task as prev, considering queueing p on the remote CPUs wake_list
-@@ -4267,6 +4262,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+@@ -4269,7 +4259,8 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
  		if (smp_load_acquire(&p->on_cpu) &&
  		    ttwu_queue_wakelist(p, task_cpu(p), wake_flags))
  			break;
+-
 +#endif
- 
++ 
  		/*
  		 * If the owning (remote) CPU is still in the middle of schedule() with
+ 		 * this task as prev, wait until it's done referencing the task.
 diff --git a/kernel/sched/debug.c b/kernel/sched/debug.c
-index 41caa22e0680..21e600f0348f 100644
+index 751df396d..91b16cf71 100644
 --- a/kernel/sched/debug.c
 +++ b/kernel/sched/debug.c
-@@ -47,128 +47,6 @@ static unsigned long nsec_low(unsigned long long nsec)
+@@ -47,127 +47,7 @@ static unsigned long nsec_low(unsigned long long nsec)
  
  #define SPLIT_NS(x) nsec_high(x), nsec_low(x)
  
 -#define SCHED_FEAT(name, enabled)	\
 -	#name ,
--
+ 
 -static const char * const sched_feat_names[] = {
 -#include "features.h"
 -};
@@ -242,11 +234,10 @@ index 41caa22e0680..21e600f0348f 100644
 -	.llseek		= seq_lseek,
 -	.release	= single_release,
 -};
--
- static ssize_t sched_scaling_write(struct file *filp, const char __user *ubuf,
- 				   size_t cnt, loff_t *ppos)
- {
-@@ -494,7 +372,6 @@ static __init int sched_init_debug(void)
+ 
+ #ifdef CONFIG_SCHED_BORE
+ #define DEFINE_SYSCTL_SCHED_FUNC(name, update_func) \
+@@ -542,7 +422,6 @@ static __init int sched_init_debug(void)
  
  	debugfs_sched = debugfs_create_dir("sched", NULL);
  
@@ -254,7 +245,7 @@ index 41caa22e0680..21e600f0348f 100644
  	debugfs_create_file_unsafe("verbose", 0644, debugfs_sched, &sched_debug_verbose, &sched_verbose_fops);
  #ifdef CONFIG_PREEMPT_DYNAMIC
  	debugfs_create_file("preempt", 0644, debugfs_sched, NULL, &sched_dynamic_fops);
-@@ -1022,7 +899,6 @@ static void sched_debug_header(struct seq_file *m)
+@@ -1080,7 +959,6 @@ static void sched_debug_header(struct seq_file *m)
  #define PN(x) \
  	SEQ_printf(m, "  .%-40s: %Ld.%06ld\n", #x, SPLIT_NS(x))
  	PN(sysctl_sched_base_slice);
@@ -263,10 +254,10 @@ index 41caa22e0680..21e600f0348f 100644
  #undef P
  
 diff --git a/kernel/sched/features.h b/kernel/sched/features.h
-index 136a6584be79..20e96a417fbb 100644
+index 3c12d9f93..3513579d1 100644
 --- a/kernel/sched/features.h
 +++ b/kernel/sched/features.h
-@@ -4,32 +4,32 @@
+@@ -4,32 +4,31 @@
   * Using the avg_vruntime, do the right thing and preserve lag across
   * sleep+wake cycles. EEVDF placement strategy #1, #2 if disabled.
   */
@@ -281,7 +272,6 @@ index 136a6584be79..20e96a417fbb 100644
   * Preserve relative virtual deadline on 'migration'.
   */
 -SCHED_FEAT(PLACE_REL_DEADLINE, true)
-+#define SCHED_FEAT_PLACE_REL_DEADLINE 1
  /*
   * Inhibit (wakeup) preemption until the current task has either matched the
   * 0-lag point or until is has exhausted it's slice.
@@ -305,7 +295,7 @@ index 136a6584be79..20e96a417fbb 100644
  
  /*
   * Allow completely ignoring cfs_rq->next; which can be set from various
-@@ -38,13 +38,13 @@ SCHED_FEAT(NEXT_BUDDY, false)
+@@ -38,13 +37,13 @@ SCHED_FEAT(NEXT_BUDDY, false)
   *   - yield_to_task()
   *   - cgroup dequeue / pick
   */
@@ -321,7 +311,7 @@ index 136a6584be79..20e96a417fbb 100644
  
  /*
   * Delay dequeueing tasks until they get selected or woken.
-@@ -55,44 +55,44 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
+@@ -55,44 +54,44 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
   *
   * DELAY_ZERO clips the lag on dequeue (or wakeup) to 0.
   */
@@ -376,7 +366,7 @@ index 136a6584be79..20e96a417fbb 100644
  
  #ifdef HAVE_RT_PUSH_IPI
  /*
-@@ -104,25 +104,25 @@ SCHED_FEAT(WARN_DOUBLE_CLOCK, false)
+@@ -104,20 +103,20 @@ SCHED_FEAT(WARN_DOUBLE_CLOCK, false)
   * IPI to that CPU and let that CPU push the RT task to where
   * it should go may be a better scenario.
   */
@@ -406,15 +396,8 @@ index 136a6584be79..20e96a417fbb 100644
  
 -SCHED_FEAT(LATENCY_WARN, false)
 +#define SCHED_FEAT_LATENCY_WARN 0
- 
- /*
-  * Do newidle balancing proportional to its success rate using randomization.
-  */
--SCHED_FEAT(NI_RANDOM, true)
-+#define SCHED_FEAT_NI_RANDOM 1
-\ No newline at end of file
 diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
-index fb07dcfc60a2..db462fb83995 100644
+index 7936d4333..939a69287 100644
 --- a/kernel/sched/rt.c
 +++ b/kernel/sched/rt.c
 @@ -2155,6 +2155,7 @@ static inline void rto_start_unlock(atomic_t *v)
@@ -433,34 +416,23 @@ index fb07dcfc60a2..db462fb83995 100644
  
  /* Called from hardirq context */
  void rto_push_irq_work_func(struct irq_work *work)
-@@ -2248,11 +2250,9 @@ static void pull_rt_task(struct rq *this_rq)
- 	    cpumask_test_cpu(this_rq->cpu, this_rq->rd->rto_mask))
+@@ -2249,10 +2251,9 @@ static void pull_rt_task(struct rq *this_rq)
  		return;
  
--#ifdef HAVE_RT_PUSH_IPI
+ #ifdef HAVE_RT_PUSH_IPI
 -	if (sched_feat(RT_PUSH_IPI)) {
--		tell_cpu_to_push(this_rq);
--		return;
+ 		tell_cpu_to_push(this_rq);
+ 		return;
 -	}
-+#if defined(HAVE_RT_PUSH_IPI) && defined(RT_PUSH_IPI)
-+	tell_cpu_to_push(this_rq);
-+	return;
++	
  #endif
  
  	for_each_cpu(cpu, this_rq->rd->rto_mask) {
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index 2f8b06b12a98..b0848a93c9a7 100644
+index cdcc8c379..e5ae9fe07 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
-@@ -92,6 +92,7 @@ struct cpuidle_state;
- 
- #include "cpupri.h"
- #include "cpudeadline.h"
-+#include "features.h"
- 
- /* task_struct::on_rq states: */
- #define TASK_ON_RQ_QUEUED	1
-@@ -2223,41 +2224,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
+@@ -2224,41 +2224,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
   * Tunables:
   */
  
@@ -504,7 +476,7 @@ index 2f8b06b12a98..b0848a93c9a7 100644
  extern struct static_key_false sched_numa_balancing;
  extern struct static_key_false sched_schedstats;
 diff --git a/kernel/sched/smp.h b/kernel/sched/smp.h
-index 7f151d96dba9..12a244e710e8 100644
+index 7f151d96d..12a244e71 100644
 --- a/kernel/sched/smp.h
 +++ b/kernel/sched/smp.h
 @@ -9,7 +9,11 @@
@@ -520,7 +492,7 @@ index 7f151d96dba9..12a244e710e8 100644
  extern bool call_function_single_prep_ipi(int cpu);
  
 diff --git a/kernel/smp.c b/kernel/smp.c
-index 02f52291fae4..7ab5b619ff9e 100644
+index 02f52291f..7ab5b619f 100644
 --- a/kernel/smp.c
 +++ b/kernel/smp.c
 @@ -33,6 +33,7 @@
@@ -531,3 +503,4 @@ index 02f52291fae4..7ab5b619ff9e 100644
  #include "sched/smp.h"
  
  #define CSD_TYPE(_csd)	((_csd)->node.u_flags & CSD_FLAG_TYPE_MASK)
+
