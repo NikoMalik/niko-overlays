@@ -429,10 +429,18 @@ index 7936d4333..939a69287 100644
  
  	for_each_cpu(cpu, this_rq->rd->rto_mask) {
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index cdcc8c379..92bf3f94c 100644
+index cdcc8c379..6f8ef53ff 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
-@@ -2224,41 +2224,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
+@@ -91,6 +91,7 @@ struct cpuidle_state;
+ 
+ #include "cpupri.h"
+ #include "cpudeadline.h"
++#include "features.h"
+ 
+ /* task_struct::on_rq states: */
+ #define TASK_ON_RQ_QUEUED	1
+@@ -2224,41 +2225,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
   * Tunables:
   */
  
@@ -475,7 +483,7 @@ index cdcc8c379..92bf3f94c 100644
  
  extern struct static_key_false sched_numa_balancing;
  extern struct static_key_false sched_schedstats;
-@@ -2851,16 +2817,21 @@ static inline int hrtick_enabled(struct rq *rq)
+@@ -2851,16 +2818,21 @@ static inline int hrtick_enabled(struct rq *rq)
  
  static inline int hrtick_enabled_fair(struct rq *rq)
  {
