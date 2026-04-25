@@ -254,10 +254,10 @@ index 751df396d..91b16cf71 100644
  #undef P
  
 diff --git a/kernel/sched/features.h b/kernel/sched/features.h
-index 3c12d9f93..3513579d1 100644
+index 3c12d9f93..9ffa6d580 100644
 --- a/kernel/sched/features.h
 +++ b/kernel/sched/features.h
-@@ -4,32 +4,31 @@
+@@ -4,32 +4,32 @@
   * Using the avg_vruntime, do the right thing and preserve lag across
   * sleep+wake cycles. EEVDF placement strategy #1, #2 if disabled.
   */
@@ -272,6 +272,7 @@ index 3c12d9f93..3513579d1 100644
   * Preserve relative virtual deadline on 'migration'.
   */
 -SCHED_FEAT(PLACE_REL_DEADLINE, true)
++#define SCHED_FEAT_PLACE_REL_DEADLINE 1
  /*
   * Inhibit (wakeup) preemption until the current task has either matched the
   * 0-lag point or until is has exhausted it's slice.
@@ -295,7 +296,7 @@ index 3c12d9f93..3513579d1 100644
  
  /*
   * Allow completely ignoring cfs_rq->next; which can be set from various
-@@ -38,13 +37,13 @@ SCHED_FEAT(NEXT_BUDDY, false)
+@@ -38,13 +38,13 @@ SCHED_FEAT(NEXT_BUDDY, false)
   *   - yield_to_task()
   *   - cgroup dequeue / pick
   */
@@ -311,7 +312,7 @@ index 3c12d9f93..3513579d1 100644
  
  /*
   * Delay dequeueing tasks until they get selected or woken.
-@@ -55,44 +54,44 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
+@@ -55,44 +55,44 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
   *
   * DELAY_ZERO clips the lag on dequeue (or wakeup) to 0.
   */
@@ -366,7 +367,7 @@ index 3c12d9f93..3513579d1 100644
  
  #ifdef HAVE_RT_PUSH_IPI
  /*
-@@ -104,20 +103,20 @@ SCHED_FEAT(WARN_DOUBLE_CLOCK, false)
+@@ -104,20 +104,20 @@ SCHED_FEAT(WARN_DOUBLE_CLOCK, false)
   * IPI to that CPU and let that CPU push the RT task to where
   * it should go may be a better scenario.
   */
