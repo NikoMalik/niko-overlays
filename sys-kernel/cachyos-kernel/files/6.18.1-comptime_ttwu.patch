@@ -1,0 +1,533 @@
+From 6c5636885b0ce725b9acf5efaa21b7c48604f6f0 Mon Sep 17 00:00:00 2001
+From: Yaroslav Furman <yaro330@gmail.com>
+Date: Fri, 23 Jan 2026 17:42:57 +0200
+Subject: [PATCH] Applied:
+ ../patches/0001-sched-Resolve-sched_feat-at-compile-time-to-improve-.patch
+
+---
+ kernel/sched/core.c     |  24 ++++------
+ kernel/sched/debug.c    | 124 ------------------------------------------------
+ kernel/sched/features.h |  56 +++++++++++-----------
+ kernel/sched/rt.c       |  10 ++--
+ kernel/sched/sched.h    |  37 +--------------
+ kernel/sched/smp.h      |   4 ++
+ kernel/smp.c            |   1 +
+ 7 files changed, 50 insertions(+), 206 deletions(-)
+
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index eb47d294e2c5..8b3dd369c9b9 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -152,20 +152,6 @@ static int __init setup_proxy_exec(char *str)
+ #endif
+ __setup("sched_proxy_exec", setup_proxy_exec);
+ 
+-/*
+- * Debugging: various feature bits
+- *
+- * If SCHED_DEBUG is disabled, each compilation unit has its own copy of
+- * sysctl_sched_features, defined in sched.h, to allow constants propagation
+- * at compile time and compiler optimization based on features default.
+- */
+-#define SCHED_FEAT(name, enabled)	\
+-	(1UL << __SCHED_FEAT_##name) * enabled |
+-__read_mostly unsigned int sysctl_sched_features =
+-#include "features.h"
+-	0;
+-#undef SCHED_FEAT
+-
+ /*
+  * Print a warning if need_resched is set for the given duration (if
+  * LATENCY_WARN is enabled).
+@@ -3783,6 +3769,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
+ 	return ret;
+ }
+ 
++#if SCHED_FEAT_TTWU_QUEUE
+ void sched_ttwu_pending(void *arg)
+ {
+ 	struct llist_node *llist = arg;
+@@ -3819,6 +3806,7 @@ void sched_ttwu_pending(void *arg)
+ 	WRITE_ONCE(rq->ttwu_pending, 0);
+ 	rq_unlock_irqrestore(rq, &rf);
+ }
++#endif
+ 
+ /*
+  * Prepare the scene for sending an IPI for a remote smp_call
+@@ -3836,6 +3824,7 @@ bool call_function_single_prep_ipi(int cpu)
+ 	return true;
+ }
+ 
++#if SCHED_FEAT_TTWU_QUEUE
+ /*
+  * Queue a task on the target CPUs wake_list and wake the CPU via IPI if
+  * necessary. The wakee CPU on receipt of the IPI will queue the task
+@@ -3853,6 +3842,7 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
+ 	__smp_call_single_queue(cpu, &p->wake_entry.llist);
+ #endif
+ }
++#endif
+ 
+ void wake_up_if_idle(int cpu)
+ {
+@@ -3897,6 +3887,7 @@ bool cpus_share_resources(int this_cpu, int that_cpu)
+ 	return per_cpu(sd_share_id, this_cpu) == per_cpu(sd_share_id, that_cpu);
+ }
+ 
++#if SCHED_FEAT_TTWU_QUEUE
+ static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
+ {
+ 	/* See SCX_OPS_ALLOW_QUEUED_WAKEUP. */
+@@ -3956,14 +3947,17 @@ static bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
+ 
+ 	return false;
+ }
++#endif
+ 
+ static void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
+ {
+ 	struct rq *rq = cpu_rq(cpu);
+ 	struct rq_flags rf;
+ 
++#if SCHED_FEAT_TTWU_QUEUE
+ 	if (ttwu_queue_wakelist(p, cpu, wake_flags))
+ 		return;
++#endif
+ 
+ 	rq_lock(rq, &rf);
+ 	update_rq_clock(rq);
+@@ -4245,6 +4239,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+ 		 */
+ 		WRITE_ONCE(p->__state, TASK_WAKING);
+ 
++#if SCHED_FEAT_TTWU_QUEUE
+ 		/*
+ 		 * If the owning (remote) CPU is still in the middle of schedule() with
+ 		 * this task as prev, considering queueing p on the remote CPUs wake_list
+@@ -4267,6 +4262,7 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
+ 		if (smp_load_acquire(&p->on_cpu) &&
+ 		    ttwu_queue_wakelist(p, task_cpu(p), wake_flags))
+ 			break;
++#endif
+ 
+ 		/*
+ 		 * If the owning (remote) CPU is still in the middle of schedule() with
+diff --git a/kernel/sched/debug.c b/kernel/sched/debug.c
+index 41caa22e0680..21e600f0348f 100644
+--- a/kernel/sched/debug.c
++++ b/kernel/sched/debug.c
+@@ -47,128 +47,6 @@ static unsigned long nsec_low(unsigned long long nsec)
+ 
+ #define SPLIT_NS(x) nsec_high(x), nsec_low(x)
+ 
+-#define SCHED_FEAT(name, enabled)	\
+-	#name ,
+-
+-static const char * const sched_feat_names[] = {
+-#include "features.h"
+-};
+-
+-#undef SCHED_FEAT
+-
+-static int sched_feat_show(struct seq_file *m, void *v)
+-{
+-	int i;
+-
+-	for (i = 0; i < __SCHED_FEAT_NR; i++) {
+-		if (!(sysctl_sched_features & (1UL << i)))
+-			seq_puts(m, "NO_");
+-		seq_printf(m, "%s ", sched_feat_names[i]);
+-	}
+-	seq_puts(m, "\n");
+-
+-	return 0;
+-}
+-
+-#ifdef CONFIG_JUMP_LABEL
+-
+-#define jump_label_key__true  STATIC_KEY_INIT_TRUE
+-#define jump_label_key__false STATIC_KEY_INIT_FALSE
+-
+-#define SCHED_FEAT(name, enabled)	\
+-	jump_label_key__##enabled ,
+-
+-struct static_key sched_feat_keys[__SCHED_FEAT_NR] = {
+-#include "features.h"
+-};
+-
+-#undef SCHED_FEAT
+-
+-static void sched_feat_disable(int i)
+-{
+-	static_key_disable_cpuslocked(&sched_feat_keys[i]);
+-}
+-
+-static void sched_feat_enable(int i)
+-{
+-	static_key_enable_cpuslocked(&sched_feat_keys[i]);
+-}
+-#else /* !CONFIG_JUMP_LABEL: */
+-static void sched_feat_disable(int i) { };
+-static void sched_feat_enable(int i) { };
+-#endif /* !CONFIG_JUMP_LABEL */
+-
+-static int sched_feat_set(char *cmp)
+-{
+-	int i;
+-	int neg = 0;
+-
+-	if (strncmp(cmp, "NO_", 3) == 0) {
+-		neg = 1;
+-		cmp += 3;
+-	}
+-
+-	i = match_string(sched_feat_names, __SCHED_FEAT_NR, cmp);
+-	if (i < 0)
+-		return i;
+-
+-	if (neg) {
+-		sysctl_sched_features &= ~(1UL << i);
+-		sched_feat_disable(i);
+-	} else {
+-		sysctl_sched_features |= (1UL << i);
+-		sched_feat_enable(i);
+-	}
+-
+-	return 0;
+-}
+-
+-static ssize_t
+-sched_feat_write(struct file *filp, const char __user *ubuf,
+-		size_t cnt, loff_t *ppos)
+-{
+-	char buf[64];
+-	char *cmp;
+-	int ret;
+-	struct inode *inode;
+-
+-	if (cnt > 63)
+-		cnt = 63;
+-
+-	if (copy_from_user(&buf, ubuf, cnt))
+-		return -EFAULT;
+-
+-	buf[cnt] = 0;
+-	cmp = strstrip(buf);
+-
+-	/* Ensure the static_key remains in a consistent state */
+-	inode = file_inode(filp);
+-	cpus_read_lock();
+-	inode_lock(inode);
+-	ret = sched_feat_set(cmp);
+-	inode_unlock(inode);
+-	cpus_read_unlock();
+-	if (ret < 0)
+-		return ret;
+-
+-	*ppos += cnt;
+-
+-	return cnt;
+-}
+-
+-static int sched_feat_open(struct inode *inode, struct file *filp)
+-{
+-	return single_open(filp, sched_feat_show, NULL);
+-}
+-
+-static const struct file_operations sched_feat_fops = {
+-	.open		= sched_feat_open,
+-	.write		= sched_feat_write,
+-	.read		= seq_read,
+-	.llseek		= seq_lseek,
+-	.release	= single_release,
+-};
+-
+ static ssize_t sched_scaling_write(struct file *filp, const char __user *ubuf,
+ 				   size_t cnt, loff_t *ppos)
+ {
+@@ -494,7 +372,6 @@ static __init int sched_init_debug(void)
+ 
+ 	debugfs_sched = debugfs_create_dir("sched", NULL);
+ 
+-	debugfs_create_file("features", 0644, debugfs_sched, NULL, &sched_feat_fops);
+ 	debugfs_create_file_unsafe("verbose", 0644, debugfs_sched, &sched_debug_verbose, &sched_verbose_fops);
+ #ifdef CONFIG_PREEMPT_DYNAMIC
+ 	debugfs_create_file("preempt", 0644, debugfs_sched, NULL, &sched_dynamic_fops);
+@@ -1022,7 +899,6 @@ static void sched_debug_header(struct seq_file *m)
+ #define PN(x) \
+ 	SEQ_printf(m, "  .%-40s: %Ld.%06ld\n", #x, SPLIT_NS(x))
+ 	PN(sysctl_sched_base_slice);
+-	P(sysctl_sched_features);
+ #undef PN
+ #undef P
+ 
+diff --git a/kernel/sched/features.h b/kernel/sched/features.h
+index 136a6584be79..20e96a417fbb 100644
+--- a/kernel/sched/features.h
++++ b/kernel/sched/features.h
+@@ -4,32 +4,32 @@
+  * Using the avg_vruntime, do the right thing and preserve lag across
+  * sleep+wake cycles. EEVDF placement strategy #1, #2 if disabled.
+  */
+-SCHED_FEAT(PLACE_LAG, true)
++#define SCHED_FEAT_PLACE_LAG 1
+ /*
+  * Give new tasks half a slice to ease into the competition.
+  */
+-SCHED_FEAT(PLACE_DEADLINE_INITIAL, true)
++#define SCHED_FEAT_PLACE_DEADLINE_INITIAL 1
+ /*
+  * Preserve relative virtual deadline on 'migration'.
+  */
+-SCHED_FEAT(PLACE_REL_DEADLINE, true)
++#define SCHED_FEAT_PLACE_REL_DEADLINE 1
+ /*
+  * Inhibit (wakeup) preemption until the current task has either matched the
+  * 0-lag point or until is has exhausted it's slice.
+  */
+-SCHED_FEAT(RUN_TO_PARITY, true)
++#define SCHED_FEAT_RUN_TO_PARITY 1
+ /*
+  * Allow wakeup of tasks with a shorter slice to cancel RUN_TO_PARITY for
+  * current.
+  */
+-SCHED_FEAT(PREEMPT_SHORT, true)
++#define SCHED_FEAT_PREEMPT_SHORT 1
+ 
+ /*
+  * Prefer to schedule the task we woke last (assuming it failed
+  * wakeup-preemption), since its likely going to consume data we
+  * touched, increases cache locality.
+  */
+-SCHED_FEAT(NEXT_BUDDY, false)
++#define SCHED_FEAT_NEXT_BUDDY 0
+ 
+ /*
+  * Allow completely ignoring cfs_rq->next; which can be set from various
+@@ -38,13 +38,13 @@ SCHED_FEAT(NEXT_BUDDY, false)
+  *   - yield_to_task()
+  *   - cgroup dequeue / pick
+  */
+-SCHED_FEAT(PICK_BUDDY, true)
++#define SCHED_FEAT_PICK_BUDDY 1
+ 
+ /*
+  * Consider buddies to be cache hot, decreases the likeliness of a
+  * cache buddy being migrated away, increases cache locality.
+  */
+-SCHED_FEAT(CACHE_HOT_BUDDY, true)
++#define SCHED_FEAT_CACHE_HOT_BUDDY 1
+ 
+ /*
+  * Delay dequeueing tasks until they get selected or woken.
+@@ -55,44 +55,44 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
+  *
+  * DELAY_ZERO clips the lag on dequeue (or wakeup) to 0.
+  */
+-SCHED_FEAT(DELAY_DEQUEUE, true)
+-SCHED_FEAT(DELAY_ZERO, true)
++#define SCHED_FEAT_DELAY_DEQUEUE 1
++#define SCHED_FEAT_DELAY_ZERO 1
+ 
+ /*
+  * Allow wakeup-time preemption of the current task:
+  */
+-SCHED_FEAT(WAKEUP_PREEMPTION, true)
++#define SCHED_FEAT_WAKEUP_PREEMPTION 1
+ 
+-SCHED_FEAT(HRTICK, false)
+-SCHED_FEAT(HRTICK_DL, false)
++#define SCHED_FEAT_HRTICK 0
++#define SCHED_FEAT_HRTICK_DL 0
+ 
+ /*
+  * Decrement CPU capacity based on time not spent running tasks
+  */
+-SCHED_FEAT(NONTASK_CAPACITY, true)
++#define SCHED_FEAT_NONTASK_CAPACITY 1
+ 
+ #ifdef CONFIG_PREEMPT_RT
+-SCHED_FEAT(TTWU_QUEUE, false)
++#define SCHED_FEAT_TTWU_QUEUE 0
+ #else
+ 
+ /*
+  * Queue remote wakeups on the target CPU and process them
+  * using the scheduler IPI. Reduces rq->lock contention/bounces.
+  */
+-SCHED_FEAT(TTWU_QUEUE, true)
++#define SCHED_FEAT_TTWU_QUEUE 1
+ #endif
+ 
+ /*
+  * When doing wakeups, attempt to limit superfluous scans of the LLC domain.
+  */
+-SCHED_FEAT(SIS_UTIL, true)
++#define SCHED_FEAT_SIS_UTIL 1
+ 
+ /*
+  * Issue a WARN when we do multiple update_rq_clock() calls
+  * in a single rq->lock section. Default disabled because the
+  * annotations are not complete.
+  */
+-SCHED_FEAT(WARN_DOUBLE_CLOCK, false)
++#define SCHED_FEAT_WARN_DOUBLE_CLOCK 0
+ 
+ #ifdef HAVE_RT_PUSH_IPI
+ /*
+@@ -104,25 +104,25 @@ SCHED_FEAT(WARN_DOUBLE_CLOCK, false)
+  * IPI to that CPU and let that CPU push the RT task to where
+  * it should go may be a better scenario.
+  */
+-SCHED_FEAT(RT_PUSH_IPI, true)
++#define SCHED_FEAT_RT_PUSH_IPI 1
+ #endif
+ 
+-SCHED_FEAT(RT_RUNTIME_SHARE, false)
+-SCHED_FEAT(LB_MIN, false)
+-SCHED_FEAT(ATTACH_AGE_LOAD, true)
++#define SCHED_FEAT_RT_RUNTIME_SHARE 0
++#define SCHED_FEAT_LB_MIN 0
++#define SCHED_FEAT_ATTACH_AGE_LOAD 1
+ 
+-SCHED_FEAT(WA_IDLE, true)
+-SCHED_FEAT(WA_WEIGHT, true)
+-SCHED_FEAT(WA_BIAS, true)
++#define SCHED_FEAT_WA_IDLE 1
++#define SCHED_FEAT_WA_WEIGHT 1
++#define SCHED_FEAT_WA_BIAS 1
+ 
+ /*
+  * UtilEstimation. Use estimated CPU utilization.
+  */
+-SCHED_FEAT(UTIL_EST, true)
++#define SCHED_FEAT_UTIL_EST 1
+ 
+-SCHED_FEAT(LATENCY_WARN, false)
++#define SCHED_FEAT_LATENCY_WARN 0
+ 
+ /*
+  * Do newidle balancing proportional to its success rate using randomization.
+  */
+-SCHED_FEAT(NI_RANDOM, true)
++#define SCHED_FEAT_NI_RANDOM 1
+\ No newline at end of file
+diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
+index fb07dcfc60a2..db462fb83995 100644
+--- a/kernel/sched/rt.c
++++ b/kernel/sched/rt.c
+@@ -2155,6 +2155,7 @@ static inline void rto_start_unlock(atomic_t *v)
+ 	atomic_set_release(v, 0);
+ }
+ 
++#if defined(HAVE_RT_PUSH_IPI) && defined(RT_PUSH_IPI)
+ static void tell_cpu_to_push(struct rq *rq)
+ {
+ 	int cpu = -1;
+@@ -2187,6 +2188,7 @@ static void tell_cpu_to_push(struct rq *rq)
+ 		irq_work_queue_on(&rq->rd->rto_push_work, cpu);
+ 	}
+ }
++#endif
+ 
+ /* Called from hardirq context */
+ void rto_push_irq_work_func(struct irq_work *work)
+@@ -2248,11 +2250,9 @@ static void pull_rt_task(struct rq *this_rq)
+ 	    cpumask_test_cpu(this_rq->cpu, this_rq->rd->rto_mask))
+ 		return;
+ 
+-#ifdef HAVE_RT_PUSH_IPI
+-	if (sched_feat(RT_PUSH_IPI)) {
+-		tell_cpu_to_push(this_rq);
+-		return;
+-	}
++#if defined(HAVE_RT_PUSH_IPI) && defined(RT_PUSH_IPI)
++	tell_cpu_to_push(this_rq);
++	return;
+ #endif
+ 
+ 	for_each_cpu(cpu, this_rq->rd->rto_mask) {
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index 2f8b06b12a98..b0848a93c9a7 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -92,6 +92,7 @@ struct cpuidle_state;
+ 
+ #include "cpupri.h"
+ #include "cpudeadline.h"
++#include "features.h"
+ 
+ /* task_struct::on_rq states: */
+ #define TASK_ON_RQ_QUEUED	1
+@@ -2223,41 +2224,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
+  * Tunables:
+  */
+ 
+-#define SCHED_FEAT(name, enabled)	\
+-	__SCHED_FEAT_##name ,
+-
+-enum {
+-#include "features.h"
+-	__SCHED_FEAT_NR,
+-};
+-
+-#undef SCHED_FEAT
+-
+-/*
+- * To support run-time toggling of sched features, all the translation units
+- * (but core.c) reference the sysctl_sched_features defined in core.c.
+- */
+-extern __read_mostly unsigned int sysctl_sched_features;
+-
+-#ifdef CONFIG_JUMP_LABEL
+-
+-#define SCHED_FEAT(name, enabled)					\
+-static __always_inline bool static_branch_##name(struct static_key *key) \
+-{									\
+-	return static_key_##enabled(key);				\
+-}
+-
+-#include "features.h"
+-#undef SCHED_FEAT
+-
+-extern struct static_key sched_feat_keys[__SCHED_FEAT_NR];
+-#define sched_feat(x) (static_branch_##x(&sched_feat_keys[__SCHED_FEAT_##x]))
+-
+-#else /* !CONFIG_JUMP_LABEL: */
+-
+-#define sched_feat(x) (sysctl_sched_features & (1UL << __SCHED_FEAT_##x))
+-
+-#endif /* !CONFIG_JUMP_LABEL */
++#define sched_feat(x) SCHED_FEAT_##x
+ 
+ extern struct static_key_false sched_numa_balancing;
+ extern struct static_key_false sched_schedstats;
+diff --git a/kernel/sched/smp.h b/kernel/sched/smp.h
+index 7f151d96dba9..12a244e710e8 100644
+--- a/kernel/sched/smp.h
++++ b/kernel/sched/smp.h
+@@ -9,7 +9,11 @@
+  */
+ #include <linux/types.h>
+ 
++#if SCHED_FEAT_TTWU_QUEUE
+ extern void sched_ttwu_pending(void *arg);
++#else
++static inline void sched_ttwu_pending(void *arg) { }
++#endif
+ 
+ extern bool call_function_single_prep_ipi(int cpu);
+ 
+diff --git a/kernel/smp.c b/kernel/smp.c
+index 02f52291fae4..7ab5b619ff9e 100644
+--- a/kernel/smp.c
++++ b/kernel/smp.c
+@@ -33,6 +33,7 @@
+ #undef CREATE_TRACE_POINTS
+ 
+ #include "smpboot.h"
++#include "sched/features.h"
+ #include "sched/smp.h"
+ 
+ #define CSD_TYPE(_csd)	((_csd)->node.u_flags & CSD_FLAG_TYPE_MASK)
