@@ -398,7 +398,7 @@ index 3c12d9f93..9ffa6d580 100644
 -SCHED_FEAT(LATENCY_WARN, false)
 +#define SCHED_FEAT_LATENCY_WARN 0
 diff --git a/kernel/sched/rt.c b/kernel/sched/rt.c
-index 7936d4333..939a69287 100644
+index 7936d4333..8e4fc6290 100644
 --- a/kernel/sched/rt.c
 +++ b/kernel/sched/rt.c
 @@ -2155,6 +2155,7 @@ static inline void rto_start_unlock(atomic_t *v)
@@ -417,11 +417,13 @@ index 7936d4333..939a69287 100644
  
  /* Called from hardirq context */
  void rto_push_irq_work_func(struct irq_work *work)
-@@ -2249,10 +2251,9 @@ static void pull_rt_task(struct rq *this_rq)
+@@ -2248,11 +2250,10 @@ static void pull_rt_task(struct rq *this_rq)
+ 	    cpumask_test_cpu(this_rq->cpu, this_rq->rd->rto_mask))
  		return;
  
- #ifdef HAVE_RT_PUSH_IPI
+-#ifdef HAVE_RT_PUSH_IPI
 -	if (sched_feat(RT_PUSH_IPI)) {
++#if defined(HAVE_RT_PUSH_IPI) && defined(RT_PUSH_IPI)
  		tell_cpu_to_push(this_rq);
  		return;
 -	}
