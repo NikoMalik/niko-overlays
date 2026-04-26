@@ -65,10 +65,11 @@ RDEPEND="
 "
 # libclang is required for bindgen
 BDEPEND="
+  virtual/pkgconfig
+	dev-util/wayland-scanner
 	screencast? ( $(llvm_gen_dep 'llvm-core/clang:${LLVM_SLOT}') )
 "
 
-ECARGO_VENDOR="${WORKDIR}/vendor"
 
 QA_FLAGS_IGNORED="usr/bin/niri"
 
