@@ -811,7 +811,7 @@ cachy_use_config() {
 	# kconf unset INIT_ON_ALLOC_DEFAULT_ON
 	# einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
 
-
+  kconf set EXPERT
 	kconf set SCHED_CLUSTER
 	einfo "SCHED_CLUSTER ENABLED"
 
