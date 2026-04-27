@@ -1,18 +1,18 @@
-From ad774948b6ced00820e4440bdb529506b7233026 Mon Sep 17 00:00:00 2001
+From 854c284516887b6bdf6a3a3f2507ce873151a4d5 Mon Sep 17 00:00:00 2001
 From: Masahito S <firelzrd@gmail.com>
-Date: Sat, 25 Apr 2026 12:00:43 +0900
-Subject: [PATCH] 6.18.3-poc-selector-v2.6.0
+Date: Mon, 27 Apr 2026 11:07:36 +0900
+Subject: [PATCH] 6.18.3-poc-selector-v2.6.1
 
 ---
  include/linux/sched/topology.h |   50 +-
  init/Kconfig                   |   13 +
  kernel/sched/ext.c             |    7 +
- kernel/sched/fair.c            |  163 ++-
+ kernel/sched/fair.c            |  164 ++-
  kernel/sched/idle.c            |   10 +
  kernel/sched/poc_selector.c    | 1788 ++++++++++++++++++++++++++++++++
  kernel/sched/sched.h           |  110 ++
  kernel/sched/topology.c        |  226 ++++
- 8 files changed, 2329 insertions(+), 38 deletions(-)
+ 8 files changed, 2330 insertions(+), 38 deletions(-)
  create mode 100644 kernel/sched/poc_selector.c
 
 diff --git a/include/linux/sched/topology.h b/include/linux/sched/topology.h
@@ -126,10 +126,18 @@ index b959a70471..ce89f9627f 100644
  		sch->ops.name, scx_switched_all() ? "" : " (partial)");
  	kobject_uevent(&sch->kobj, KOBJ_ADD);
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 967ca52fb2..6a5085310b 100644
+index 967ca52fb2..1afd1838f5 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
-@@ -1064,7 +1064,7 @@ static bool update_deadline(struct cfs_rq *cfs_rq, struct sched_entity *se)
+@@ -49,6 +49,7 @@
+ #include <linux/ratelimit.h>
+ #include <linux/task_work.h>
+ #include <linux/rbtree_augmented.h>
++#include <linux/prefetch.h>
+ 
+ #include <asm/switch_to.h>
+ 
+@@ -1064,7 +1065,7 @@ static bool update_deadline(struct cfs_rq *cfs_rq, struct sched_entity *se)
  
  #include "pelt.h"
  
@@ -138,7 +146,7 @@ index 967ca52fb2..6a5085310b 100644
  static unsigned long task_h_load(struct task_struct *p);
  static unsigned long capacity_of(int cpu);
  
-@@ -7601,6 +7601,20 @@ void __update_idle_core(struct rq *rq)
+@@ -7601,6 +7602,20 @@ void __update_idle_core(struct rq *rq)
  	rcu_read_unlock();
  }
  
@@ -159,7 +167,7 @@ index 967ca52fb2..6a5085310b 100644
  /*
   * Scan the entire LLC domain for idle cores; this dynamically switches off if
   * there are no idle cores left in the system; tracked through
-@@ -7668,6 +7682,11 @@ static inline bool test_idle_cores(int cpu)
+@@ -7668,6 +7683,11 @@ static inline bool test_idle_cores(int cpu)
  	return false;
  }
  
@@ -171,7 +179,7 @@ index 967ca52fb2..6a5085310b 100644
  static inline int select_idle_core(struct task_struct *p, int core, struct cpumask *cpus, int *idle_cpu)
  {
  	return __select_idle_cpu(core, p);
-@@ -7817,16 +7836,38 @@ static inline bool asym_fits_cpu(unsigned long util,
+@@ -7817,16 +7837,38 @@ static inline bool asym_fits_cpu(unsigned long util,
  	return true;
  }
  
@@ -211,7 +219,7 @@ index 967ca52fb2..6a5085310b 100644
  	/*
  	 * On asymmetric system, update task utilization because we will check
  	 * that the task fits with CPU's capacity.
-@@ -7843,23 +7884,13 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
+@@ -7843,23 +7885,13 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
  	 */
  	lockdep_assert_irqs_disabled();
  
@@ -240,7 +248,7 @@ index 967ca52fb2..6a5085310b 100644
  
  	/*
  	 * Allow a per-cpu kthread to stack with the wakee if the
-@@ -7877,24 +7908,6 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
+@@ -7877,24 +7909,6 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
  		return prev;
  	}
  
@@ -265,7 +273,7 @@ index 967ca52fb2..6a5085310b 100644
  	/*
  	 * For asymmetric CPU capacity systems, our domain of interest is
  	 * sd_asym_cpucapacity rather than sd_llc.
-@@ -7919,6 +7932,74 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
+@@ -7919,6 +7933,74 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
  	if (!sd)
  		return target;
  
@@ -340,7 +348,7 @@ index 967ca52fb2..6a5085310b 100644
  	if (sched_smt_active()) {
  		has_idle_core = test_idle_cores(target);
  
-@@ -7933,6 +8014,9 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
+@@ -7933,6 +8015,9 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
  	if ((unsigned)i < nr_cpumask_bits)
  		return i;
  
@@ -350,7 +358,7 @@ index 967ca52fb2..6a5085310b 100644
  	/*
  	 * For cluster machines which have lower sharing cache like L2 or
  	 * LLC Tag, we tend to find an idle CPU in the target's cluster
-@@ -7944,6 +8028,13 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
+@@ -7944,6 +8029,13 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target)
  	if ((unsigned int)recent_used_cpu < nr_cpumask_bits)
  		return recent_used_cpu;
  
@@ -364,7 +372,7 @@ index 967ca52fb2..6a5085310b 100644
  	return target;
  }
  
-@@ -8628,7 +8719,7 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
+@@ -8628,7 +8720,7 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
  		new_cpu = sched_balance_find_dst_cpu(sd, p, cpu, prev_cpu, sd_flag);
  	} else if (wake_flags & WF_TTWU) { /* XXX always ? */
  		/* Fast path */
@@ -403,7 +411,7 @@ index c39b089d4f..3fffa1a43f 100644
  	 * be set, propagate it into PREEMPT_NEED_RESCHED.
 diff --git a/kernel/sched/poc_selector.c b/kernel/sched/poc_selector.c
 new file mode 100644
-index 0000000000..3b97aeb8d7
+index 0000000000..5bbd927828
 --- /dev/null
 +++ b/kernel/sched/poc_selector.c
 @@ -0,0 +1,1788 @@
@@ -446,7 +454,7 @@ index 0000000000..3b97aeb8d7
 +#define SCHED_POC_SELECTOR_AUTHOR   "Masahito Suzuki"
 +#define SCHED_POC_SELECTOR_PROGNAME "Piece-Of-Cake (POC) CPU Selector"
 +
-+#define SCHED_POC_SELECTOR_VERSION  "2.6.0"
++#define SCHED_POC_SELECTOR_VERSION  "2.6.1"
 +
 +/**************************************************************
 + * Static keys:
