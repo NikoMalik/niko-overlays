@@ -87,12 +87,6 @@ src_prepare() {
 }
 
 src_configure() {
-	if use pgo; then
-		tc-is-clang && append-cflags -Wno-ignored-optimization-argument
-	fi
-
-
-
 	local emesonargs=(
 		-Dime=true
 		$(meson_feature grapheme-clustering)
