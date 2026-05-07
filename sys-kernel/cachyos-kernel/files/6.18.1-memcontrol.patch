@@ -7,7 +7,7 @@ index 873e510d6..3a74ae66f 100644
   * workload.
   */
 -#define MEMCG_CHARGE_BATCH 64U
-+#define MEMCG_CHARGE_BATCH 128U
++#define MEMCG_CHARGE_BATCH 127U
  
  extern struct mem_cgroup *root_mem_cgroup;
  

@@ -1046,6 +1046,9 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-f2f2_congestion.patch"
   eapply "${FILESDIR}/6.18.1-comptime_ttwu.patch"
   eapply "${FILESDIR}/6.18.1-epb.patch"
+  eapply "${FILESDIR}/6.18.1-crypto-late.patch"
+  eapply "${FILESDIR}/6.18.1-memcontrol.patch"
+  eapply "${FILESDIR}/6.18.1-better_idle.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
