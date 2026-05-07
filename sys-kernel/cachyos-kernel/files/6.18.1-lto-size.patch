@@ -1,0 +1,15 @@
+diff --git a/Makefile b/Makefile
+index 3564c5062..a8f05ed8e 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1032,8 +1032,7 @@ CC_FLAGS_LTO	:= -flto=thin -fsplit-lto-unit
+ endif
+ CC_FLAGS_LTO	+= -fvisibility=hidden
+ 
+-# Limit inlining across translation units to reduce binary size
+-KBUILD_LDFLAGS += -mllvm -import-instr-limit=5
++KBUILD_LDFLAGS += -mllvm -import-instr-limit=1000
+ endif
+ 
+ ifdef CONFIG_LTO
+
