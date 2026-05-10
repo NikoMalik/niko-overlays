@@ -1053,6 +1053,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-lto-size.patch"
   eapply "${FILESDIR}/6.18.1-polly_compute.patch"
   eapply "${FILESDIR}/6.18.1-harder_clang.patch"
+  eapply "${FILESDIR}/6.18.1-mharden_none.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"

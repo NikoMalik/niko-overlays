@@ -1,0 +1,14 @@
+diff --git a/arch/x86/Kconfig b/arch/x86/Kconfig
+index fa3b616af..5bce7c36e 100644
+--- a/arch/x86/Kconfig
++++ b/arch/x86/Kconfig
+@@ -2377,7 +2377,7 @@ config USE_X86_SEG_SUPPORT
+ 	depends on CC_HAS_NAMED_AS_FIXED_SANITIZERS
+ 
+ config CC_HAS_SLS
+-	def_bool $(cc-option,-mharden-sls=all)
++	def_bool $(cc-option,-mharden-sls=none)
+ 
+ config CC_HAS_RETURN_THUNK
+ 	def_bool $(cc-option,-mfunction-return=thunk-extern)
+
