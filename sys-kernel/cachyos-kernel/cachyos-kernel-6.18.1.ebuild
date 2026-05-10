@@ -898,6 +898,7 @@ cachy_use_config() {
 	kconf unset DEBUG_MEMORY
 	kconf unset SND_DEBUG
   kconf unset SLUB_DEBUG
+  kconf unset MITIGATION_SL
 	# BPF_EVENTS will be enabled automatically when FTRACE and KPROBES are enabled
 
 
@@ -1051,6 +1052,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-better_idle.patch"
   eapply "${FILESDIR}/6.18.1-lto-size.patch"
   eapply "${FILESDIR}/6.18.1-polly_compute.patch"
+  eapply "${FILESDIR}/6.18.1-harder_clang.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
