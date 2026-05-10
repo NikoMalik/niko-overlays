@@ -1,0 +1,13 @@
+diff --git a/Makefile b/Makefile
+index 3564c5062..99b343403 100644
+--- a/Makefile
++++ b/Makefile
+@@ -894,6 +894,7 @@ KBUILD_CFLAGS	+= -fplugin=LLVMPolly.so \
+ 		   -mllvm -polly-invariant-load-hoisting \
+ 		   -mllvm -polly-loopfusion-greedy \
+ 		   -mllvm -polly-run-inliner \
++      -mllvm -polly-dependences-computeout=50000000 \
+ 		   -mllvm -polly-vectorizer=stripmine
+ # Polly may optimise loops with dead paths beyound what the linker
+ # can understand. This may negate the effect of the linker's DCE
+
