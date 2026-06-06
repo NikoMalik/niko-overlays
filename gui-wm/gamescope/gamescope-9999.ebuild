@@ -138,6 +138,7 @@ src_configure() {
 		$(meson_use wsi-layer enable_gamescope_wsi_layer)
 		-Denable_openvr_support=false
 		-Dbenchmark=disabled
+		-Dtests=disabled
 		-Db_lto=true
 
 		-Dwlroots:xcb-errors=disabled
