@@ -1050,7 +1050,7 @@ src_prepare() {
     eapply "${FILESDIR}/glibc-2.41-disable-vectorization-more.patch"
 		eapply "${FILESDIR}/glibc-2.41-nanosleep.patch"
 		eapply "${FILESDIR}/glibc-2.41-madvise-free.patch"
-		eapply "${FILESDIR}/glibc-2.41-large-tcache.patch"
+		# eapply "${FILESDIR}/glibc-2.41-large-tcache.patch"
 		eapply "${FILESDIR}/glibc-2.41-memmem.patch"
 		eapply "${FILESDIR}/glibc-2.41-qsort.patch"
 		eapply "${FILESDIR}/glibc-2.41-mcheck.patch"
