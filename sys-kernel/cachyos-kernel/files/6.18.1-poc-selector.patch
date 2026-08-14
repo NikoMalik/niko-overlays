@@ -1,7 +1,7 @@
-From 1e6c9a4ebb514776f9a3f7d9771c3ce57890a9fe Mon Sep 17 00:00:00 2001
+From ec18d7ebc9569600076b014ac3fb6422d2ed1da9 Mon Sep 17 00:00:00 2001
 From: Masahito S <firelzrd@gmail.com>
-Date: Sun, 17 May 2026 11:42:38 +0900
-Subject: [PATCH] 6.18.3-poc-selector-v2.6.1r2
+Date: Wed, 29 Jul 2026 02:52:30 +0900
+Subject: [PATCH] 6.18.3-poc-selector-v2.6.3
 
 ---
  include/linux/sched/topology.h |   50 +-
@@ -9,10 +9,10 @@ Subject: [PATCH] 6.18.3-poc-selector-v2.6.1r2
  kernel/sched/ext.c             |    7 +
  kernel/sched/fair.c            |  164 ++-
  kernel/sched/idle.c            |   10 +
- kernel/sched/poc_selector.c    | 1801 ++++++++++++++++++++++++++++++++
- kernel/sched/sched.h           |  110 ++
+ kernel/sched/poc_selector.c    | 1803 ++++++++++++++++++++++++++++++++
+ kernel/sched/sched.h           |  116 ++
  kernel/sched/topology.c        |  226 ++++
- 8 files changed, 2343 insertions(+), 38 deletions(-)
+ 8 files changed, 2351 insertions(+), 38 deletions(-)
  create mode 100644 kernel/sched/poc_selector.c
 
 diff --git a/include/linux/sched/topology.h b/include/linux/sched/topology.h
@@ -411,10 +411,10 @@ index c39b089d4f..3fffa1a43f 100644
  	 * be set, propagate it into PREEMPT_NEED_RESCHED.
 diff --git a/kernel/sched/poc_selector.c b/kernel/sched/poc_selector.c
 new file mode 100644
-index 0000000000..322d3ec0d6
+index 0000000000..ac0090c454
 --- /dev/null
 +++ b/kernel/sched/poc_selector.c
-@@ -0,0 +1,1801 @@
+@@ -0,0 +1,1803 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Piece-Of-Cake (POC) CPU Selector
@@ -467,7 +467,7 @@ index 0000000000..322d3ec0d6
 +#define SCHED_POC_SELECTOR_AUTHOR   "Masahito Suzuki"
 +#define SCHED_POC_SELECTOR_PROGNAME "Piece-Of-Cake (POC) CPU Selector"
 +
-+#define SCHED_POC_SELECTOR_VERSION  "2.6.1"
++#define SCHED_POC_SELECTOR_VERSION  "2.6.3"
 +
 +/**************************************************************
 + * Static keys:
@@ -1254,6 +1254,8 @@ index 0000000000..322d3ec0d6
 +		u8 shift = sd_share->poc_smt_shift;
 +		int sib = (sd_share->poc_primary_mask & (1ULL << bit))
 +				? bit + shift : bit - shift;
++		if (unlikely(sib < 0 || sib >= 64))
++			return 1ULL << bit;
 +		return (1ULL << bit) | (1ULL << sib);
 +	}
 +
@@ -2217,7 +2219,7 @@ index 0000000000..322d3ec0d6
 +#endif /* CONFIG_SYSFS */
 +#endif /* CONFIG_SCHED_POC_SELECTOR */
 diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
-index adfb6e3409..c5676f37a1 100644
+index adfb6e3409..8f212f3944 100644
 --- a/kernel/sched/sched.h
 +++ b/kernel/sched/sched.h
 @@ -1135,6 +1135,9 @@ struct rq {
@@ -2230,7 +2232,7 @@ index adfb6e3409..c5676f37a1 100644
  	u64			nr_switches;
  
  #ifdef CONFIG_UCLAMP_TASK
-@@ -2197,6 +2200,112 @@ static inline struct task_group *task_group(struct task_struct *p)
+@@ -2197,6 +2200,118 @@ static inline struct task_group *task_group(struct task_struct *p)
  
  #endif /* !CONFIG_CGROUP_SCHED */
  
@@ -2326,15 +2328,21 @@ index adfb6e3409..c5676f37a1 100644
 +{
 +	int base = sd_share->poc_cpu_base;
 +	int base_word = base >> 6;
++	int shift = sd_share->poc_affinity_shift;
 +
-+	if (static_branch_likely(&sched_poc_aligned)) {
-+		/* Fast path: no shift needed (base is 64-aligned) */
++	if (likely(shift == 0)) {
++		/*
++		 * Fast path: this LLC's own base is 64-aligned, so no
++		 * cross-word shift is needed here even if some other LLC
++		 * in the system is misaligned (sched_poc_aligned is a
++		 * single system-wide flag and must not gate this branch).
++		 */
 +		return cpumask_bits(mask)[base_word];
 +	} else {
 +		/* Slow path: shift required (e.g., Threadripper) */
-+		int shift = sd_share->poc_affinity_shift;
 +		u64 lo = cpumask_bits(mask)[base_word];
-+		u64 hi = cpumask_bits(mask)[base_word + 1];
++		u64 hi = (base_word + 1 < BITS_TO_LONGS(nr_cpumask_bits)) ?
++			 cpumask_bits(mask)[base_word + 1] : 0;
 +		return (lo >> shift) | (hi << (64 - shift));
 +	}
 +}
@@ -2343,7 +2351,7 @@ index adfb6e3409..c5676f37a1 100644
  static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
  {
  	set_task_rq(p, cpu);
-@@ -3134,6 +3243,7 @@ extern void nohz_run_idle_balance(int cpu);
+@@ -3134,6 +3249,7 @@ extern void nohz_run_idle_balance(int cpu);
  static inline void nohz_run_idle_balance(int cpu) { }
  #endif
  
