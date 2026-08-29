@@ -1,0 +1,13 @@
+diff --git a/sysdeps/nptl/dl-tunables.list b/sysdeps/nptl/dl-tunables.list
+index fc48d7ee..1c2e1b7b 100644
+--- a/sysdeps/nptl/dl-tunables.list
++++ b/sysdeps/nptl/dl-tunables.list
+@@ -21,7 +21,7 @@ glibc {
+       type: INT_32
+       minval: 0
+       maxval: 32767
+-      default: 100
++      default: 5000
+     }
+     stack_cache_size {
+       type: SIZE_T
