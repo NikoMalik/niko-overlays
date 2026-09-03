@@ -57,7 +57,10 @@ BDEPEND="
 	net-misc/curl
 	dev-lang/python
 	>=net-libs/nodejs-22[npm]
-	>=virtual/rust-1.94.1
+	|| (
+		>=dev-lang/rust-bin-1.94.1
+		>=dev-lang/rust-1.94.1
+	)
 	dev-util/cbindgen
 	llvm-core/clang
 	llvm-core/llvm
