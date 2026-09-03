@@ -124,7 +124,7 @@ src_configure() {
 		"import json;print(json.load(open('surfer.json'))['brands']['release']['release']['displayVersion'])") \
 		|| die "cannot read displayVersion from surfer.json"
 
-	CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
+	SHARP_IGNORE_GLOBAL_LIBVIPS=1 CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 	npm run download || die
 	npm run import || die
