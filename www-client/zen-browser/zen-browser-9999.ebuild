@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit desktop virtualx git-r3
+inherit desktop virtualx xdg-utils git-r3
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
@@ -55,7 +55,7 @@ RDEPEND="${DEPEND}"
 BDEPEND="
 	dev-vcs/git
 	net-misc/curl
-	dev-lang/python:3
+	dev-lang/python
 	>=net-libs/nodejs-22[npm]
 	>=dev-lang/rust-1.94.1
 	dev-util/cbindgen
@@ -125,16 +125,37 @@ src_install() {
 	bindir=$(echo engine/obj-*/dist/bin)
 	[[ -d ${bindir} ]] || die "build output not found at ${bindir}"
 
-	dodir /opt/zen-browser
-	cp -RL "${bindir}"/. "${ED}"/opt/zen-browser/ || die
+	local destdir="/opt/zen-browser"
+	dodir "${destdir}"
+	cp -RL "${bindir}"/. "${ED}${destdir}"/ || die
 
-	dosym ../../opt/zen-browser/zen /usr/bin/zen-browser
+	dosym -r "${destdir}/zen" /usr/bin/zen || die
 
-	local icon="${bindir}/browser/chrome/icons/default/default128.png"
-	if [[ -f ${icon} ]]; then
-		newicon -s 128 "${icon}" zen-browser.png
-	fi
+	local size
+	for size in 16 32 48 64 128; do
+		local icon="${bindir}/browser/chrome/icons/default/default${size}.png"
+		[[ -f ${icon} ]] && newicon -s ${size} "${icon}" zen.png
+	done
 
-	make_desktop_entry zen-browser "Zen Browser" zen-browser \
-		"Network;WebBrowser" "StartupWMClass=zen"
+	make_desktop_entry "/usr/bin/zen %u" "Zen Browser" zen \
+		"Network;WebBrowser" "$(cat "${FILESDIR}"/desktop_options)"
+
+	local bin
+	for bin in zen-bin updater glxtest vaapitest; do
+		[[ -f ${ED}${destdir}/${bin} ]] && fperms 0755 "${destdir}/${bin}"
+	done
+	[[ -f ${ED}${destdir}/pingsender ]] && fperms 0750 "${destdir}/pingsender"
+
+	insinto "${destdir}"/distribution
+	doins "${FILESDIR}"/policies.json
+}
+
+pkg_postinst() {
+	xdg_desktop_database_update
+	xdg_icon_cache_update
+}
+
+pkg_postrm() {
+	xdg_desktop_database_update
+	xdg_icon_cache_update
 }
