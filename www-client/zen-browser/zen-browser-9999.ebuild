@@ -9,6 +9,9 @@ DESCRIPTION="Welcome to a calmer internet, built from source with native optimiz
 HOMEPAGE="https://zen-browser.app"
 EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
 
+FF_PV="155.0"
+SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefox-${FF_PV}.source.tar.xz"
+
 LICENSE="MPL-2.0"
 SLOT="0"
 KEYWORDS=""
@@ -56,7 +59,7 @@ BDEPEND="
 	dev-vcs/git
 	net-misc/curl
 	dev-lang/python
-	>=net-libs/nodejs-22[npm]
+	>=net-libs/nodejs-22.13.1[npm]
 	|| (
 		>=dev-lang/rust-bin-1.94.1
 		>=dev-lang/rust-1.94.1
@@ -96,15 +99,32 @@ src_prepare() {
 	if use pgo; then
 		printf 'ac_add_options MOZ_PGO=1\nmk_add_options MOZ_PGO=1\n' >> "${mozconf}" || die
 	fi
+
+	local want_ff
+	want_ff=$(python3 -c \
+		"import json;print(json.load(open('surfer.json'))['version']['version'])" 2>/dev/null)
+	if [[ -n ${want_ff} && ${want_ff} != ${FF_PV} ]]; then
+		ewarn "Zen wants Firefox ${want_ff} but FF_PV is ${FF_PV}, cache bypassed, bump FF_PV in the ebuild"
+	fi
+
+	mkdir -p .surfer/engine || die
+	cp "${DISTDIR}/firefox-${FF_PV}.source.tar.xz" .surfer/engine/ || die
 }
 
 src_configure() {
+	local want nodever
+	want=$(<.nvmrc)
+	nodever=$(node --version 2>/dev/null)
+	if [[ ${nodever} != v${want}.* ]]; then
+		die "Zen needs Node.js ${want} (.nvmrc), active node is ${nodever:-none}, install and select net-libs/nodejs-${want}"
+	fi
+
 	local zver
 	zver=$(python3 -c \
 		"import json;print(json.load(open('surfer.json'))['brands']['release']['release']['displayVersion'])") \
 		|| die "cannot read displayVersion from surfer.json"
 
-	npm ci || die
+	CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 	npm run download || die
 	npm run import || die
