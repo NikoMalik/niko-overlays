@@ -136,7 +136,9 @@ src_compile() {
 	export CC=clang
 	export CXX=clang++
 	export LLVM_PROFDATA=llvm-profdata
-	export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=system
+	export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=none
+	export PIP_NETWORK_INSTALL_RESTRICTED_VIRTUALENVS=mach
+	export MOZBUILD_STATE_PATH="${WORKDIR}/.mozbuild"
 
 	use lto || export ZEN_DISABLE_LTO=1
 
