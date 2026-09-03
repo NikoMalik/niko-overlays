@@ -141,6 +141,7 @@ src_compile() {
 	export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=none
 	export PIP_NETWORK_INSTALL_RESTRICTED_VIRTUALENVS=mach
 	export MOZBUILD_STATE_PATH="${WORKDIR}/.mozbuild"
+	export XARGS="${EPREFIX}/usr/bin/xargs"
 
 	use lto || export ZEN_DISABLE_LTO=1
 
