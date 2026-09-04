@@ -89,6 +89,9 @@ src_prepare() {
 	printf '\nac_add_options --disable-bootstrap\n' >> "${mozconf}" || die
 	printf 'ac_add_options --with-libclang-path=%s\n' "$(llvm-config --libdir)" >> "${mozconf}" || die
 	printf 'ac_add_options --without-wasm-sandboxed-libraries\n' >> "${mozconf}" || die
+	printf 'ac_add_options --disable-clang-plugin\n' >> "${mozconf}" || die
+	printf 'ac_add_options --disable-updater\n' >> "${mozconf}" || die
+	printf 'ac_add_options --disable-cargo-incremental\n' >> "${mozconf}" || die
 
 	if use native; then
 		printf 'ac_add_options --enable-optimize="-O3 -march=native -fomit-frame-pointer  -fno-plt "\n' >> "${mozconf}" || die
