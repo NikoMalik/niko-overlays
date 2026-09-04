@@ -165,6 +165,12 @@ src_compile() {
 	export MOZBUILD_STATE_PATH="${WORKDIR}/.mozbuild"
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 
+	addpredict /proc/self/oom_score_adj
+	if use pgo; then
+		addpredict /proc
+		addpredict /dev
+	fi
+
 	use lto || export ZEN_DISABLE_LTO=1
 
 	virtx npm run build
