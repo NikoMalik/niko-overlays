@@ -16,7 +16,7 @@ LICENSE="MPL-2.0"
 SLOT="0"
 KEYWORDS=""
 
-IUSE="+X +lto +native +pgo +wayland"
+IUSE="+X +lto +pgo +wayland"
 REQUIRED_USE="|| ( X wayland )"
 
 RESTRICT="network-sandbox strip"
@@ -116,10 +116,6 @@ src_prepare() {
 	fi
 	printf 'ac_add_options --enable-default-toolkit=%s\n' "${toolkit}" >> "${mozconf}" || die
 
-	if use native; then
-		printf 'ac_add_options --enable-optimize="-O3 -march=native -fomit-frame-pointer  -fno-plt "\n' >> "${mozconf}" || die
-	fi
-
 	if use pgo; then
 		printf 'ac_add_options MOZ_PGO=1\nmk_add_options MOZ_PGO=1\n' >> "${mozconf}" || die
 	fi
@@ -159,10 +155,15 @@ src_compile() {
 	export ZEN_RELEASE=1
 	export CC=clang
 	export CXX=clang++
+	export AR=llvm-ar
+	export NM=llvm-nm
+	export RANLIB=llvm-ranlib
 	export LLVM_PROFDATA=llvm-profdata
 	export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=none
 	export PIP_NETWORK_INSTALL_RESTRICTED_VIRTUALENVS=mach
 	export MOZBUILD_STATE_PATH="${WORKDIR}/.mozbuild"
+	export MOZ_MAKE_FLAGS="${MAKEOPTS}"
+	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 
 	addpredict /proc/self/oom_score_adj
