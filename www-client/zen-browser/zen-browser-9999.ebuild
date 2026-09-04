@@ -16,7 +16,8 @@ LICENSE="MPL-2.0"
 SLOT="0"
 KEYWORDS=""
 
-IUSE="+lto +native +pgo +wayland"
+IUSE="+X +lto +native +pgo +wayland"
+REQUIRED_USE="|| ( X wayland )"
 
 RESTRICT="network-sandbox strip"
 
@@ -24,34 +25,46 @@ DEPEND="
 	app-accessibility/at-spi2-core:2
 	dev-libs/expat
 	dev-libs/glib:2
+	dev-libs/libffi
 	dev-libs/nspr
 	dev-libs/nss
 	media-libs/alsa-lib
 	media-libs/fontconfig
 	media-libs/freetype
+	media-libs/libepoxy
 	media-libs/libpng:0=[apng]
 	media-libs/mesa
 	media-video/ffmpeg
+	media-video/pipewire
 	net-print/cups
 	sys-apps/dbus
+	sys-apps/pciutils
 	sys-libs/glibc
 	virtual/freedesktop-icon-theme
-	x11-libs/cairo[X]
+	x11-libs/cairo[X?]
 	x11-libs/gdk-pixbuf:2
-	x11-libs/gtk+:3[X]
-	x11-libs/libX11
-	x11-libs/libxcb
-	x11-libs/libXcomposite
-	x11-libs/libXcursor
-	x11-libs/libXdamage
-	x11-libs/libXext
-	x11-libs/libXfixes
-	x11-libs/libXi
-	x11-libs/libXrandr
-	x11-libs/libXrender
-	x11-libs/libXtst
+	x11-libs/gtk+:3[X?,wayland?]
+	x11-libs/libdrm
+	x11-libs/libnotify
 	x11-libs/pango
-	wayland? ( dev-libs/wayland )
+	X? (
+		x11-libs/libX11
+		x11-libs/libxcb
+		x11-libs/libXcomposite
+		x11-libs/libXcursor
+		x11-libs/libXdamage
+		x11-libs/libXext
+		x11-libs/libXfixes
+		x11-libs/libXi
+		x11-libs/libXrandr
+		x11-libs/libXrender
+		x11-libs/libXScrnSaver
+		x11-libs/libXtst
+	)
+	wayland? (
+		dev-libs/wayland
+		x11-libs/libxkbcommon
+	)
 "
 RDEPEND="${DEPEND}"
 
@@ -93,12 +106,18 @@ src_prepare() {
 	printf 'ac_add_options --disable-updater\n' >> "${mozconf}" || die
 	printf 'ac_add_options --disable-cargo-incremental\n' >> "${mozconf}" || die
 
+	local toolkit
+	if use X && use wayland; then
+		toolkit="cairo-gtk3-x11-wayland"
+	elif use wayland; then
+		toolkit="cairo-gtk3-wayland-only"
+	else
+		toolkit="cairo-gtk3-x11-only"
+	fi
+	printf 'ac_add_options --enable-default-toolkit=%s\n' "${toolkit}" >> "${mozconf}" || die
+
 	if use native; then
 		printf 'ac_add_options --enable-optimize="-O3 -march=native -fomit-frame-pointer  -fno-plt "\n' >> "${mozconf}" || die
-	fi
-
-	if use wayland; then
-		printf 'ac_add_options --enable-default-toolkit=cairo-gtk3-wayland\n' >> "${mozconf}" || die
 	fi
 
 	if use pgo; then
