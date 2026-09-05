@@ -9,15 +9,12 @@ DESCRIPTION="Welcome to a calmer internet, built from source with native optimiz
 HOMEPAGE="https://zen-browser.app"
 EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
 
-FF_PV="155.0"
-SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefox-${FF_PV}.source.tar.xz"
-
 LICENSE="MPL-2.0"
 SLOT="0"
 KEYWORDS=""
 
-IUSE="+X +lto +pgo +wayland"
-REQUIRED_USE="|| ( X wayland )"
+IUSE="+X +full-lto +lto +pgo +wayland"
+REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
 RESTRICT="network-sandbox strip"
 
@@ -87,8 +84,9 @@ BDEPEND="
 "
 
 pkg_pretend() {
-	if use pgo && [[ ${MERGE_TYPE} != binary ]]; then
-		ewarn "PGO builds Zen twice and profile-runs it under Xvfb, expect long build time and high RAM"
+	if [[ ${MERGE_TYPE} != binary ]]; then
+		use pgo && ewarn "PGO builds Zen twice and profile-runs it under Xvfb, expect long build time and high RAM"
+		use full-lto && ewarn "full-lto: the libxul link is very RAM-heavy, on low RAM use USE=-full-lto (thin) or MAKEOPTS=-j2 plus swap"
 	fi
 }
 
@@ -120,15 +118,26 @@ src_prepare() {
 		printf 'ac_add_options MOZ_PGO=1\nmk_add_options MOZ_PGO=1\n' >> "${mozconf}" || die
 	fi
 
-	local want_ff
-	want_ff=$(python3 -c \
-		"import json;print(json.load(open('surfer.json'))['version']['version'])" 2>/dev/null)
-	if [[ -n ${want_ff} && ${want_ff} != ${FF_PV} ]]; then
-		ewarn "Zen wants Firefox ${want_ff} but FF_PV is ${FF_PV}, cache bypassed, bump FF_PV in the ebuild"
+	if use lto; then
+		local ltotype=cross,thin
+		use full-lto && ltotype=cross,full
+		printf 'ac_add_options --enable-lto=%s\nmk_add_options MOZ_LTO=%s\n' "${ltotype}" "${ltotype}" >> "${mozconf}" || die
+	else
+		printf 'ac_add_options --disable-lto\n' >> "${mozconf}" || die
 	fi
 
+	local want_ff
+	want_ff=$(python3 -c \
+		"import json;print(json.load(open('surfer.json'))['version']['version'])" 2>/dev/null) \
+		|| die "cannot read Firefox version from surfer.json"
+
 	mkdir -p .surfer/engine || die
-	cp "${DISTDIR}/firefox-${FF_PV}.source.tar.xz" .surfer/engine/ || die
+	if [[ -f ${DISTDIR}/firefox-${want_ff}.source.tar.xz ]]; then
+		cp "${DISTDIR}/firefox-${want_ff}.source.tar.xz" .surfer/engine/ || die
+		einfo "Seeded Firefox ${want_ff} source from cache"
+	else
+		einfo "Firefox ${want_ff} source not cached, surfer will download it"
+	fi
 }
 
 src_configure() {
@@ -147,6 +156,14 @@ src_configure() {
 	SHARP_IGNORE_GLOBAL_LIBVIPS=1 CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 	npm run download || die
+
+	local ffsrc
+	ffsrc=$(echo .surfer/engine/firefox-*.source.tar.xz)
+	if [[ -f ${ffsrc} && ! -f ${DISTDIR}/${ffsrc##*/} ]]; then
+		addwrite "${DISTDIR}"
+		cp "${ffsrc}" "${DISTDIR}/" 2>/dev/null || ewarn "could not cache Firefox source into ${DISTDIR}"
+	fi
+
 	npm run import || die
 	sh scripts/download-language-packs.sh || die
 }
@@ -171,8 +188,6 @@ src_compile() {
 		addpredict /proc
 		addpredict /dev
 	fi
-
-	use lto || export ZEN_DISABLE_LTO=1
 
 	virtx npm run build
 }
