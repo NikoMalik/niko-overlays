@@ -8,10 +8,15 @@ inherit desktop virtualx xdg-utils git-r3
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
 EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
+if [[ ${PV} == 9999 ]]; then
+	KEYWORDS=""
+else
+	EGIT_COMMIT="${PV}b"
+	KEYWORDS="~amd64"
+fi
 
 LICENSE="MPL-2.0"
 SLOT="0"
-KEYWORDS=""
 
 IUSE="+X +full-lto +lto +pgo +wayland"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
