@@ -27,6 +27,10 @@ BDEPEND="
 	dev-util/wayland-scanner
 "
 
+PATCHES=(
+	"${FILESDIR}/leak_fix.patch"
+)
+
 
 pkg_postinst() {
 	ewarn "gui-libs/egl-wayland2 (git) is still experimental and will be used over"
