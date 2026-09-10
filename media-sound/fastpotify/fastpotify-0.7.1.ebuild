@@ -3,7 +3,11 @@
 
 EAPI=8
 
-RUST_MIN_VER="1.95.0"
+RUST_MIN_VER="1.98.0"
+
+COMMIT="67b8dfbb22f1d97a0eec359021f25cbcae8e5d69"
+LIBRESPOT_COMMIT="8d3932a64aa7aae84e6920ba7356cf7ce7c0283d"
+PROJECTM_COMMIT="454f38c50a968b13028ab6716d33647b3e99388c"
 
 CRATES="
 	ab_glyph@0.2.32
@@ -752,19 +756,17 @@ CRATES="
 "
 
 declare -A GIT_CRATES=(
-	[librespot-audio]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/audio"
-	[librespot-connect]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/connect"
-	[librespot-core]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/core"
-	[librespot-metadata]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/metadata"
-	[librespot-oauth]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/oauth"
-	[librespot-playback]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/playback"
-	[librespot-protocol]="https://github.com/crmne/librespot;8d3932a64aa7aae84e6920ba7356cf7ce7c0283d;librespot-%commit%/protocol"
-	[projectm-sys]="https://github.com/crmne/projectm-rs;454f38c50a968b13028ab6716d33647b3e99388c;projectm-rs-%commit%/projectm-sys"
+	[librespot-audio]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/audio"
+	[librespot-connect]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/connect"
+	[librespot-core]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/core"
+	[librespot-metadata]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/metadata"
+	[librespot-oauth]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/oauth"
+	[librespot-playback]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/playback"
+	[librespot-protocol]="https://github.com/crmne/librespot;${LIBRESPOT_COMMIT};librespot-%commit%/protocol"
+	[projectm-sys]="https://github.com/crmne/projectm-rs;${PROJECTM_COMMIT};projectm-rs-%commit%/projectm-sys"
 )
 
 inherit cargo desktop xdg
-
-COMMIT="67b8dfbb22f1d97a0eec359021f25cbcae8e5d69"
 
 DESCRIPTION="Spotify, native and fast, a lightweight Rust client with local playback and Connect"
 HOMEPAGE="https://github.com/crmne/fastpotify"
@@ -795,6 +797,30 @@ RDEPEND="${DEPEND}"
 BDEPEND+=" virtual/pkgconfig"
 
 QA_FLAGS_IGNORED="usr/bin/${PN}"
+
+src_prepare() {
+	default
+
+	# Upstream Cargo.toml redirects librespot and projectm-sys to git forks
+	# via [patch.crates-io], so cargo tries to fetch them over the network
+	# even in offline mode, repoint those patches to the unpacked fork
+	# sources fetched via GIT_CRATES
+	local lr="${WORKDIR}/librespot-${LIBRESPOT_COMMIT}"
+	local pm="${WORKDIR}/projectm-rs-${PROJECTM_COMMIT}"
+	sed -i \
+		-e "s|^librespot-audio = { git =.*|librespot-audio = { path = \"${lr}/audio\" }|" \
+		-e "s|^librespot-connect = { git =.*|librespot-connect = { path = \"${lr}/connect\" }|" \
+		-e "s|^librespot-core = { git =.*|librespot-core = { path = \"${lr}/core\" }|" \
+		-e "s|^librespot-metadata = { git =.*|librespot-metadata = { path = \"${lr}/metadata\" }|" \
+		-e "s|^librespot-oauth = { git =.*|librespot-oauth = { path = \"${lr}/oauth\" }|" \
+		-e "s|^librespot-playback = { git =.*|librespot-playback = { path = \"${lr}/playback\" }|" \
+		-e "s|^librespot-protocol = { git =.*|librespot-protocol = { path = \"${lr}/protocol\" }|" \
+		-e "s|^projectm-sys = { git =.*|projectm-sys = { path = \"${pm}/projectm-sys\" }|" \
+		Cargo.toml || die "failed to repoint git patches"
+
+	# Sync Cargo.lock with the path patches so the frozen install phase agrees
+	cargo_update_crates
+}
 
 src_configure() {
 	cargo_src_configure --no-default-features
