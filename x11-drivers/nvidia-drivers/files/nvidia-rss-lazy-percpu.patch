@@ -1,0 +1,32 @@
+Fix build against kernels with lazy_percpu_counter rss_stat (cachyos rss-stat-optimization patch)
+The NV_PERCPU_MM_COUNTER conftest fails when mm->rss_stat is struct lazy_percpu_counter[],
+so the old .count[] fallback is selected and no longer compiles. Use the kernel's own
+add_mm_counter_other() which works for all rss_stat flavors.
+--- a/kernel-module-source/kernel-open/nvidia/nv-vm.c
++++ b/kernel-module-source/kernel-open/nvidia/nv-vm.c
+@@ -983,11 +983,7 @@
+     mm_work->mm = mm;
+     mm_work->num_pages = numPages;
+     mmgrab(mm);
+-#if defined(NV_PERCPU_MM_COUNTER)
+-    percpu_counter_add(&mm->rss_stat[MM_SHMEMPAGES], numPages);
+-#else
+-    atomic_long_add_return(numPages, &mm->rss_stat.count[MM_SHMEMPAGES]);
+-#endif
++    add_mm_counter_other(mm, MM_SHMEMPAGES, numPages);
+     return mm_work;
+ }
+ 
+@@ -997,11 +993,7 @@
+     {
+         return;
+     }
+-#if defined(NV_PERCPU_MM_COUNTER)
+-    percpu_counter_add(&mm_work->mm->rss_stat[MM_SHMEMPAGES], -mm_work->num_pages);
+-#else
+-    atomic_long_add_return(-mm_work->num_pages, &mm_work->mm->rss_stat.count[MM_SHMEMPAGES]);
+-#endif
++    add_mm_counter_other(mm_work->mm, MM_SHMEMPAGES, -mm_work->num_pages);
+ 
+     schedule_work(&mm_work->task);
+ }
