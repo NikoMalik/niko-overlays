@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+	<maintainer type="person">
+		<email>goodteasounds@gmail.com</email>
+	</maintainer>
+	<longdescription lang="en">
+		Fastpotify is a native, lightweight Spotify client written in Rust,
+		using librespot for local playback and Spotify Connect. Requires a
+		Spotify Premium account. This build is compiled without the MilkDrop
+		visualizer (--no-default-features), so it does not need cmake, a C++
+		compiler, or libclang.
+	</longdescription>
+	<upstream>
+		<remote-id type="github">crmne/fastpotify</remote-id>
+		<bugs-to>https://github.com/crmne/fastpotify/issues</bugs-to>
+	</upstream>
+</pkgmetadata>
