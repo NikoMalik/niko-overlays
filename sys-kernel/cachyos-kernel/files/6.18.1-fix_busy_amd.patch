@@ -1,0 +1,86 @@
+From dfd0e5aa6aadcd477ccca12dcc1433a76aa8d543 Mon Sep 17 00:00:00 2001
+From: Sultan Alsawaf <sultan@kerneltoast.com>
+Date: Mon, 25 Aug 2025 21:46:35 -0700
+Subject: [PATCH] drm/amd/display: Fix high busy wait load in
+ dmub_srv_wait_for_idle()
+
+dmub_srv_wait_for_idle() is called with a timeout_us of 100000, which is
+100 ms, and loops with udelay(1) on every iteration.
+
+Since the udelay duration is very short, the CPU doesn't have enough time
+to enter a C-state to save power during the delay.
+
+Worse, since the timeout limit is 100 ms, this permits the CPU to burn a
+lot of time on busy waiting. The load from busy waiting is high enough that
+it occasionally prevents the CPU from entering deeper implicit idle states
+temporarily (package C-states), sometimes for one minute or more.
+
+Empirically on a Strix Halo system (AMD RYZEN AI MAX+ PRO 395 w/ Radeon
+8060S, HP ZBook Ultra G1a) it is observed that the total delayed time
+consistently oscillates between a few different durations: 0-3 us,
+10-30 us, and 100-1000+ us. Knowing this, implement progressively longer
+delays following this pattern instead of delaying for 1 us every iteration.
+
+Furthermore, when the context permits it, use usleep_range() instead of
+busy waiting in order to reclaim CPU time lost to waiting here. This lost
+CPU time is significant and amounts to ~5% of CPU cycles spent in the
+kernel when the system is quiet, according to perf top.
+
+This resolves the temporary power consumption spikes from the loss of
+package C-state residency, and dmub_srv_wait_for_idle() no longer appears
+in perf top.
+
+Signed-off-by: Sultan Alsawaf <sultan@kerneltoast.com>
+---
+ .../gpu/drm/amd/display/dmub/src/dmub_srv.c   | 25 ++++++++++++++++---
+ 1 file changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/display/dmub/src/dmub_srv.c b/drivers/gpu/drm/amd/display/dmub/src/dmub_srv.c
+index acca7943a8c8..1243915f92cf 100644
+--- a/drivers/gpu/drm/amd/display/dmub/src/dmub_srv.c
++++ b/drivers/gpu/drm/amd/display/dmub/src/dmub_srv.c
+@@ -979,14 +979,14 @@ enum dmub_status dmub_srv_wait_for_pending(struct dmub_srv *dmub,
+ enum dmub_status dmub_srv_wait_for_idle(struct dmub_srv *dmub,
+ 					uint32_t timeout_us)
+ {
++	const bool can_sleep = IS_ENABLED(CONFIG_PREEMPT_COUNT) && preemptible();
+ 	enum dmub_status status;
+ 	uint32_t i;
+-	const uint32_t polling_interval_us = 1;
+ 
+ 	if (!dmub->hw_init)
+ 		return DMUB_STATUS_INVALID;
+ 
+-	for (i = 0; i < timeout_us; i += polling_interval_us) {
++	for (i = 0; i < timeout_us;) {
+ 		status = dmub_srv_update_inbox_status(dmub);
+ 
+ 		if (status != DMUB_STATUS_OK)
+@@ -996,7 +996,26 @@ enum dmub_status dmub_srv_wait_for_idle(struct dmub_srv *dmub,
+ 		if (dmub_rb_empty(&dmub->inbox1.rb) && !dmub->reg_inbox0.is_pending)
+ 			return DMUB_STATUS_OK;
+ 
+-		udelay(polling_interval_us);
++		/*
++		 * Use progressively longer delays so the CPU doesn't get kicked
++		 * out of idle for very long and impact power consumption.
++		 */
++		if (i < 3) {
++			udelay(1);
++			i += 1;
++		} else if (i < 100) {
++			if (can_sleep)
++				usleep_range(8, 10);
++			else
++				udelay(10);
++			i += 10;
++		} else {
++			if (can_sleep)
++				usleep_range(90, 100);
++			else
++				udelay(100);
++			i += 100;
++		}
+ 	}
+ 
+ 	return DMUB_STATUS_TIMEOUT;
