@@ -1062,6 +1062,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-epp_retune.patch"
   eapply "${FILESDIR}/6.18.1-ttm.patch"
   eapply "${FILESDIR}/6.18.1-slab.patch"
+  eapply "${FILESDIR}/6.18.1-loop_block.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
