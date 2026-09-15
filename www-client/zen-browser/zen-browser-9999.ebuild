@@ -29,7 +29,6 @@ DEPEND="
 	dev-libs/glib:2
 	dev-libs/libffi
 	dev-libs/nspr
-	dev-libs/nss
 	media-libs/alsa-lib
 	media-libs/fontconfig
 	media-libs/freetype
@@ -74,6 +73,8 @@ BDEPEND="
 	dev-vcs/git
 	net-misc/curl
 	dev-lang/python
+  dev-libs/libffi:=
+  >=dev-libs/nss-3.127
 	>=net-libs/nodejs-22.13.1[npm]
 	|| (
 		>=dev-lang/rust-bin-1.94.1
