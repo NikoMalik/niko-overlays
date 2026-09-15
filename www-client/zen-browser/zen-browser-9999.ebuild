@@ -108,6 +108,35 @@ src_prepare() {
 	printf 'ac_add_options --disable-clang-plugin\n' >> "${mozconf}" || die
 	printf 'ac_add_options --disable-updater\n' >> "${mozconf}" || die
 	printf 'ac_add_options --disable-cargo-incremental\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-optimize=-O3\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-linker=lld\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-install-strip\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-strip\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-parental-controls\n' >> "${mozconf}" || die
+
+  printf 'ac_add_options --without-ccache\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-intl-api\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-ffi\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-gbm\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-libdrm\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-nspr\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-nss\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-pixman\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-zlib\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-unsigned-addon-scopes=app,system\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-elf-hack=relr\n' >> "${mozconf}" || die
+
+
+
+		
+
+
+
+
+
+
+
+
 
 	local toolkit
 	if use X && use wayland; then
@@ -130,6 +159,8 @@ src_prepare() {
 	else
 		printf 'ac_add_options --disable-lto\n' >> "${mozconf}" || die
 	fi
+
+
 
 	local want_ff
 	want_ff=$(python3 -c \
@@ -187,6 +218,8 @@ src_compile() {
 	export MOZ_MAKE_FLAGS="${MAKEOPTS}"
 	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
+  export RUSTC_OPT_LEVEL=3
+  export STRIP_FLAGS="--strip-debug --strip-unneeded"
 
 	addpredict /proc/self/oom_score_adj
 	if use pgo; then
