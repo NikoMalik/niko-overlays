@@ -177,11 +177,19 @@ src_prepare() {
 }
 
 src_configure() {
-	local want nodever
+	local want wantmaj nodever havemaj
 	want=$(<.nvmrc)
+	wantmaj=${want%%.*}
 	nodever=$(node --version 2>/dev/null)
-	if [[ ${nodever} != v${want}.* ]]; then
-		die "Zen needs Node.js ${want} (.nvmrc), active node is ${nodever:-none}, install and select net-libs/nodejs-${want}"
+	havemaj=${nodever#v}
+	havemaj=${havemaj%%.*}
+	if [[ -z ${havemaj} ]]; then
+		die "Node.js not found, install >=net-libs/nodejs-${wantmaj}"
+	elif [[ ${havemaj} -lt ${wantmaj} ]]; then
+		die "Zen needs Node.js >=${wantmaj} (.nvmrc wants ${want}), active node is ${nodever}"
+	elif [[ ${havemaj} -ne ${wantmaj} ]]; then
+		ewarn "Zen upstream pins Node.js ${want} (.nvmrc), building with ${nodever}"
+		ewarn "if surfer or npm fails, install net-libs/nodejs-${wantmaj} and retry"
 	fi
 
 	local zver
