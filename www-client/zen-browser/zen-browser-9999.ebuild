@@ -227,8 +227,7 @@ src_compile() {
 	export MOZ_MAKE_FLAGS="${MAKEOPTS}"
 	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
-  export RUSTC_OPT_LEVEL=3
-  export STRIP_FLAGS="--strip-debug --strip-unneeded"
+	export RUSTC_OPT_LEVEL=3
 
 	addpredict /proc/self/oom_score_adj
 	if use pgo; then
