@@ -28,7 +28,8 @@ DEPEND="
 	dev-libs/expat
 	dev-libs/glib:2
 	dev-libs/libffi
-	dev-libs/nspr
+	>=dev-libs/nspr-4.39
+	>=dev-libs/nss-3.127
 	media-libs/alsa-lib
 	media-libs/fontconfig
 	media-libs/freetype
@@ -41,6 +42,8 @@ DEPEND="
 	sys-apps/dbus
 	sys-apps/pciutils
 	sys-libs/glibc
+	sys-libs/zlib
+	x11-libs/pixman
 	virtual/freedesktop-icon-theme
 	x11-libs/cairo[X?]
 	x11-libs/gdk-pixbuf:2
@@ -228,7 +231,11 @@ src_configure() {
 		"import json;print(json.load(open('surfer.json'))['brands']['release']['release']['displayVersion'])") \
 		|| die "cannot read displayVersion from surfer.json"
 
-	SHARP_IGNORE_GLOBAL_LIBVIPS=1 CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
+	# force sharp to build from source with its vendored libvips (8.14.5) instead
+	# of the flaky prebuild-install network download that falls back to the
+	# ABI-incompatible system vips, SHARP_IGNORE_GLOBAL_LIBVIPS keeps it vendored
+	SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm_config_build_from_source=true \
+		CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 	npm run download || die
 
