@@ -118,6 +118,8 @@ src_prepare() {
 			-e '/export STRIP_FLAGS=/d' \
 			-e '/ac_add_options --enable-profile-(generate|use)/d' \
 			-e '/ac_add_options --with-pgo-(profile-path|jarlog)/d' \
+		  -e '/ac_add_options --enable-optimize/d' \
+
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
@@ -133,6 +135,16 @@ src_prepare() {
   printf 'ac_add_options --disable-install-strip\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-strip\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-parental-controls\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-wmf\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-packed-relative-relocs\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-geckodriver\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-crashreporter\n' >> "${mozconf}" || die
+  printf 'ac_add_options --allow-addon-sideload\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-legacy-profile-creation\n' >> "${mozconf}" || die
+
+
+
+
 
   printf 'ac_add_options --without-ccache\n' >> "${mozconf}" || die
   printf 'ac_add_options --with-intl-api\n' >> "${mozconf}" || die
