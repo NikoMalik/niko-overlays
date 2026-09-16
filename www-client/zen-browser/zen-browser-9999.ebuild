@@ -119,7 +119,6 @@ src_prepare() {
 			-e '/ac_add_options --enable-profile-(generate|use)/d' \
 			-e '/ac_add_options --with-pgo-(profile-path|jarlog)/d' \
 		  -e '/ac_add_options --enable-optimize/d' \
-
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
