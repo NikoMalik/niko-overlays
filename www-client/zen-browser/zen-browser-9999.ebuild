@@ -3,11 +3,7 @@
 
 EAPI=8
 
-# Firefox's mach build only supports up to 3.13, list the versions it can
-# use here, python-any-r1 picks the best installed one or pulls it in
-PYTHON_COMPAT=( python3_{11,12,13} )
-
-inherit desktop multiprocessing python-any-r1 virtualx xdg-utils git-r3
+inherit desktop multiprocessing virtualx xdg-utils git-r3
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
@@ -25,7 +21,7 @@ SLOT="0"
 IUSE="+X +full-lto +lto +pgo +wayland"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
-RESTRICT="network-sandbox strip"
+RESTRICT="network-sandbox"
 
 DEPEND="
 	app-accessibility/at-spi2-core:2
@@ -76,7 +72,7 @@ RDEPEND="${DEPEND}"
 BDEPEND="
 	dev-vcs/git
 	net-misc/curl
-	${PYTHON_DEPS}
+	dev-lang/python
   dev-libs/libffi:=
   >=dev-libs/nss-3.127
 	>=net-libs/nodejs-22.13.1[npm]
@@ -110,20 +106,18 @@ src_prepare() {
 	local mozconf="configs/common/mozconfig"
 	[[ -f ${mozconf} ]] || die "mozconfig template not found at ${mozconf}"
 
-	# Zen's own mozconfigs hardcode LTO (common=thin, linux=full), CI-only
-	# GA-artifact PGO (~/artifact/*.profdata), elf-hack disable and a
-	# STRIP_FLAGS string that breaks Firefox's packager, strip all of these
-	# so our USE-driven options below are authoritative
+	# Match www-client/firefox: strip via portage (prepstrip), not Firefox, and
+	# do local PGO (MOZ_PGO=1), not Zen's CI cross-profile. Drop Zen's in-tree
+	# strip settings (incl. the STRIP_FLAGS string that breaks the packager) and
+	# its GA-artifact PGO profile lines (~/artifact/*.profdata does not exist here)
 	local zc
 	for zc in configs/common/mozconfig configs/linux/mozconfig; do
 		[[ -f ${zc} ]] || continue
 		sed -i -E \
-			-e '/ac_add_options --enable-lto/d' \
-			-e '/export MOZ_LTO=/d' \
+			-e '/ac_add_options --enable-(install-)?strip/d' \
+			-e '/export STRIP_FLAGS=/d' \
 			-e '/ac_add_options --enable-profile-(generate|use)/d' \
 			-e '/ac_add_options --with-pgo-(profile-path|jarlog)/d' \
-			-e '/ac_add_options --(enable|disable)-elf-hack/d' \
-			-e '/export STRIP_FLAGS=/d' \
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
@@ -136,8 +130,8 @@ src_prepare() {
 	printf 'ac_add_options --disable-cargo-incremental\n' >> "${mozconf}" || die
   printf 'ac_add_options --enable-optimize=-O3\n' >> "${mozconf}" || die
   printf 'ac_add_options --enable-linker=lld\n' >> "${mozconf}" || die
-  printf 'ac_add_options --enable-install-strip\n' >> "${mozconf}" || die
-  printf 'ac_add_options --enable-strip\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-install-strip\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-strip\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-parental-controls\n' >> "${mozconf}" || die
 
   printf 'ac_add_options --without-ccache\n' >> "${mozconf}" || die
@@ -237,9 +231,7 @@ src_configure() {
 	npm run import || die
 	sh scripts/download-language-packs.sh || die
 
-	# mach's PGO/LTO configure calls multiprocessing.cpu_count(), whose pool
-	# deadlocks on a futex in the portage sandbox, replace it with a fixed
-	# job count like www-client/firefox does (source now exists under engine/)
+	# Make LTO/PGO configure respect MAKEOPTS instead of multiprocessing.cpu_count()
 	local f
 	for f in \
 		engine/build/moz.configure/lto-pgo.configure \
@@ -265,21 +257,23 @@ src_compile() {
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 	export RUSTC_OPT_LEVEL=3
 
-	# Firefox 155's mach build hangs under Python 3.14, force the interpreter
-	# python-any-r1 selected (${EPYTHON}, e.g. 3.13) via a PATH shim, resolve
-	# the real binary so 'python3' does not re-dispatch through python-exec
-	local realpy pyshim="${T}/pyshim"
-	realpy=$("${PYTHON}" -c 'import sys, os; print(os.path.realpath(sys.executable))') \
-		|| die "cannot resolve ${EPYTHON} interpreter"
-	mkdir -p "${pyshim}" || die
-	ln -sf "${realpy}" "${pyshim}/python3" || die
-	ln -sf "${realpy}" "${pyshim}/python" || die
-	export PATH="${pyshim}:${PATH}"
+	# Avoid PGO profiling problems due to environment leakage (www-client/firefox),
+	# a leaked session DBus/DISPLAY makes the instrumented profiling run deadlock
+	unset \
+		DBUS_SESSION_BUS_ADDRESS \
+		DISPLAY \
+		ORBIT_SOCKETDIR \
+		SESSION_MANAGER \
+		XAUTHORITY \
+		XDG_CACHE_HOME \
+		XDG_SESSION_COOKIE
 
 	addpredict /proc/self/oom_score_adj
 	if use pgo; then
 		addpredict /proc
 		addpredict /dev
+		# tar container for the instrumented package, saves >=10 min (firefox.ebuild)
+		export MOZ_PKG_FORMAT=TAR
 	fi
 
 	virtx npm run build
