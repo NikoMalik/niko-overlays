@@ -87,6 +87,10 @@ BDEPEND="
 	dev-lang/nasm
 	dev-lang/yasm
 	virtual/pkgconfig
+	pgo? (
+		llvm-runtimes/compiler-rt-sanitizers[profile]
+		x11-base/xorg-server[xvfb]
+	)
 "
 
 pkg_pretend() {
