@@ -7,7 +7,7 @@ EAPI=8
 # use here, python-any-r1 picks the best installed one or pulls it in
 PYTHON_COMPAT=( python3_{11,12,13} )
 
-inherit desktop python-any-r1 virtualx xdg-utils git-r3
+inherit desktop multiprocessing python-any-r1 virtualx xdg-utils git-r3
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
@@ -236,6 +236,17 @@ src_configure() {
 
 	npm run import || die
 	sh scripts/download-language-packs.sh || die
+
+	# mach's PGO/LTO configure calls multiprocessing.cpu_count(), whose pool
+	# deadlocks on a futex in the portage sandbox, replace it with a fixed
+	# job count like www-client/firefox does (source now exists under engine/)
+	local f
+	for f in \
+		engine/build/moz.configure/lto-pgo.configure \
+		engine/third_party/chromium/build/toolchain/get_cpu_count.py \
+		engine/third_party/python/gyp/pylib/gyp/input.py ; do
+		[[ -f ${f} ]] && { sed -i -e "s/multiprocessing.cpu_count()/$(makeopts_jobs)/" "${f}" || die "failed sedding ${f}"; }
+	done
 }
 
 src_compile() {
