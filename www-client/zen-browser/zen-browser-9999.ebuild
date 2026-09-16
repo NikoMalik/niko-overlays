@@ -102,6 +102,23 @@ src_prepare() {
 	local mozconf="configs/common/mozconfig"
 	[[ -f ${mozconf} ]] || die "mozconfig template not found at ${mozconf}"
 
+	# Zen's own mozconfigs hardcode LTO (common=thin, linux=full), CI-only
+	# GA-artifact PGO (~/artifact/*.profdata), elf-hack disable and a
+	# STRIP_FLAGS string that breaks Firefox's packager, strip all of these
+	# so our USE-driven options below are authoritative
+	local zc
+	for zc in configs/common/mozconfig configs/linux/mozconfig; do
+		[[ -f ${zc} ]] || continue
+		sed -i -E \
+			-e '/ac_add_options --enable-lto/d' \
+			-e '/export MOZ_LTO=/d' \
+			-e '/ac_add_options --enable-profile-(generate|use)/d' \
+			-e '/ac_add_options --with-pgo-(profile-path|jarlog)/d' \
+			-e '/ac_add_options --(enable|disable)-elf-hack/d' \
+			-e '/export STRIP_FLAGS=/d' \
+			"${zc}" || die "failed to sanitize ${zc}"
+	done
+
 	# use system clang/llvm instead of a bootstrapped mozbuild toolchain
 	printf '\nac_add_options --disable-bootstrap\n' >> "${mozconf}" || die
 	printf 'ac_add_options --with-libclang-path=%s\n' "$(llvm-config --libdir)" >> "${mozconf}" || die
