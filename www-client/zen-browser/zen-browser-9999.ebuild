@@ -3,7 +3,11 @@
 
 EAPI=8
 
-inherit desktop virtualx xdg-utils git-r3
+# Firefox's mach build only supports up to 3.13, list the versions it can
+# use here, python-any-r1 picks the best installed one or pulls it in
+PYTHON_COMPAT=( python3_{11,12,13} )
+
+inherit desktop python-any-r1 virtualx xdg-utils git-r3
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
@@ -72,7 +76,7 @@ RDEPEND="${DEPEND}"
 BDEPEND="
 	dev-vcs/git
 	net-misc/curl
-	dev-lang/python
+	${PYTHON_DEPS}
   dev-libs/libffi:=
   >=dev-libs/nss-3.127
 	>=net-libs/nodejs-22.13.1[npm]
@@ -249,6 +253,17 @@ src_compile() {
 	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 	export RUSTC_OPT_LEVEL=3
+
+	# Firefox 155's mach build hangs under Python 3.14, force the interpreter
+	# python-any-r1 selected (${EPYTHON}, e.g. 3.13) via a PATH shim, resolve
+	# the real binary so 'python3' does not re-dispatch through python-exec
+	local realpy pyshim="${T}/pyshim"
+	realpy=$("${PYTHON}" -c 'import sys, os; print(os.path.realpath(sys.executable))') \
+		|| die "cannot resolve ${EPYTHON} interpreter"
+	mkdir -p "${pyshim}" || die
+	ln -sf "${realpy}" "${pyshim}/python3" || die
+	ln -sf "${realpy}" "${pyshim}/python" || die
+	export PATH="${pyshim}:${PATH}"
 
 	addpredict /proc/self/oom_score_adj
 	if use pgo; then
