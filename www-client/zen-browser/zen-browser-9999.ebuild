@@ -122,14 +122,15 @@ src_prepare() {
 	local zc
 	for zc in configs/common/mozconfig configs/linux/mozconfig; do
 		[[ -f ${zc} ]] || continue
-		# comment out (not delete) so we never empty an if/else block in Zen's
-		# shell mozconfig, which would cause "syntax error near fi"
+		# replace with the shell no-op ':' (NOT a comment - a comment-only
+		# if/else block is still empty to bash -> "syntax error near fi").
+		# ':' keeps every block non-empty while neutralizing the option
 		sed -i -E \
-			-e 's/^([[:space:]]*ac_add_options --enable-(install-)?strip)/#\1/' \
-			-e 's/^([[:space:]]*export STRIP_FLAGS=)/#\1/' \
-			-e 's/^([[:space:]]*ac_add_options --enable-profile-(generate|use))/#\1/' \
-			-e 's/^([[:space:]]*ac_add_options --with-pgo-(profile-path|jarlog))/#\1/' \
-			-e 's/^([[:space:]]*ac_add_options --enable-optimize)/#\1/' \
+			-e 's/^([[:space:]]*)ac_add_options --enable-(install-)?strip.*/\1:/' \
+			-e 's/^([[:space:]]*)export STRIP_FLAGS=.*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --enable-profile-(generate|use).*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --with-pgo-(profile-path|jarlog).*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --enable-optimize=.*/\1:/' \
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
