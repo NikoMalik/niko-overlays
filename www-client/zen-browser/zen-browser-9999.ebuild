@@ -276,6 +276,11 @@ src_compile() {
 	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 	export RUSTC_OPT_LEVEL=3
+	# mach build telemetry starts a Glean SDK future and waits on it in a
+	# finally block (mach/main.py:493), the future never resolves in the
+	# portage sandbox so mach hangs forever AFTER the build finishes, disable
+	# it so _telemetry_init_done is never created
+	export DISABLE_TELEMETRY=1
 
 	# Avoid PGO profiling problems due to environment leakage (www-client/firefox),
 	# a leaked session DBus/DISPLAY makes the instrumented profiling run deadlock
