@@ -259,6 +259,15 @@ src_configure() {
 		engine/third_party/python/gyp/pylib/gyp/input.py ; do
 		[[ -f ${f} ]] && { sed -i -e "s/multiprocessing.cpu_count()/$(makeopts_jobs)/" "${f}" || die "failed sedding ${f}"; }
 	done
+
+	# mach starts a Glean telemetry future (create_telemetry_from_environment)
+	# that never resolves in the portage sandbox, then blocks forever on
+	# _telemetry_init_done.wait() in _run's finally (mach/main.py) after the
+	# build finished. Null the future so the Event is never created and both
+	# waits are skipped, no Glean thread to hang the process at exit either
+	sed -i -E \
+		's/(driver\._telemetry_future =) telemetry_executor\.submit\(_create_telemetry\)/\1 None/g' \
+		engine/build/mach_initialize.py || die "failed disabling mach telemetry future"
 }
 
 src_compile() {
