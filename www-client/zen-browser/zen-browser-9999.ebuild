@@ -15,6 +15,12 @@ else
 	KEYWORDS="~amd64"
 fi
 
+# Firefox base version Zen 1.22.x builds on, bump when surfer.json changes it,
+# then regen Manifest. Fetched via SRC_URI so portage caches it in DISTDIR
+# (the in-sandbox copy-back cannot persist under RESTRICT=network-sandbox)
+FF_PV="155.0.1"
+SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefox-${FF_PV}.source.tar.xz"
+
 LICENSE="MPL-2.0"
 SLOT="0"
 
@@ -202,11 +208,14 @@ src_prepare() {
 		|| die "cannot read Firefox version from surfer.json"
 
 	mkdir -p .surfer/engine || die
-	if [[ -f ${DISTDIR}/firefox-${want_ff}.source.tar.xz ]]; then
-		cp "${DISTDIR}/firefox-${want_ff}.source.tar.xz" .surfer/engine/ || die
-		einfo "Seeded Firefox ${want_ff} source from cache"
+	if [[ ${want_ff} == ${FF_PV} ]]; then
+		# portage fetched it via SRC_URI, seed it so surfer skips the ~810MB download
+		cp "${DISTDIR}/firefox-${FF_PV}.source.tar.xz" .surfer/engine/ \
+			|| die "Firefox ${FF_PV} not in DISTDIR (SRC_URI/Manifest issue)"
+		einfo "Seeded Firefox ${FF_PV} source from DISTDIR"
 	else
-		einfo "Firefox ${want_ff} source not cached, surfer will download it"
+		ewarn "surfer.json wants Firefox ${want_ff} but FF_PV=${FF_PV}"
+		ewarn "bump FF_PV in the ebuild and regen Manifest, surfer will download for now"
 	fi
 }
 
@@ -238,13 +247,6 @@ src_configure() {
 		CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 	npm run download || die
-
-	local ffsrc
-	ffsrc=$(echo .surfer/engine/firefox-*.source.tar.xz)
-	if [[ -f ${ffsrc} && ! -f ${DISTDIR}/${ffsrc##*/} ]]; then
-		addwrite "${DISTDIR}"
-		cp "${ffsrc}" "${DISTDIR}/" 2>/dev/null || ewarn "could not cache Firefox source into ${DISTDIR}"
-	fi
 
 	npm run import || die
 	sh scripts/download-language-packs.sh || die
