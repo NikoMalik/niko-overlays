@@ -27,8 +27,7 @@ PATCH_COMMIT=8a5e89d346af4221d7426b45da65a677a1ff5582
 # https://github.com/xarblu/bcachefs-patches
 BCACHEFS_VER=1.33.1
 
-# supported linux-cachyos flavours from CachyOS/linux-cachyos (excl. lts/rc)
-FLAVOURS="cachyos bmq bore deckify eevdf rt-bore server"
+FLAVOURS="bore rt-bore deckify eevdf server"
 
 # RCs only have main flavour
 [[ "${PV}" == *_rc* ]] && FLAVOURS="cachyos"
@@ -40,13 +39,9 @@ FLAVOURS="cachyos bmq bore deckify eevdf rt-bore server"
 CACHY_PATCH_SPECS=(
 	# global
 	-:all/0001-cachyos-base-all.patch
-	# flavours
-	bmq:sched/0001-prjc-cachy.patch
-    # bore:sched/0001-bore-cachy.patch
 	deckify:misc/0001-acpi-call.patch
 	deckify:misc/0001-handheld.patch
 	deckify:sched/0001-bore-cachy.patch
-	# rt-bore:sched/0001-bore-cachy.patch
 	rt-bore:misc/0001-rt-i915.patch
 	# clang
 	clang:misc/dkms-clang.patch
@@ -470,28 +465,6 @@ cachy_use_config() {
 	# cachy config vars (only those that make sense in ebuild)
 	# advanced users can override these with package.env
 	case "$(cachy_flavour)" in
-		cachyos)
-			: "${_cachy_config:=yes}"
-			: "${_cpusched:=cachyos}"
-			: "${_cc_harder:=yes}"
-			: "${_per_gov:=no}"
-			: "${_tcp_bbr3:=yes}"
-			: "${_HZ_ticks:=1000}"
-			: "${_tickrate:=full}"
-			: "${_preempt:=full}"
-			: "${_hugepage:=always}"
-			;;
-		bmq)
-			: "${_cachy_config:=yes}"
-			: "${_cpusched:=bmq}"
-			: "${_cc_harder:=yes}"
-			: "${_per_gov:=no}"
-			: "${_tcp_bbr3:=yes}"
-			: "${_HZ_ticks:=1000}"
-			: "${_tickrate:=full}"
-			: "${_preempt:=full}"
-			: "${_hugepage:=always}"
-			;;
 		bore)
 			: "${_cachy_config:=yes}"
 			: "${_cpusched:=bore}"
@@ -514,15 +487,15 @@ cachy_use_config() {
 			: "${_preempt:=full}"
 			: "${_hugepage:=always}"
 			;;
-		eevdf)
-			: "${_cachy_config:=yes}"
+		server)
+			: "${_cachy_config:=no}"
 			: "${_cpusched:=eevdf}"
 			: "${_cc_harder:=yes}"
 			: "${_per_gov:=no}"
 			: "${_tcp_bbr3:=yes}"
-			: "${_HZ_ticks:=1000}"
-			: "${_tickrate:=full}"
-			: "${_preempt:=full}"
+			: "${_HZ_ticks:=300}"
+			: "${_tickrate:=idle}"
+			: "${_preempt:=none}"
 			: "${_hugepage:=always}"
 			;;
 		rt-bore)
@@ -534,17 +507,6 @@ cachy_use_config() {
 			: "${_HZ_ticks:=1000}"
 			: "${_tickrate:=full}"
 			: "${_preempt:=full}"
-			: "${_hugepage:=always}"
-			;;
-		server)
-			: "${_cachy_config:=no}"
-			: "${_cpusched:=eevdf}"
-			: "${_cc_harder:=yes}"
-			: "${_per_gov:=no}"
-			: "${_tcp_bbr3:=yes}"
-			: "${_HZ_ticks:=300}"
-			: "${_tickrate:=idle}"
-			: "${_preempt:=none}"
 			: "${_hugepage:=always}"
 			;;
 		*) die "Unknown flavour" ;;
@@ -617,14 +579,6 @@ cachy_use_config() {
 	case "${_cpusched}" in
 		bore)
 			kconf set SCHED_BORE
-			;;
-		bmq)
-			kconf set SCHED_ALT
-			kconf set SCHED_BMQ
-			;;
-		cachyos|eevdf) ;;
-		rt)
-			kconf set PREEMPT_RT
 			;;
 		rt-bore)
 			kconf set SCHED_BORE
@@ -1063,6 +1017,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-ttm.patch"
   eapply "${FILESDIR}/6.18.1-slab.patch"
   eapply "${FILESDIR}/6.18.1-loop_block.patch"
+  eapply "${FILESDIR}/6.18.1-vfs_speedup"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
