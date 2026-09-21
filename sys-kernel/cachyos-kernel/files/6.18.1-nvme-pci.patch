@@ -355,9 +355,7 @@ index 3d05296a5afe..21e4652dcfd2 100644
  	BIP_CHECK_GUARD		= 1 << 5, /* guard check */
  	BIP_CHECK_REFTAG	= 1 << 6, /* reftag check */
  	BIP_CHECK_APPTAG	= 1 << 7, /* apptag check */
--	BIP_P2P_DMA		= 1 << 8, /* using P2P address */
- 
- 	BIP_MEMPOOL		= 1 << 15, /* buffer backed by mempool */
+-	BIP_P2P_DMA		= 1 << 8, /* using P2P address */ 
  };
 diff --git a/include/linux/blk-integrity.h b/include/linux/blk-integrity.h
 index c2030fd8ba0a..a6b84206eb94 100644
