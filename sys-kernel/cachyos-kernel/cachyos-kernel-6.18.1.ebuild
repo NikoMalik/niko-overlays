@@ -1020,6 +1020,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-vfs_speedup.patch"
   eapply "${FILESDIR}/6.18.1-nvme-pci.patch"
   eapply "${FILESDIR}/6.18.1-clear_page_no_gpl.patch"
+  eapply "${FILESDIR}/6.18.1-bfq-iosched.patch"
 	# # Apply mglru patch with fuzz=3 to handle line number mismatches
 	# einfo "Applying mglru and sched-fair patch with fuzz=3"
 	# patch -p1 --fuzz=3 < "${FILESDIR}/6.18.1-mglru.patch" || die "mglru patch failed"
