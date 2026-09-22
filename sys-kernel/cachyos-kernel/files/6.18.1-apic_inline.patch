@@ -1,0 +1,83 @@
+From 9bad74127f0ae8eeed2510fe381b064e08e6507e Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Tue, 23 Dec 2025 05:20:26 +0000
+Subject: [PATCH] x86/apic: Inline __x2apic_send_IPI_dest()
+
+Avoid one call/ret in networking RPS/RFS fast path, with no space cost.
+
+scripts/bloat-o-meter -t vmlinux.before vmlinux.after
+add/remove: 0/2 grow/shrink: 2/0 up/down: 96/-97 (-1)
+Function                                     old     new   delta
+x2apic_send_IPI                              146     198     +52
+__x2apic_send_IPI_mask                       326     370     +44
+__pfx___x2apic_send_IPI_dest                  16       -     -16
+__x2apic_send_IPI_dest                        81       -     -81
+Total: Before=20861234, After=20861233, chg -0.00%
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Signed-off-by: Thomas Gleixner <tglx@kernel.org>
+Link: https://patch.msgid.link/20251223052026.4141498-1-edumazet@google.com
+---
+ arch/x86/kernel/apic/local.h       | 10 +++++++++-
+ arch/x86/kernel/apic/x2apic_phys.c |  6 ------
+ 2 files changed, 9 insertions(+), 7 deletions(-)
+
+diff --git a/arch/x86/kernel/apic/local.h b/arch/x86/kernel/apic/local.h
+index bdcf609eb283..998efd442063 100644
+--- a/arch/x86/kernel/apic/local.h
++++ b/arch/x86/kernel/apic/local.h
+@@ -12,11 +12,10 @@
+ 
+ #include <asm/irq_vectors.h>
+ #include <asm/apic.h>
+ 
+ /* X2APIC */
+-void __x2apic_send_IPI_dest(unsigned int apicid, int vector, unsigned int dest);
+ u32 x2apic_get_apic_id(u32 id);
+ 
+ void x2apic_send_IPI_all(int vector);
+ void x2apic_send_IPI_allbutself(int vector);
+ void x2apic_send_IPI_self(int vector);
+@@ -40,10 +39,19 @@ static inline unsigned int __prepare_ICR(unsigned int shortcut, int vector,
+ 		break;
+ 	}
+ 	return icr;
+ }
+ 
++#ifdef CONFIG_X86_X2APIC
++static inline void __x2apic_send_IPI_dest(unsigned int apicid, int vector, unsigned int dest)
++{
++	unsigned long cfg = __prepare_ICR(0, vector, dest);
++
++	native_x2apic_icr_write(cfg, apicid);
++}
++#endif
++
+ void default_init_apic_ldr(void);
+ 
+ void apic_mem_wait_icr_idle(void);
+ u32 apic_mem_wait_icr_idle_timeout(void);
+ 
+diff --git a/arch/x86/kernel/apic/x2apic_phys.c b/arch/x86/kernel/apic/x2apic_phys.c
+index 12d4c35547a6..10f79026e8e3 100644
+--- a/arch/x86/kernel/apic/x2apic_phys.c
++++ b/arch/x86/kernel/apic/x2apic_phys.c
+@@ -105,16 +105,10 @@ void x2apic_send_IPI_all(int vector)
+ void x2apic_send_IPI_self(int vector)
+ {
+ 	apic_write(APIC_SELF_IPI, vector);
+ }
+ 
+-void __x2apic_send_IPI_dest(unsigned int apicid, int vector, unsigned int dest)
+-{
+-	unsigned long cfg = __prepare_ICR(0, vector, dest);
+-	native_x2apic_icr_write(cfg, apicid);
+-}
+-
+ static int x2apic_phys_probe(void)
+ {
+ 	if (!x2apic_mode)
+ 		return 0;
+ 
+-- 
+2.52.0
