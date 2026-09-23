@@ -6,7 +6,7 @@ index 3564c5062..99b343403 100644
  		   -mllvm -polly-invariant-load-hoisting \
  		   -mllvm -polly-loopfusion-greedy \
  		   -mllvm -polly-run-inliner \
-+      -mllvm -polly-dependences-computeout=50000000 \
++      -mllvm -polly-dependences-computeout=5000000000 \
  		   -mllvm -polly-vectorizer=stripmine
  # Polly may optimise loops with dead paths beyound what the linker
  # can understand. This may negate the effect of the linker's DCE
