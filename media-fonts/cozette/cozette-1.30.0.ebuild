@@ -18,5 +18,5 @@ RESTRICT="mirror"
 
 BDEPEND="app-arch/unzip"
 
-FONT_SUFFIX="otb"
+FONT_SUFFIX="otb otf"
 
