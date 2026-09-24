@@ -601,7 +601,7 @@ cachy_use_config() {
 	# _use_llvm_lto
 	case "${_use_llvm_lto}" in
 		thin)
-			kconf set LTO_CLANG_THIN
+			kconf set LTO_CLANG_FULL
 			;;
 		full)
 			kconf set LTO_CLANG_FULL
