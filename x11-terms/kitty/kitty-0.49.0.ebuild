@@ -100,6 +100,11 @@ src_unpack() {
 	fi
 }
 
+PATCHES=(
+	"${FILESDIR}"/${P}-bitmap.patch
+)
+
+
 src_prepare() {
 	default
 

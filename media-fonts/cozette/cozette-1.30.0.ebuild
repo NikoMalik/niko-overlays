@@ -16,7 +16,36 @@ KEYWORDS="amd64 x86"
 
 RESTRICT="mirror"
 
+IUSE="fontconfig"
+
 BDEPEND="app-arch/unzip"
 
 FONT_SUFFIX="otb otf"
+
+src_prepare() {
+	default
+
+	if use fontconfig; then
+		cat > 66-cozette.conf <<-EOF
+			<?xml version="1.0"?>
+			<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+			<fontconfig>
+				<alias>
+					<family>monospace</family>
+					<prefer>
+						<family>Cozette</family>
+					</prefer>
+				</alias>
+				<alias>
+					<family>Cozette</family>
+					<default>
+						<family>monospace</family>
+					</default>
+				</alias>
+			</fontconfig>
+		EOF
+		assert "Failed to generate 66-cozette.conf"
+		FONT_CONF=( 66-cozette.conf )
+	fi
+}
 
