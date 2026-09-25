@@ -20,7 +20,8 @@ SRC_URI="
 	)
 "
 
-S="${WORKDIR}/CozetteFonts"
+S="${DISTDIR}"
+FONT_S="${S}"
 LICENSE="MIT"
 SLOT="0"
 KEYWORDS="amd64 x86"
