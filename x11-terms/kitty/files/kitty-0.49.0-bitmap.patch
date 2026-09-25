@@ -1,31 +1,31 @@
 diff --git a/kitty/fast_data_types.pyi b/kitty/fast_data_types.pyi
-index e69d7fa8..ad68c866 100644
+index 0831e6b5f..592b54d19 100644
 --- a/kitty/fast_data_types.pyi
 +++ b/kitty/fast_data_types.pyi
-@@ -409,7 +409,7 @@
+@@ -428,7 +428,7 @@ class FontConfigPattern(TypedDict):
+     axes: NotRequired[Tuple[float, ...]]
      features: NotRequired[Tuple[ParsedFontFeature, ...]]
- 
  
 -def fc_list(spacing: int = -1, allow_bitmapped_fonts: bool = False, only_variable: bool = False) -> Tuple[FontConfigPattern, ...]:
 +def fc_list(spacing: int = -1, allow_bitmapped_fonts: bool = True, only_variable: bool = False) -> Tuple[FontConfigPattern, ...]:
      pass
  
- 
-@@ -421,7 +421,7 @@ def fc_match(
+ def fc_match(
+@@ -436,7 +436,7 @@ def fc_match(
      bold: bool = False,
      italic: bool = False,
      spacing: int = FC_MONO,
 -    allow_bitmapped_fonts: bool = False,
 +    allow_bitmapped_fonts: bool = True,
-     size_in_pts: float = 0.,
-     dpi: float = 0.
+     size_in_pts: float = 0.0,
+     dpi: float = 0.0,
  ) -> FontConfigPattern:
 diff --git a/kitty/fontconfig.c b/kitty/fontconfig.c
-index 7156d9ee..6444d6bc 100644
+index 40f89b397..b6b7fe0a2 100644
 --- a/kitty/fontconfig.c
 +++ b/kitty/fontconfig.c
-@@ -240,7 +240,7 @@
- static PyObject*
+@@ -297,7 +297,7 @@ font_set(FcFontSet *fs) {
+ static PyObject *
  fc_list(PyObject UNUSED *self, PyObject *args, PyObject *kw) {
      ensure_initialized();
 -    int allow_bitmapped_fonts = 0, spacing = -1, only_variable = 0;
@@ -33,7 +33,7 @@ index 7156d9ee..6444d6bc 100644
      PyObject *ans = NULL;
      FcObjectSet *os = NULL;
      FcPattern *pat = NULL;
-@@ -354,7 +354,7 @@
+@@ -624,7 +624,7 @@ static PyObject *
  fc_match(PyObject UNUSED *self, PyObject *args) {
      ensure_initialized();
      char *family = NULL;
@@ -42,3 +42,4 @@ index 7156d9ee..6444d6bc 100644
      double size_in_pts = 0, dpi = 0;
      FcPattern *pat = NULL;
      PyObject *ans = NULL;
+
