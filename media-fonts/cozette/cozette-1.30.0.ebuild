@@ -16,7 +16,7 @@ KEYWORDS="amd64 x86"
 
 RESTRICT="mirror"
 
-IUSE="fontconfig"
+IUSE="+fontconfig"
 
 BDEPEND="app-arch/unzip"
 
