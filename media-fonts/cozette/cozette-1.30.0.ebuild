@@ -50,18 +50,66 @@ src_prepare() {
 			<?xml version="1.0"?>
 			<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 			<fontconfig>
+
+				<match target="pattern">
+					<test name="family" qual="any">
+						<string>Cozette</string>
+					</test>
+					<edit name="spacing" mode="assign">
+						<int>100</int>
+					</edit>
+					<edit name="scalable" mode="assign">
+						<bool>true</bool>
+					</edit>
+				</match>
+
+				<match target="pattern">
+					<test name="family" qual="any">
+						<string>CozetteVector</string>
+					</test>
+					<edit name="spacing" mode="assign">
+						<int>100</int>
+					</edit>
+					<edit name="scalable" mode="assign">
+						<bool>true</bool>
+					</edit>
+				</match>
+
+
+
+
+
 				<alias>
 					<family>monospace</family>
 					<prefer>
 						<family>Cozette</family>
 					</prefer>
 				</alias>
+
 				<alias>
 					<family>Cozette</family>
 					<default>
 						<family>monospace</family>
 					</default>
 				</alias>
+
+
+				<alias>
+					<family>monospace</family>
+					<prefer>
+						<family>CozetteVector</family>
+					</prefer>
+				</alias>
+
+				<alias>
+					<family>CozetteVector</family>
+					<default>
+						<family>monospace</family>
+					</default>
+				</alias>
+
+
+
 			</fontconfig>
 		EOF
 
