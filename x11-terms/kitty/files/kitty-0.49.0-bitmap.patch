@@ -43,3 +43,43 @@ index 40f89b397..b6b7fe0a2 100644
      FcPattern *pat = NULL;
      PyObject *ans = NULL;
 
+diff --git a/kitty/freetype.c b/kitty/freetype.c
+index 3ea800dd6..d670475a7 100644
+--- a/kitty/freetype.c
++++ b/kitty/freetype.c
+@@ -164,7 +164,12 @@ get_height_for_char(Face *self, char ch) {
+ 
+ static unsigned int
+ calc_cell_height(Face *self, bool for_metrics) {
+-    unsigned int ans = font_units_to_pixels_y(self, self->metrics.height);
++    unsigned int ans;
++    if (self->is_scalable) ans = font_units_to_pixels_y(self, self->metrics.height);
++    else {
++        ans = (unsigned int)ceil((double)self->face->size->metrics.height / 64.0);
++        if (!ans) ans = (unsigned int)ceil((double)(self->face->size->metrics.ascender - self->face->size->metrics.descender) / 64.0);
++    }
+     if (for_metrics) {
+         unsigned int underscore_height = get_height_for_char(self, '_');
+         if (underscore_height > ans) {
+@@ -571,12 +576,15 @@ cell_metrics(PyObject *s) {
+     FontCellMetrics ans = {0};
+     ans.cell_width = calc_cell_width(self);
+     ans.cell_height = calc_cell_height(self, true);
+-    ans.baseline = font_units_to_pixels_y(self, self->metrics.ascender);
+-    ans.underline_position =
+-        MIN(ans.cell_height - 1, (unsigned int)font_units_to_pixels_y(self, MAX(0, self->metrics.ascender - self->metrics.underline_position)));
+-    ans.underline_thickness = MAX(1, font_units_to_pixels_y(self, self->metrics.underline_thickness));
+-
+-    if (self->metrics.strikethrough_position != 0) {
++    ans.baseline = self->is_scalable ? (unsigned int)font_units_to_pixels_y(self, self->metrics.ascender)
++        : (unsigned int)ceil((double)self->face->size->metrics.ascender / 64.0);
++    if (ans.baseline >= ans.cell_height) ans.baseline = ans.cell_height - 1;
++    ans.underline_position = self->is_scalable ?
++        MIN(ans.cell_height - 1, (unsigned int)font_units_to_pixels_y(self, MAX(0, self->metrics.ascender - self->metrics.underline_position)))
++        : MIN(ans.cell_height - 1, ans.baseline + 1);
++    ans.underline_thickness = MAX(1, self->is_scalable ? font_units_to_pixels_y(self, self->metrics.underline_thickness) : 1);
++
++    if (self->is_scalable && self->metrics.strikethrough_position != 0) {
+         ans.strikethrough_position =
+             MIN(ans.cell_height - 1, (unsigned int)font_units_to_pixels_y(self, MAX(0, self->metrics.ascender - self->metrics.strikethrough_position)));
+     } else {
