@@ -45,8 +45,8 @@ src_prepare() {
 		FONT_SUFFIX+=" otf"
 	fi
 
-	if use fontconfig; then
-		cat > 66-cozette.conf <<-EOF
+  if use fontconfig; then
+		cat > "${T}/66-cozette.conf" <<-EOF
 			<?xml version="1.0"?>
 			<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 			<fontconfig>
@@ -64,8 +64,9 @@ src_prepare() {
 				</alias>
 			</fontconfig>
 		EOF
+
 		assert "Failed to generate 66-cozette.conf"
-		FONT_CONF=( 66-cozette.conf )
+		FONT_CONF=( "${T}/66-cozette.conf" )
 	fi
 }
 
