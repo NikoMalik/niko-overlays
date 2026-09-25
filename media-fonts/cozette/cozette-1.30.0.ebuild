@@ -7,7 +7,18 @@ inherit font
 
 DESCRIPTION="A bitmap programming font optimized for coziness"
 HOMEPAGE="https://github.com/slavfox/Cozette"
-SRC_URI="https://github.com/slavfox/Cozette/releases/download/v.${PV}/CozetteFonts-v-${PV//./-}.zip"
+
+
+SRC_URI="
+	bitmap? (
+		https://github.com/slavfox/${PN}/releases/download/v.${PV}/${PN}.otb -> ${P}.otb
+		hidpi? ( https://github.com/slavfox/${PN}/releases/download/v.${PV}/${PN}_hidpi.otb -> ${P}_hidpi.otb )
+	)
+	vector? (
+		https://github.com/slavfox/${PN}/releases/download/v.${PV}/${PN}Vector.otf -> ${PN}Vector-${PV}.otf
+		https://github.com/slavfox/${PN}/releases/download/v.${PV}/${PN}VectorBold.otf -> ${PN}VectorBold-${PV}.otf
+	)
+"
 
 S="${WORKDIR}/CozetteFonts"
 LICENSE="MIT"
@@ -16,14 +27,22 @@ KEYWORDS="amd64 x86"
 
 RESTRICT="mirror"
 
-IUSE="+fontconfig"
+IUSE="+fontconfig +bitmap +vector +hidpi"
 
 BDEPEND="app-arch/unzip"
 
-FONT_SUFFIX="otb otf"
+FONT_SUFFIX=""
 
 src_prepare() {
 	default
+
+		
+	if use bitmap; then
+		FONT_SUFFIX+=" otb"
+	fi
+	if use vector; then
+		FONT_SUFFIX+=" otf"
+	fi
 
 	if use fontconfig; then
 		cat > 66-cozette.conf <<-EOF
