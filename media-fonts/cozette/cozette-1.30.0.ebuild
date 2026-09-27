@@ -37,7 +37,6 @@ FONT_SUFFIX=""
 src_prepare() {
 	default
 
-		
 	if use bitmap; then
 		FONT_SUFFIX+=" otb"
 	fi
@@ -45,44 +44,27 @@ src_prepare() {
 		FONT_SUFFIX+=" otf"
 	fi
 
-  if use fontconfig; then
+	if use fontconfig; then
 		cat > "${T}/66-cozette.conf" <<-EOF
 			<?xml version="1.0"?>
 			<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 			<fontconfig>
 
-				<match target="pattern">
-					<test name="family" qual="any">
-						<string>Cozette</string>
-					</test>
-					<edit name="spacing" mode="assign">
-						<int>100</int>
-					</edit>
-					<edit name="scalable" mode="assign">
-						<bool>true</bool>
-					</edit>
+				<match target="scan">
+					<test name="family"><string>CozetteVector</string></test>
+					<edit name="spacing" mode="assign"><const>mono</const></edit>
 				</match>
 
-				<match target="pattern">
-					<test name="family" qual="any">
-						<string>CozetteVector</string>
-					</test>
-					<edit name="spacing" mode="assign">
-						<int>100</int>
-					</edit>
-					<edit name="scalable" mode="assign">
-						<bool>true</bool>
-					</edit>
+				<match target="scan">
+					<test name="family"><string>CozetteVectorBold</string></test>
+					<edit name="spacing" mode="assign"><const>mono</const></edit>
 				</match>
-
-
-
-
 
 				<alias>
 					<family>monospace</family>
 					<prefer>
 						<family>Cozette</family>
+						<family>CozetteVector</family>
 					</prefer>
 				</alias>
 
@@ -93,14 +75,6 @@ src_prepare() {
 					</default>
 				</alias>
 
-
-				<alias>
-					<family>monospace</family>
-					<prefer>
-						<family>CozetteVector</family>
-					</prefer>
-				</alias>
-
 				<alias>
 					<family>CozetteVector</family>
 					<default>
@@ -108,13 +82,18 @@ src_prepare() {
 					</default>
 				</alias>
 
-
-
 			</fontconfig>
 		EOF
 
 		assert "Failed to generate 66-cozette.conf"
-		FONT_CONF=( "${T}/66-cozette.conf" )
 	fi
 }
 
+src_install() {
+	font_src_install
+
+	if use fontconfig; then
+		insinto /etc/fonts/conf.d
+		doins "${T}/66-cozette.conf"
+	fi
+}
