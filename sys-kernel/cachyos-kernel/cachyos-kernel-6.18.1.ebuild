@@ -1015,7 +1015,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-wakeup.patch"
   eapply "${FILESDIR}/6.18.1-epp_retune.patch"
   eapply "${FILESDIR}/6.18.1-ttm.patch"
-  eapply "${FILESDIR}/6.18.1-slab.patch"
+  # eapply "${FILESDIR}/6.18.1-slab.patch"
   eapply "${FILESDIR}/6.18.1-loop_block.patch"
   eapply "${FILESDIR}/6.18.1-vfs_speedup.patch"
   # eapply "${FILESDIR}/6.18.1-nvme-pci.patch"
