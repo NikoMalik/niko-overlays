@@ -135,7 +135,7 @@ src_prepare() {
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
-  eapply "${FILESDIR}/build-id.patch"
+  # eapply "${FILESDIR}/build-id.patch" // later
 
 
 
