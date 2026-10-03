@@ -263,7 +263,10 @@ src_configure() {
 	if [[ -n ${compat_file} ]]; then
 		sed -i '1i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
 			|| die "failed to patch ${compat_file}"
+		sed -i 's/::data() noexcept;/::data() noexcept(false);/g' "${compat_file}" \
+			|| die "failed to patch ${compat_file} for data() noexcept"
 		einfo "Patched ${compat_file} for GCC 15+ thread compatibility"
+
 	else
 		ewarn "stdc++compat.cpp not found, skipping GCC 15+ thread patch"
 	fi
