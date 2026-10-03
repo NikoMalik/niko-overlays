@@ -5,11 +5,6 @@ EAPI=8
 
 inherit desktop multiprocessing virtualx xdg-utils git-r3
 
-FIREFOX_PATCHSET="firefox-157-patches-01.tar.xz"
-
-PATCH_URIS=(
-	https://dev.gentoo.org/~juippis/mozilla/patchsets/${FIREFOX_PATCHSET}
-)
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
@@ -140,6 +135,8 @@ src_prepare() {
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
+  eapply "${FILESDIR}/build-id.patch"
+
 
 
 	# use system clang/llvm instead of a bootstrapped mozbuild toolchain
@@ -260,14 +257,15 @@ src_configure() {
 
 	npm run import || die
 
+
   local compat_file
 	compat_file=$(find engine -name "stdc++compat.cpp" -print -quit)
 	if [[ -n ${compat_file} ]]; then
-		sed -i -e '/#include <thread>/i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
+		sed -i '1i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
 			|| die "failed to patch ${compat_file}"
-		einfo "Patched ${compat_file} for GCC 13+ thread compatibility"
+		einfo "Patched ${compat_file} for GCC 15+ thread compatibility"
 	else
-		ewarn "stdc++compat.cpp not found, skipping GCC 13+ thread patch"
+		ewarn "stdc++compat.cpp not found, skipping GCC 15+ thread patch"
 	fi
 	sh scripts/download-language-packs.sh || die
 
