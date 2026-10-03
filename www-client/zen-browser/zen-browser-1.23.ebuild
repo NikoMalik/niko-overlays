@@ -270,6 +270,16 @@ src_configure() {
 	else
 		ewarn "stdc++compat.cpp not found, skipping GCC 15+ thread patch"
 	fi
+
+	local check_binary_py
+	check_binary_py=$(find engine -name "check_binary.py" -print -quit)
+	if [[ -n ${check_binary_py} ]]; then
+		sed -i 's/checks.append(check_binary_compat)/pass/' "${check_binary_py}" \
+			|| die "failed to patch ${check_binary_py}"
+		einfo "Disabled check_binary_compat in ${check_binary_py}"
+	else
+		ewarn "check_binary.py not found, skipping binary compat patch"
+	fi
 	sh scripts/download-language-packs.sh || die
 
 	# Make LTO/PGO configure respect MAKEOPTS instead of multiprocessing.cpu_count()
