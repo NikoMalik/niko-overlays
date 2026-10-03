@@ -5,6 +5,12 @@ EAPI=8
 
 inherit desktop multiprocessing virtualx xdg-utils git-r3
 
+FIREFOX_PATCHSET="firefox-157-patches-01.tar.xz"
+
+PATCH_URIS=(
+	https://dev.gentoo.org/~juippis/mozilla/patchsets/${FIREFOX_PATCHSET}
+)
+
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
 EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
@@ -135,10 +141,6 @@ src_prepare() {
 	done
 
 
-  # GCC 13+ made std::thread::_State private, breaking stdc++compat.cpp.
-	# Define _GLIBCXX_THREAD_IMPL to restore access for the compatibility shim.
-	sed -i -e '/#include <thread>/i #define _GLIBCXX_THREAD_IMPL 1' \
-		engine/build/unix/stdc++compat/stdc++compat.cpp || die "failed to patch stdc++compat.cpp"
 
 	# use system clang/llvm instead of a bootstrapped mozbuild toolchain
 	printf '\nac_add_options --disable-bootstrap\n' >> "${mozconf}" || die
@@ -257,6 +259,16 @@ src_configure() {
 	npm run download || die
 
 	npm run import || die
+
+  local compat_file
+	compat_file=$(find engine -name "stdc++compat.cpp" -print -quit)
+	if [[ -n ${compat_file} ]]; then
+		sed -i -e '/#include <thread>/i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
+			|| die "failed to patch ${compat_file}"
+		einfo "Patched ${compat_file} for GCC 13+ thread compatibility"
+	else
+		ewarn "stdc++compat.cpp not found, skipping GCC 13+ thread patch"
+	fi
 	sh scripts/download-language-packs.sh || die
 
 	# Make LTO/PGO configure respect MAKEOPTS instead of multiprocessing.cpu_count()
