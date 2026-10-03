@@ -246,7 +246,7 @@ src_configure() {
 	# force sharp to build from source with its vendored libvips (8.14.5) instead
 	# of the flaky prebuild-install network download that falls back to the
 	# ABI-incompatible system vips, SHARP_IGNORE_GLOBAL_LIBVIPS keeps it vendored
-	SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm_config_build_from_source=true \
+	SHARP_IGNORE_GLOBAL_LIBVIPS=1  \
 		CFLAGS="-O3 -pipe" CXXFLAGS="-O3 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 	npm run download || die
