@@ -134,6 +134,12 @@ src_prepare() {
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
+
+  # GCC 13+ made std::thread::_State private, breaking stdc++compat.cpp.
+	# Define _GLIBCXX_THREAD_IMPL to restore access for the compatibility shim.
+	sed -i -e '/#include <thread>/i #define _GLIBCXX_THREAD_IMPL 1' \
+		engine/build/unix/stdc++compat/stdc++compat.cpp || die "failed to patch stdc++compat.cpp"
+
 	# use system clang/llvm instead of a bootstrapped mozbuild toolchain
 	printf '\nac_add_options --disable-bootstrap\n' >> "${mozconf}" || die
 	printf 'ac_add_options --with-libclang-path=%s\n' "$(llvm-config --libdir)" >> "${mozconf}" || die
