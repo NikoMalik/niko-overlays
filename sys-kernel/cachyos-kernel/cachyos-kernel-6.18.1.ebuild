@@ -1025,6 +1025,8 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-btf_binary.patch"
   eapply "${FILESDIR}/6.18.1-tcp_skb_push.patch"
   eapply "${FILESDIR}/6.18.1-apic_inline.patch"
+  eapply "${FILESDIR}/6.18.1-probe_bmi2.patch"
+
   # eapply "${FILESDIR}/6.18.1-io_uring_handoff.patch"
   # eapply "${FILESDIR}/6.18.1-tcp_collapse.patch"
   # eapply "${FILESDIR}/6.18.1-tcp_shrink_window.patch"
