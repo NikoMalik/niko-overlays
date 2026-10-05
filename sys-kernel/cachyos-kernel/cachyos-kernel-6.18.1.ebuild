@@ -980,7 +980,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-reuse-timer.patch"
 	eapply "${FILESDIR}/6.18.1-hashtable-conn.patch"
 	eapply "${FILESDIR}/6.18.1-lz4-improve.patch"
-  eapply "${FILESDIR}/6.18.1-cambyses-new.patch"
+  eapply "${FILESDIR}/6.18.1-cambyses_niko.patch"
   eapply "${FILESDIR}/6.18.1-intsqrt.patch"
   eapply "${FILESDIR}/6.18.1-rt.patch"
   eapply "${FILESDIR}/6.18.1-map_count.patch"
