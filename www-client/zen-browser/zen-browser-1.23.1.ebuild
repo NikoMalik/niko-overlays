@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit desktop multiprocessing virtualx xdg-utils git-r3
+inherit desktop multiprocessing virtualx xdg-utils git-r3 toolchain-funcs
 
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
