@@ -132,6 +132,7 @@ src_prepare() {
 			-e 's/^([[:space:]]*)ac_add_options --enable-profile-(generate|use).*/\1:/' \
 			-e 's/^([[:space:]]*)ac_add_options --with-pgo-(profile-path|jarlog).*/\1:/' \
 			-e 's/^([[:space:]]*)ac_add_options --enable-optimize=.*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --(enable|disable)-elf-hack.*/\1:/' \
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
@@ -171,7 +172,15 @@ src_prepare() {
   printf 'ac_add_options --with-system-pixman\n' >> "${mozconf}" || die
   printf 'ac_add_options --with-system-zlib\n' >> "${mozconf}" || die
   printf 'ac_add_options --with-unsigned-addon-scopes=app,system\n' >> "${mozconf}" || die
-  printf 'ac_add_options --enable-elf-hack=relr\n' >> "${mozconf}" || die
+  # elf-hack (relr) must be off for the instrumented PGO pass and on for the
+  # final build, mach sets MOZ_PROFILE_GENERATE only while building instrumented
+  cat >> "${mozconf}" <<-'EOF' || die
+	if test -z "$MOZ_PROFILE_GENERATE"; then
+	  ac_add_options --enable-elf-hack=relr
+	else
+	  ac_add_options --disable-elf-hack
+	fi
+	EOF
 
 
 
@@ -258,28 +267,42 @@ src_configure() {
 	npm run import || die
 
 
-  local compat_file
-	compat_file=$(find engine -name "stdc++compat.cpp" -print -quit)
-	if [[ -n ${compat_file} ]]; then
-		sed -i '1i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
-			|| die "failed to patch ${compat_file}"
-		sed -i 's/::data() noexcept;/::data() noexcept(false);/g' "${compat_file}" \
-			|| die "failed to patch ${compat_file} for data() noexcept"
-		einfo "Patched ${compat_file} for GCC 15+ thread compatibility"
+  # Zen sets MOZ_STDCXX_COMPAT=1 (linux/mozconfig), which builds the old-ABI shim
+  # stdc++compat.cpp. libstdc++ 15 changed std::thread to an inline impl and
+  # dropped the throwing data() signature, which breaks that shim and trips
+  # check_binary_compat. Only patch when the active libstdc++ is 15 or newer,
+  # older libstdc++ builds the shim unchanged
+  local compat_since=15 gxxrel
+  gxxrel=$(printf '#include <cstddef>\n_GLIBCXX_RELEASE\n' \
+    | g++ -x c++ -E -P - 2>/dev/null | tail -n1)
+  [[ ${gxxrel} =~ ^[0-9]+$ ]] || gxxrel=0
+  einfo "Detected libstdc++ release ${gxxrel} (compat patch threshold ${compat_since})"
 
-	else
-		ewarn "stdc++compat.cpp not found, skipping GCC 15+ thread patch"
-	fi
+  if [[ ${gxxrel} -ge ${compat_since} ]]; then
+    local compat_file
+    compat_file=$(find engine -name "stdc++compat.cpp" -print -quit)
+    if [[ -n ${compat_file} ]]; then
+      sed -i '1i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
+        || die "failed to patch ${compat_file}"
+      sed -i 's/::data() noexcept;/::data() noexcept(false);/g' "${compat_file}" \
+        || die "failed to patch ${compat_file} for data() noexcept"
+      einfo "Patched ${compat_file} for libstdc++ >=${compat_since}"
+    else
+      ewarn "stdc++compat.cpp not found, skipping libstdc++ >=${compat_since} patch"
+    fi
 
-	local check_binary_py
-	check_binary_py=$(find engine -name "check_binary.py" -print -quit)
-	if [[ -n ${check_binary_py} ]]; then
-		sed -i 's/checks.append(check_binary_compat)/pass/' "${check_binary_py}" \
-			|| die "failed to patch ${check_binary_py}"
-		einfo "Disabled check_binary_compat in ${check_binary_py}"
-	else
-		ewarn "check_binary.py not found, skipping binary compat patch"
-	fi
+    local check_binary_py
+    check_binary_py=$(find engine -name "check_binary.py" -print -quit)
+    if [[ -n ${check_binary_py} ]]; then
+      sed -i 's/checks.append(check_binary_compat)/pass/' "${check_binary_py}" \
+        || die "failed to patch ${check_binary_py}"
+      einfo "Disabled check_binary_compat in ${check_binary_py}"
+    else
+      ewarn "check_binary.py not found, skipping binary compat patch"
+    fi
+  else
+    einfo "libstdc++ <${compat_since}, leaving stdc++compat.cpp and check_binary_compat untouched"
+  fi
 	sh scripts/download-language-packs.sh || die
 
 	# Make LTO/PGO configure respect MAKEOPTS instead of multiprocessing.cpu_count()
