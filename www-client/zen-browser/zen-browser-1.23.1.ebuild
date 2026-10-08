@@ -99,7 +99,15 @@ BDEPEND="
 	virtual/pkgconfig
 	pgo? (
 		llvm-runtimes/compiler-rt-sanitizers[profile]
-		x11-base/xorg-server[xvfb]
+		X? (
+			sys-devel/gettext
+			x11-base/xorg-server[xvfb]
+			x11-apps/xhost
+		)
+		!X? (
+			gui-wm/tinywl
+			x11-misc/xkeyboard-config
+		)
 	)
 "
 
@@ -235,6 +243,30 @@ src_prepare() {
 	fi
 }
 
+
+virtwl() {
+	debug-print-function ${FUNCNAME} "$@"
+
+	[[ $# -lt 1 ]] && die "${FUNCNAME} needs at least one argument"
+	xdg_environment_reset
+	[[ -n $XDG_RUNTIME_DIR ]] || die "${FUNCNAME} needs XDG_RUNTIME_DIR to be set; try xdg_environment_reset"
+	tinywl -h >/dev/null || die 'tinywl -h failed'
+
+	local VIRTWL VIRTWL_PID
+	coproc VIRTWL { WLR_BACKENDS=headless exec tinywl -s 'echo $WAYLAND_DISPLAY; read _; kill $PPID'; }
+	local -x WAYLAND_DISPLAY
+	read WAYLAND_DISPLAY <&${VIRTWL[0]}
+
+	debug-print "${FUNCNAME}: $@"
+	"$@"
+	local r=$?
+
+	[[ -n $VIRTWL_PID ]] || die "tinywl exited unexpectedly"
+	exec {VIRTWL[0]}<&- {VIRTWL[1]}>&-
+	return $r
+}
+
+
 src_configure() {
 	local want wantmaj nodever havemaj
 	want=$(<.nvmrc)
@@ -364,7 +396,13 @@ src_compile() {
 		export MOZ_PKG_FORMAT=TAR
 	fi
 
-	virtx npm run build
+  if ! use X; then
+		virtx_cmd=virtwl
+	else
+		virtx_cmd=virtx
+	fi
+
+	${virtx_cmd} npm run build
 }
 
 src_install() {
