@@ -141,6 +141,7 @@ src_prepare() {
 			-e 's/^([[:space:]]*)ac_add_options --with-pgo-(profile-path|jarlog).*/\1:/' \
 			-e 's/^([[:space:]]*)ac_add_options --enable-optimize=.*/\1:/' \
 			-e 's/^([[:space:]]*)ac_add_options --(enable|disable)-elf-hack.*/\1:/' \
+		  -e 's/^([[:space:]]*)ac_add_options --enable-linker=.*/\1:/' \
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
 
