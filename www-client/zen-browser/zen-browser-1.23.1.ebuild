@@ -156,7 +156,12 @@ src_prepare() {
 	printf 'ac_add_options --disable-updater\n' >> "${mozconf}" || die
 	printf 'ac_add_options --disable-cargo-incremental\n' >> "${mozconf}" || die
   printf 'ac_add_options --enable-optimize=-O3\n' >> "${mozconf}" || die
-  printf 'ac_add_options --enable-linker=lld\n' >> "${mozconf}" || die
+  if tc-ld-is-mold ; then
+				printf 'ac_add_options --enable-linker=mold\n' >> "${mozconf}" || die
+
+			else
+				printf 'ac_add_options --enable-linker=lld\n' >> "${mozconf}" || die
+			fi
   printf 'ac_add_options --disable-install-strip\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-strip\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-parental-controls\n' >> "${mozconf}" || die
@@ -395,6 +400,17 @@ src_compile() {
 		# tar container for the instrumented package, saves >=10 min (firefox.ebuild)
 		export MOZ_PKG_FORMAT=TAR
 	fi
+
+  if use lto && tc-ld-is-mold; then
+		# increase ulimit with mold+lto
+		if ! ulimit -n 16384 1>/dev/null 2>&1 ; then
+			ewarn "Unable to modify ulimits - building with mold+lto might fail due to low ulimit -n resources."
+			ewarn "Please see bugs #892641 & #907485."
+		else
+			ulimit -n 16384
+		fi
+	fi
+
 
   if ! use X; then
 		virtx_cmd=virtwl
