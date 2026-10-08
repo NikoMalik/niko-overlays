@@ -120,6 +120,9 @@ pkg_pretend() {
 
 src_prepare() {
 	default
+  if tc-is-lto; then
+    filter-lto
+  fi
 
 	local mozconf="configs/common/mozconfig"
 	[[ -f ${mozconf} ]] || die "mozconfig template not found at ${mozconf}"
@@ -403,6 +406,13 @@ src_compile() {
 	fi
 
   if use lto && tc-ld-is-mold; then
+		if use full-lto; then
+        append-ldflags "-flto=full"
+				export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-flto=full"
+    else
+        append-ldflags "-flto=thin"
+				export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-flto=thin"
+    fi
 		# increase ulimit with mold+lto
 		if ! ulimit -n 16384 1>/dev/null 2>&1 ; then
 			ewarn "Unable to modify ulimits - building with mold+lto might fail due to low ulimit -n resources."
