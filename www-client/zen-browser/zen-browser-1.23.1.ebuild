@@ -3,7 +3,8 @@
 
 EAPI=8
 
-inherit desktop multiprocessing virtualx xdg-utils git-r3 toolchain-funcs
+inherit desktop multiprocessing virtualx xdg-utils git-r3 toolchain-funcs flag-o-matic
+
 
 
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
