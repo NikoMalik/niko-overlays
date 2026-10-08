@@ -1,0 +1,27 @@
+Teach scripts/ld-version.sh about the mold linker.
+
+Upstream only accepts "GNU ld" (BFD) and LLD, every other linker is
+rejected with "unknown linker" and the build dies before compiling.
+mold prints `mold <ver> (compatible with GNU ld)` on --version, so report
+it as BFD with mold's own version, this keeps CONFIG_LD_IS_BFD set and the
+high version number avoids the old-binutils workarounds.
+
+mold has no built-in LTO, it needs the LLVMgold.so plugin passed via -plugin
+by a clang driver that sees -flto, the kernel links vmlinux by calling LD
+directly so that never happens, therefore mold is only valid for non-LTO
+builds (USE handles the lto/cfi/autofdo/propeller exclusions).
+
+--- a/scripts/ld-version.sh
++++ b/scripts/ld-version.sh
+@@ -41,6 +41,11 @@
+ elif [ "$1" = GNU -a "$2" = gold ]; then
+ 	echo "gold linker is not supported as it is not capable of linking the kernel proper." >&2
+ 	exit 1
++elif [ "$1" = mold ]; then
++	version=$2
++	min_version=$($min_tool_version binutils)
++	name=BFD
++	disp_name="mold"
+ else
+ 	while [ $# -gt 1 -a "$1" != "LLD" ]; do
+ 		shift

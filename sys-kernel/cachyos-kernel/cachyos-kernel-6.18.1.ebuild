@@ -69,13 +69,14 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="bcachefs cfi clang debug autofdo propeller +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="bcachefs cfi clang debug autofdo propeller mold +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
 	lto? ( clang )
 	polly? ( clang )
 	clang? ( ${LLVM_REQUIRED_USE} )
+	mold? ( !lto !cfi !autofdo !propeller )
 "
 RDEPEND="autofdo? ( dev-util/perf[libpfm] )"
 # shellcheck disable=SC2016 # we don't want LLVM_SLOT to expand
@@ -86,6 +87,7 @@ BDEPEND="
 		llvm-core/llvm:${LLVM_SLOT}=
 	') )
 	debug? ( dev-util/pahole )
+	mold? ( sys-devel/mold )
 "
 PDEPEND="
 	>=virtual/dist-kernel-${PV}
@@ -919,6 +921,13 @@ pkg_setup() {
 		einfo "OBJDUMP: ${OBJDUMP}"
 		einfo "READELF: ${READELF}"
 	fi
+	if [[ "${MERGE_TYPE}" != binary ]] && use mold; then
+		# mold only fits the non-LTO link, LTO bitcode needs lld built-in LTO,
+		# the kernel calls LD directly so mold never gets the LLVMgold.so plugin
+		einfo "Using mold as kernel linker (LD=ld.mold)"
+		declare -g LD="ld.mold"
+		einfo "LD: ${LD}"
+	fi
 	kernel-build_pkg_setup
 }
 
@@ -1028,6 +1037,10 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-probe_bmi2.patch"
   eapply "${FILESDIR}/6.18.1-dead_code.patch"
   eapply "${FILESDIR}/6.18.1-zstd_fallback.patch"
+
+  # ld-version.sh only knows GNU ld and LLD, teach it mold so LD=ld.mold is not
+  # rejected as unknown linker, mold reports as BFD since it is GNU ld compatible
+  use mold && eapply "${FILESDIR}/6.18.1-mold-ld-version.patch"
 
   # eapply "${FILESDIR}/6.18.1-io_uring_handoff.patch"
   # eapply "${FILESDIR}/6.18.1-tcp_collapse.patch"
