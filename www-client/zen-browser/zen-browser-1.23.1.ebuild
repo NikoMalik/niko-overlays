@@ -3,10 +3,19 @@
 
 EAPI=8
 
-inherit desktop multiprocessing virtualx xdg-utils git-r3 toolchain-funcs flag-o-matic
+LLVM_COMPAT=( 22 )
+PYTHON_COMPAT=( python3_{12..14} )
+PYTHON_REQ_USE="ncurses,sqlite,ssl"
 
 
 
+
+inherit check-reqs desktop flag-o-matic gnome2-utils linux-info llvm-r1 multiprocessing \
+	optfeature pax-utils python-any-r1 readme.gentoo-r1 rust toolchain-funcs virtualx xdg
+
+
+
+VIRTUALX_REQUIRED="manual"
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
 EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
@@ -81,6 +90,7 @@ DEPEND="
 RDEPEND="${DEPEND}"
 
 BDEPEND="
+	${PYTHON_DEPS}
 	dev-vcs/git
 	net-misc/curl
 	dev-lang/python
@@ -92,14 +102,16 @@ BDEPEND="
 		>=dev-lang/rust-1.94.1
 	)
 	dev-util/cbindgen
-	llvm-core/clang
-	llvm-core/llvm
-	llvm-core/lld
+	$(llvm_gen_dep '
+		llvm-core/clang:${LLVM_SLOT}=
+		llvm-core/llvm:${LLVM_SLOT}=
+		llvm-core/lld:${LLVM_SLOT}=
+		pgo? ( llvm-runtimes/compiler-rt-sanitizers:${LLVM_SLOT}[profile] )
+	')
 	dev-lang/nasm
 	dev-lang/yasm
 	virtual/pkgconfig
 	pgo? (
-		llvm-runtimes/compiler-rt-sanitizers[profile]
 		X? (
 			sys-devel/gettext
 			x11-base/xorg-server[xvfb]
@@ -112,7 +124,41 @@ BDEPEND="
 	)
 "
 
+pkg_setup() {
+	if [[ ${MERGE_TYPE} != binary ]]; then
+		if use pgo || use debug; then
+			CHECKREQS_DISK_BUILD="18700M"
+		elif tc-is-lto; then
+			CHECKREQS_DISK_BUILD="10900M"
+		else
+			CHECKREQS_DISK_BUILD="9700M"
+		fi
+
+		check-reqs_pkg_setup
+		llvm-r1_pkg_setup
+		python-any-r1_pkg_setup
+		rust_pkg_setup
+
+		if use pgo && ! has userpriv ${FEATURES}; then
+			eerror "Building ${PN} with USE=pgo and FEATURES=-userpriv is not supported!"
+		fi
+	fi
+}
+
 pkg_pretend() {
+  if [[ ${MERGE_TYPE} != binary ]] ; then
+		# Ensure we have enough disk space to compile
+		if use pgo || use debug ; then
+			CHECKREQS_DISK_BUILD="18700M"
+		elif tc-is-lto ; then
+			CHECKREQS_DISK_BUILD="10900M"
+		else
+			CHECKREQS_DISK_BUILD="9700M"
+		fi
+
+		check-reqs_pkg_pretend
+	fi
+
 	if [[ ${MERGE_TYPE} != binary ]]; then
 		use pgo && ewarn "PGO builds Zen twice and profile-runs it under Xvfb, expect long build time and high RAM"
 		use full-lto && ewarn "full-lto: the libxul link is very RAM-heavy, on low RAM use USE=-full-lto (thin) or MAKEOPTS=-j2 plus swap"
@@ -258,7 +304,6 @@ virtwl() {
 	debug-print-function ${FUNCNAME} "$@"
 
 	[[ $# -lt 1 ]] && die "${FUNCNAME} needs at least one argument"
-	xdg_environment_reset
 	[[ -n $XDG_RUNTIME_DIR ]] || die "${FUNCNAME} needs XDG_RUNTIME_DIR to be set; try xdg_environment_reset"
 	tinywl -h >/dev/null || die 'tinywl -h failed'
 
@@ -400,6 +445,8 @@ src_compile() {
 
 	addpredict /proc/self/oom_score_adj
 	if use pgo; then
+		gnome2_environment_reset
+		addpredict /root
 		addpredict /proc
 		addpredict /dev
 		# tar container for the instrumented package, saves >=10 min (firefox.ebuild)
@@ -423,6 +470,11 @@ src_compile() {
 		fi
 	fi
 
+  if ! use X; then
+		local -x GDK_BACKEND=wayland
+	else
+		local -x GDK_BACKEND=x11
+	fi
 
   if ! use X; then
 		virtx_cmd=virtwl
@@ -472,7 +524,3 @@ pkg_postrm() {
 	xdg_desktop_database_update
 	xdg_icon_cache_update
 }
-
-
-
-
