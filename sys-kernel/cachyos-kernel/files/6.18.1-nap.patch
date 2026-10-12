@@ -1,18 +1,18 @@
-From cecf6dd1e79d781a7300394431122be8fbd6f7e7 Mon Sep 17 00:00:00 2001
+From d1b63456d4ead525d614e9a76c114eedf50187e9 Mon Sep 17 00:00:00 2001
 From: Masahito S <firelzrd@gmail.com>
-Date: Fri, 5 Jun 2026 13:10:05 +0900
+Date: Sun, 11 Oct 2026 09:31:03 +0900
 Subject: [PATCH] 6.18.3-nap-v0.5.1
 
 ---
  drivers/cpuidle/Kconfig                     |  17 +
  drivers/cpuidle/governors/Makefile          |   1 +
  drivers/cpuidle/governors/nap/Makefile      |  30 +
- drivers/cpuidle/governors/nap/nap.c         | 618 ++++++++++++++++++++
+ drivers/cpuidle/governors/nap/nap.c         | 624 ++++++++++++++++++++
  drivers/cpuidle/governors/nap/nap.h         | 291 +++++++++
- drivers/cpuidle/governors/nap/nap_fpu.c     | 549 +++++++++++++++++
+ drivers/cpuidle/governors/nap/nap_fpu.c     | 528 +++++++++++++++++
  drivers/cpuidle/governors/nap/nap_nn_avx2.c | 135 +++++
  drivers/cpuidle/governors/nap/nap_nn_sse2.c | 136 +++++
- 8 files changed, 1777 insertions(+)
+ 8 files changed, 1762 insertions(+)
  create mode 100644 drivers/cpuidle/governors/nap/Makefile
  create mode 100644 drivers/cpuidle/governors/nap/nap.c
  create mode 100644 drivers/cpuidle/governors/nap/nap.h
@@ -95,10 +95,10 @@ index 0000000000..8b85a475a6
 +CFLAGS_nap_nn_avx2.o   += $(CC_FLAGS_FPU) -mavx -mavx2 -mfma
 diff --git a/drivers/cpuidle/governors/nap/nap.c b/drivers/cpuidle/governors/nap/nap.c
 new file mode 100644
-index 0000000000..fc7393e9f4
+index 0000000000..b5ccda34b5
 --- /dev/null
 +++ b/drivers/cpuidle/governors/nap/nap.c
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,624 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * nap.c — Neural Adaptive Predictor cpuidle governor
@@ -336,8 +336,14 @@ index 0000000000..fc7393e9f4
 +		idx = nap_fallback_heuristic(drv, dev);
 +	}
 +
-+	*stop_tick = (drv->states[idx].target_residency_ns >
-+		      RESIDENCY_THRESHOLD_NS);
++	/*
++	 * Stopping the tick saves nothing when the next timer is closer
++	 * than one tick period, and the slow restart delays the wakeup
++	 * (about 100 us on average in a 1 ms periodic-timer test).
++	 */
++	*stop_tick = sleep_length_ns >= TICK_NSEC &&
++		     drv->states[idx].target_residency_ns >
++		     RESIDENCY_THRESHOLD_NS;
 +
 +	d->last_selected_idx = idx;
 +	d->stats.total_selects++;
@@ -458,7 +464,7 @@ index 0000000000..fc7393e9f4
 +			     div_u64(total_res, NSEC_PER_MSEC));
 +	len += sysfs_emit_at(buf, len, "overshoot_count: %llu\n", total_under);
 +	len += sysfs_emit_at(buf, len, "overshoot_rate_permil: %llu\n",
-+			     total_sel ? div_u64(total_under * 1000, total_sel) : 0);
++			     total_sel ? div64_u64(total_under * 1000, total_sel) : 0);
 +	len += sysfs_emit_at(buf, len, "learn_count: %llu\n", total_learn);
 +	return len;
 +}
@@ -1016,10 +1022,10 @@ index 0000000000..0f6aae7d17
 +#endif /* NAP_H */
 diff --git a/drivers/cpuidle/governors/nap/nap_fpu.c b/drivers/cpuidle/governors/nap/nap_fpu.c
 new file mode 100644
-index 0000000000..caf7660719
+index 0000000000..9465262969
 --- /dev/null
 +++ b/drivers/cpuidle/governors/nap/nap_fpu.c
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,528 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * nap_fpu.c — FPU/SIMD code for the NAP cpuidle governor
@@ -1119,19 +1125,15 @@ index 0000000000..caf7660719
 +}
 +
 +/*
-+ * One-sided robustness floor.
++ * Robustness floor and Beta-Binomial shrinkage.
 + *
 + * bin_count[] is an exponentially decayed histogram (window NAP_FLOOR_WIN, in
 + * idles) of which idle-state bin each idle landed in, updated every idle; its
-+ * survival estimate is a fast, forgetting-resistant memory.  It is, however, an
-+ * *unconditional* marginal: short idles dominate it by count even when long
-+ * idles dominate by time.  It must therefore not be blended into the
-+ * *conditional* per-idle NN survival as data (an earlier Beta-Binomial
-+ * shrinkage did, and the marginal swamped the NN, pinning the governor to a
-+ * shallow state regardless of sleep_length).  The decision uses it only as a
-+ * floor — q_k = max(q_nn_k, count(>=k)/total) — so it can raise confidence that
-+ * a deep state is reachable (cold-start / forgetting robustness) but never veto
-+ * a state the conditional NN and the timer cap already support.
++ * survival estimate is a fast, forgetting-resistant memory.  The decision
++ * treats the NN survival as a prior worth NAP_PRIOR_K pseudo-observations and
++ * the decayed histogram as data:
++ *   q_k = (NAP_PRIOR_K * q_nn_k + count(>=k)) / (NAP_PRIOR_K + total).
++ * Cold (no data) follows the NN; once the histogram fills it dominates.
 + */
 +#define NAP_FLOOR_WIN  256
 +#define NAP_PRIOR_K    16
@@ -1498,15 +1500,14 @@ index 0000000000..caf7660719
 +	/*
 +	 * Decision layer.
 +	 *
-+	 * For each boundary k the survival probability q_k is the max of the NN
-+	 * survival sigmoid(s - thr_ord) (a conditional, per-idle estimate) and the
-+	 * decayed histogram's marginal survival count(>=k)/total (a one-sided
-+	 * floor): the NN drives the decision, the histogram can only add confidence
-+	 * that a deep state is reachable, never remove it.  A running minimum
-+	 * enforces a monotone non-increasing survival curve, and the next timer
-+	 * event caps the reachable depth (a deeper state cannot be earned past it).
-+	 * The confidence level is the single responsiveness dial: pick the deepest
-+	 * feasible state whose survival still meets it.
++	 * For each boundary k the survival probability q_k is a Beta-Binomial
++	 * shrinkage of the NN survival sigmoid(s - thr_ord) (a prior worth
++	 * NAP_PRIOR_K pseudo-observations) toward the decayed histogram (data):
++	 * the NN drives cold start, the floor takes over as it fills.  A running
++	 * minimum enforces a monotone non-increasing survival curve, and the next
++	 * timer event caps the reachable depth (a deeper state cannot be earned
++	 * past it).  The confidence level is the single responsiveness dial: pick
++	 * the deepest feasible state whose survival still meets it.
 +	 */
 +	{
 +		float conf = (float)d->conf_millths / 1000.0f;
@@ -1527,24 +1528,8 @@ index 0000000000..caf7660719
 +
 +		for (k = 1; k < drv->state_count; k++) {
 +			float q_nn = nap_sigmoidf(s - d->active_w->thr_ord[k - 1]);
-+			float q_hist = (total > 0.0f) ? suffix[k] / total : 0.0f;
-+			/*
-+			 * One-sided robustness floor.  suffix[k]/total is the
-+			 * *unconditional* marginal frequency of idles reaching
-+			 * depth k; q_nn is the *conditional* survival given this
-+			 * idle's features.  The two are not interchangeable.
-+			 * Blending them as Beta-Binomial data
-+			 * (q = (K*q_nn + suffix)/(K+total)) let the many short
-+			 * idle events — which dominate the histogram by count
-+			 * even when long idles dominate by time — drag deep-state
-+			 * survival below conf, pinning the governor to a shallow
-+			 * state regardless of sleep_length.  Use the histogram
-+			 * only as a floor: it may raise confidence that a deep
-+			 * state is reachable (cold-start / forgetting robustness)
-+			 * but must never veto a state the conditional NN and the
-+			 * timer cap already support.
-+			 */
-+			float q = float_max(q_nn, q_hist);
++			float q = ((float)NAP_PRIOR_K * q_nn + suffix[k]) /
++				  ((float)NAP_PRIOR_K + total);
 +
 +			if (d->log2_tres[k] > sleep_log2)
 +				q = 0.0f;	/* cannot idle past the next timer */
@@ -1854,5 +1839,3 @@ index 0000000000..0f2a6f131f
 +}
 -- 
 2.34.1
-
-
