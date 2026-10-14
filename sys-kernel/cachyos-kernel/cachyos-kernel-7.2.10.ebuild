@@ -896,7 +896,7 @@ src_prepare() {
 	eapply "${FILESDIR}/6.18.1-sbitmap-bits.patch"
 	eapply "${FILESDIR}/7.2.10-zstd.patch"
 	eapply "${FILESDIR}/7.2.10-rss-stat-optimization.patch"
-	eapply "${FILESDIR}/6.18.1-reflex-cpu.patch"
+	eapply "${FILESDIR}/7.2.10-reflex.patch"
 	eapply "${FILESDIR}/6.18.1-disable-workqueue-crypto.patch"
 	eapply "${FILESDIR}/7.2.10-min-write-back.patch"
   eapply "${FILESDIR}/6.18.1-nap.patch"
