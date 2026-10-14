@@ -928,7 +928,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-ttm.patch"
   eapply "${FILESDIR}/6.18.1-vfs_speedup.patch"
   eapply "${FILESDIR}/6.18.1-clear_page_no_gpl.patch"
-  eapply "${FILESDIR}/6.18.1-btf_binary.patch"
+  # eapply "${FILESDIR}/6.18.1-btf_binary.patch"
   eapply "${FILESDIR}/6.18.1-probe_bmi2.patch"
   eapply "${FILESDIR}/6.18.1-dead_code.patch"
   eapply "${FILESDIR}/7.2.10-net_filter.patch"
