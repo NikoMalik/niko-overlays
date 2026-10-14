@@ -1,19 +1,24 @@
 diff --git a/Makefile b/Makefile
-index 3060ef5f0..eebebc925 100644
+index 51926170c..dbe30ec1e 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -872,6 +872,13 @@ KBUILD_RUSTFLAGS += -Copt-level=2
+@@ -871,9 +871,18 @@ KBUILD_CFLAGS += -O2
+ KBUILD_RUSTFLAGS += -Copt-level=2
  else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
  KBUILD_CFLAGS += -O3
- KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -extra-vectorizer-passes)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-cond-stores-vec)
++KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
 +KBUILD_CFLAGS += $(call cc-option,-mllvm -aggressive-ext-opt)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-gvn-hoist)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-gvn-sink)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-loop-distribute)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -slp-vectorize-hor-store)
++KBUILD_CFLAGS += $(call cc-option,-mllvm -unroll-threshold=512)
++KBUILD_CFLAGS += $(call cc-option,-mllvm -inline-threshold=1000)
++KBUILD_CFLAGS += $(call cc-option,-mllvm -unroll-runtime-multi-exit)
++
++
++
  KBUILD_RUSTFLAGS += -Copt-level=3
  else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
  KBUILD_CFLAGS += -Os
++KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner-opt-size)
+ KBUILD_RUSTFLAGS += -Copt-level=s
+ endif
+ 
 
