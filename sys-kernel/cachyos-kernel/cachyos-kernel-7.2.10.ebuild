@@ -875,9 +875,6 @@ src_prepare() {
   if use bore; then
 		eapply "${FILESDIR}/7.2.10-bore.patch"
 	fi
-	if use rt-bore; then
-		eapply "${FILESDIR}/7.2.10-bore.patch"
-	fi
   eapply "${FILESDIR}/6.18.1-spin-faster.patch"
   eapply "${FILESDIR}/6.18.1-harder-flags.patch"
   eapply "${FILESDIR}/6.18.1-nvme-latency.patch"
