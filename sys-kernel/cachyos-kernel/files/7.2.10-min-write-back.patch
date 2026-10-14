@@ -1,0 +1,17 @@
+diff --git a/include/linux/writeback.h b/include/linux/writeback.h
+index 62552a2ce..a5eed2e92 100644
+--- a/include/linux/writeback.h
++++ b/include/linux/writeback.h
+@@ -371,8 +371,9 @@ void sb_mark_inode_writeback(struct inode *inode);
+ void sb_clear_inode_writeback(struct inode *inode);
+ 
+ /*
+- * 4MB minimal write chunk size
++ * 64MB minimal write chunk size
+  */
+-#define MIN_WRITEBACK_PAGES	(4096UL >> (PAGE_SHIFT - 10))
++#define MIN_WRITEBACK_PAGES	(65536UL >> (PAGE_SHIFT - 10))
++
+ 
+ #endif		/* WRITEBACK_H */
+
