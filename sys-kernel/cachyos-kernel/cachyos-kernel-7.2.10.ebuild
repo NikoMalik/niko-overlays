@@ -915,7 +915,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-numa-present.patch"
   eapply "${FILESDIR}/6.18.1-list-lock.patch"
   eapply "${FILESDIR}/6.18.1-file-8.patch"
-  eapply "${FILESDIR}/6.18.1-comptime_ttwu.patch"
+  eapply "${FILESDIR}/7.2.10-comptime_ttwu.patch"
   eapply "${FILESDIR}/6.18.1-epb.patch"
   eapply "${FILESDIR}/6.18.1-crypto-late.patch"
   eapply "${FILESDIR}/6.18.1-memcontrol.patch"
