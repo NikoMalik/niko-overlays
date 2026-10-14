@@ -934,7 +934,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-write_buffer.patch"
   eapply "${FILESDIR}/7.2.10-mput_async.patch"
   eapply "${FILESDIR}/7.2.10-filemap_retry.patch"
-  eapply "${FILESDIR}/7.2.10-cgroup_vram.patch"
+  # cgroup_vram dropped - dmem cgroup min/low + TTM VRAM integration is native in 7.2
   eapply "${FILESDIR}/7.2.10-tcp_collapse.patch"
   eapply "${FILESDIR}/7.2.10-block_patches.patch"
 
