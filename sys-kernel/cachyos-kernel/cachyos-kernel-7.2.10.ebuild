@@ -947,6 +947,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-sched-shares-lto-fix.patch"
   eapply "${FILESDIR}/7.2.10-def_string.patch"
   eapply "${FILESDIR}/7.2.10-speedup_compile.patch"
+  eapply "${FILESDIR}/7.2.10-pci_skip.patch"
 
 
 
