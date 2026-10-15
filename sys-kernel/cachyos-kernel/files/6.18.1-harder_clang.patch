@@ -7,7 +7,6 @@ index 51926170c..dbe30ec1e 100644
  else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
  KBUILD_CFLAGS += -O3
 +KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
-+KBUILD_CFLAGS += $(call cc-option,-mllvm -aggressive-ext-opt)
 +KBUILD_CFLAGS += $(call cc-option,-mllvm -unroll-threshold=512)
 +KBUILD_CFLAGS += $(call cc-option,-mllvm -inline-threshold=1000)
 +KBUILD_CFLAGS += $(call cc-option,-mllvm -unroll-runtime-multi-exit)
