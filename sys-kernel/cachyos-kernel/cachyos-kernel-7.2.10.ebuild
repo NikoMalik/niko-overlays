@@ -939,7 +939,6 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-block_patches.patch"
   # eapply "${FILESDIR}/7.2.10-drm-gud.patch"
   eapply "${FILESDIR}/7.2.10-lib-group.patch"
-  eapply "${FILESDIR}/7.2.10-ksm.patch"
 
 
 
