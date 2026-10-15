@@ -93,6 +93,7 @@ BDEPEND="
 	') )
 	debug? ( dev-util/pahole )
 	mold? ( sys-devel/mold )
+  app-arch/pigz	
 "
 PDEPEND="
 	>=virtual/dist-kernel-${PV}
