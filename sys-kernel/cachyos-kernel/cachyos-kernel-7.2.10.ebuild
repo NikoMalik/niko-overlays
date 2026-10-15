@@ -921,7 +921,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-memcontrol.patch"
   eapply "${FILESDIR}/6.18.1-better_idle.patch"
   eapply "${FILESDIR}/6.18.1-lto-size.patch"
-  eapply "${FILESDIR}/6.18.1-harder_clang.patch"
+  # eapply "${FILESDIR}/6.18.1-harder_clang.patch"
   eapply "${FILESDIR}/6.18.1-mharden_none.patch"
   eapply "${FILESDIR}/6.18.1-fix_busy_amd.patch"
   eapply "${FILESDIR}/6.18.1-epp_retune.patch"
