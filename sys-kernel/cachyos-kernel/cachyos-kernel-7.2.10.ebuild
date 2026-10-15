@@ -940,6 +940,10 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-block_patches.patch"
   # eapply "${FILESDIR}/7.2.10-drm-gud.patch"
   eapply "${FILESDIR}/7.2.10-lib-group.patch"
+  # keep the calc_*_shares static-call targets under ThinLTO (undefined
+  # calc_concur_shares at vmlinux link otherwise), applied last so its context
+  # (the bare "static long calc_*_shares" lines) stays stable
+  eapply "${FILESDIR}/7.2.10-sched-shares-lto-fix.patch"
 
 
 
