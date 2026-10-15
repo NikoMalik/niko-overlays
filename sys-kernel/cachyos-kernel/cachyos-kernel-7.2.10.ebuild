@@ -920,8 +920,9 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-crypto-late.patch"
   eapply "${FILESDIR}/6.18.1-memcontrol.patch"
   eapply "${FILESDIR}/6.18.1-better_idle.patch"
+  # ThinLTO drop the calc_concur_shares static-call target -> undefined at link
   eapply "${FILESDIR}/6.18.1-lto-size.patch"
-  # eapply "${FILESDIR}/6.18.1-harder_clang.patch"
+  eapply "${FILESDIR}/6.18.1-harder_clang.patch"
   eapply "${FILESDIR}/6.18.1-mharden_none.patch"
   eapply "${FILESDIR}/6.18.1-fix_busy_amd.patch"
   eapply "${FILESDIR}/6.18.1-epp_retune.patch"
