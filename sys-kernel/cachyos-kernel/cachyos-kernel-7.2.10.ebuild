@@ -937,7 +937,7 @@ src_prepare() {
   # cgroup_vram dropped - dmem cgroup min/low + TTM VRAM integration is native in 7.2
   eapply "${FILESDIR}/7.2.10-tcp_collapse.patch"
   eapply "${FILESDIR}/7.2.10-block_patches.patch"
-  eapply "${FILESDIR}/7.2.10-drm-gud.patch"
+  # eapply "${FILESDIR}/7.2.10-drm-gud.patch"
   eapply "${FILESDIR}/7.2.10-lib-group.patch"
   eapply "${FILESDIR}/7.2.10-rocat-juke.patch"
 
