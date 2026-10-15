@@ -929,7 +929,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-vfs_speedup.patch"
   eapply "${FILESDIR}/6.18.1-clear_page_no_gpl.patch"
   # eapply "${FILESDIR}/6.18.1-btf_binary.patch"
-  # eapply "${FILESDIR}/6.18.1-dead_code.patch"
+  eapply "${FILESDIR}/6.18.1-dead_code.patch"
   eapply "${FILESDIR}/7.2.10-net_filter.patch"
   eapply "${FILESDIR}/7.2.10-write_buffer.patch"
   eapply "${FILESDIR}/7.2.10-mput_async.patch"
@@ -939,7 +939,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-block_patches.patch"
   # eapply "${FILESDIR}/7.2.10-drm-gud.patch"
   eapply "${FILESDIR}/7.2.10-lib-group.patch"
-  # eapply "${FILESDIR}/7.2.10-rocat-juke.patch"
+  eapply "${FILESDIR}/7.2.10-ksm.patch"
 
 
 
