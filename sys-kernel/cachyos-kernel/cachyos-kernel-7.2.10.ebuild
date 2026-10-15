@@ -944,6 +944,8 @@ src_prepare() {
   # calc_concur_shares at vmlinux link otherwise), applied last so its context
   # (the bare "static long calc_*_shares" lines) stays stable
   eapply "${FILESDIR}/7.2.10-sched-shares-lto-fix.patch"
+  eapply "${FILESDIR}/7.2.10-def_string.patch"
+  eapply "${FILESDIR}/7.2.10-speedup_compile.patch"
 
 
 
