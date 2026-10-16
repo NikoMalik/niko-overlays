@@ -949,6 +949,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-speedup_compile.patch"
   eapply "${FILESDIR}/7.2.10-pci_skip.patch"
   eapply "${FILESDIR}/7.2.10-fast_parse_uint.patch"
+  eapply "${FILESDIR}/7.2.10-lower_upper.patch"
 
 
 
