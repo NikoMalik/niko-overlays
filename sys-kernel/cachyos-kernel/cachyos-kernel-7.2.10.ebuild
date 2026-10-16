@@ -893,7 +893,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-mem_page.patch" 
   eapply "${FILESDIR}/6.18.1-sched-limit.patch"
   # poc selector already there
-  eapply "${FILESDIR}/6.18.1-rq-affinity.patch"
+  # eapply "${FILESDIR}/6.18.1-rq-affinity.patch"
 	eapply "${FILESDIR}/6.18.1-sbitmap-bits.patch"
 	eapply "${FILESDIR}/7.2.10-zstd.patch"
 	eapply "${FILESDIR}/7.2.10-rss-stat-optimization.patch"
