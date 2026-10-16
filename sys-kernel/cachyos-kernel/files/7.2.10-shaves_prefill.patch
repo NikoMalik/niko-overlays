@@ -136,15 +136,15 @@ index 130b6fe3f..df75c5b56 100644
  }
  
 +
-++/*
-++ * Refill @sheaf from the barn: from its partial sheaf first, then from its full
-++ * sheaves. A sheaf that objects were copied from stays in the barn as the
-++ * partial sheaf if it still holds objects, or goes on the empty list if it is
-++ * empty.
-++ *
-++ * Returns true if the sheaf is now full, at s->sheaf_capacity.
-++ * Returns false if the sheaf is still not full.
-++ */
++/*
++ * Refill @sheaf from the barn: from its partial sheaf first, then from its full
++ * sheaves. A sheaf that objects were copied from stays in the barn as the
++ * partial sheaf if it still holds objects, or goes on the empty list if it is
++ * empty.
++ *
++ * Returns true if the sheaf is now full, at s->sheaf_capacity.
++ * Returns false if the sheaf is still not full.
++ */
 +static bool refill_sheaf_from_barn(struct kmem_cache *s,
 +				   struct slab_sheaf *sheaf)
 +{
