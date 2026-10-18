@@ -110,8 +110,6 @@ PATCHES=(
 	"${FILESDIR}"/nvidia-settings-530.30.02-desktop.patch
 	"${FILESDIR}"/nvidia-rss-lazy-percpu.patch
   "${FILESDIR}"/nvidia-strncpy-removed.patch
-  "${FILESDIR}"/nvidia-drm.patch
-
 )
 
 pkg_setup() {
