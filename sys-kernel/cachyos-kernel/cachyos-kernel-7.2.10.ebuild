@@ -890,7 +890,7 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-align-slab.patch"
   eapply "${FILESDIR}/6.18.1-ext4.patch"
   eapply "${FILESDIR}/6.18.1-elf-optimize.patch"
-  eapply "${FILESDIR}/7.2.10-mem_page.patch" 
+  # eapply "${FILESDIR}/7.2.10-mem_page.patch" 
   eapply "${FILESDIR}/6.18.1-sched-limit.patch"
   # poc selector already there
   # eapply "${FILESDIR}/6.18.1-rq-affinity.patch"
@@ -921,7 +921,6 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-crypto-late.patch"
   eapply "${FILESDIR}/6.18.1-memcontrol.patch"
   eapply "${FILESDIR}/6.18.1-better_idle.patch"
-  # ThinLTO drop the calc_concur_shares static-call target -> undefined at link
   eapply "${FILESDIR}/6.18.1-lto-size.patch"
   eapply "${FILESDIR}/6.18.1-harder_clang.patch"
   eapply "${FILESDIR}/6.18.1-mharden_none.patch"
