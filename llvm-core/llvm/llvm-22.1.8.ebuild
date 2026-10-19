@@ -489,7 +489,7 @@ multilib_src_configure() {
 		-DCMAKE_LIBTOOL="${EPREFIX}/usr/bin/${CHOST}-libtool"
 	)
 
-  use tc-is-clang && mycmakeargs+=(
+  tc-is-clang && mycmakeargs+=(
 		-DLLVM_ENABLE_LTO=Thin
   )
 
