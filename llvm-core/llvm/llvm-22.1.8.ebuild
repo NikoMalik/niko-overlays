@@ -21,7 +21,7 @@ LICENSE="Apache-2.0-with-LLVM-exceptions UoI-NCSA BSD public-domain rc"
 SLOT="${LLVM_MAJOR}/${LLVM_SOABI}"
 KEYWORDS="amd64 arm arm64 ~loong ~mips ppc ppc64 ~riscv ~sparc x86 ~arm64-macos ~x64-macos"
 IUSE="
-	+binutils-plugin debug debuginfod doc exegesis +rpmalloc libedit +libffi
+	+binutils-plugin debug debuginfod doc exegesis  libedit +libffi
 	test xml z3 +zstd
 "
 RESTRICT="!test? ( test )"
@@ -420,7 +420,6 @@ multilib_src_configure() {
 		-DLLVM_ENABLE_EH=ON
 		-DLLVM_ENABLE_RTTI=ON
 		-DLLVM_ENABLE_RTTI=ON
-		-DLLVM_ENABLE_RPMALLOC=$(usex rpmalloc)
 		-DLLVM_ENABLE_Z3_SOLVER=$(usex z3)
 		-DLLVM_ENABLE_ZLIB=FORCE_ON
 		-DLLVM_ENABLE_ZSTD=$(usex zstd FORCE_ON OFF)
