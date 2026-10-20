@@ -435,6 +435,15 @@ src_configure() {
 		[[ -f ${f} ]] && { sed -i -e "s/multiprocessing.cpu_count()/$(makeopts_jobs)/" "${f}" || die "failed sedding ${f}"; }
 	done
 
+	# with mold (not lld) Firefox turns on PGO temporal instrumentation but keeps
+	# the %m online-merge in the profraw name, those two are incompatible so the
+	# runtime drops profiles, strip %m so each process writes its own file and
+	# llvm-profdata merges them offline like the error message asks
+	if use pgo && tc-ld-is-mold; then
+		sed -i -e 's/default_%p_random_%m\.profraw/default_%p_random.profraw/' \
+			engine/build/pgo/profileserver.py || die "failed patching PGO profile filename"
+	fi
+
 	# mach starts a Glean telemetry future (create_telemetry_from_environment)
 	# that never resolves in the portage sandbox, then blocks forever on
 	# _telemetry_init_done.wait() in _run's finally (mach/main.py) after the
