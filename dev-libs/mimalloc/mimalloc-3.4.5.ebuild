@@ -3,7 +3,7 @@
 
 EAPI=8
 
-inherit cmake-multilib
+inherit cmake-multilib flag-o-matic
 
 DESCRIPTION="A compact general purpose allocator with excellent performance"
 HOMEPAGE="https://github.com/microsoft/mimalloc"
@@ -16,6 +16,8 @@ IUSE="debug test"
 RESTRICT="!test? ( test )"
 
 src_configure() {
+	filter-lto
+
 	# hardened + valgrind could be restored w/ multibuild.eclass. They
 	# install renamed libraries which break reverse dependencies.
 	local mycmakeargs=(
