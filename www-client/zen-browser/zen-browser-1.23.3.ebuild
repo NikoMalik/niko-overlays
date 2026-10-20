@@ -444,6 +444,13 @@ src_configure() {
 			engine/build/pgo/profileserver.py || die "failed patching PGO profile filename"
 	fi
 
+	# the elfhack inject object keeps only -g/-m/-I flags, which keeps a bare
+	# -mllvm while dropping its argument (our -mllvm -polly pairs), the orphan
+	# -mllvm then eats the next flag and sends it to LLVM option parsing and the
+	# build dies, drop -mllvm from that object, it is -O2 -fno-lto anyway
+	sed -i -e 's/^    COMPILE_FLAGS\[v\] = flags$/    COMPILE_FLAGS[v] = [f for f in flags if f != "-mllvm"]/' \
+		engine/build/unix/elfhack/inject/moz.build || die "failed patching elfhack inject flags"
+
 	# mach starts a Glean telemetry future (create_telemetry_from_environment)
 	# that never resolves in the portage sandbox, then blocks forever on
 	# _telemetry_init_done.wait() in _run's finally (mach/main.py) after the
