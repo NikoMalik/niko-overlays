@@ -21,7 +21,7 @@ LICENSE="Apache-2.0-with-LLVM-exceptions UoI-NCSA BSD public-domain rc"
 SLOT="${LLVM_MAJOR}/${LLVM_SOABI}"
 KEYWORDS="amd64 arm arm64 ~loong ~mips ppc ppc64 ~riscv ~sparc x86 ~arm64-macos ~x64-macos"
 IUSE="
-	+binutils-plugin debug debuginfod doc exegesis +mimalloc  libedit +libffi
+	+binutils-plugin debug debuginfod doc exegesis   libedit +libffi
 	test xml z3 +zstd
 "
 RESTRICT="!test? ( test )"
@@ -38,7 +38,6 @@ RDEPEND="
 	xml? ( dev-libs/libxml2:2=[${MULTILIB_USEDEP}] )
 	z3? ( >=sci-mathematics/z3-4.7.1:0=[${MULTILIB_USEDEP}] )
 	zstd? ( app-arch/zstd:=[${MULTILIB_USEDEP}] )
-	mimalloc? ( dev-libs/mimalloc:= )
 
 "
 DEPEND="
@@ -494,11 +493,6 @@ multilib_src_configure() {
 		-DLLVM_ENABLE_LTO=Thin
   )
 
-	# only link mimalloc for the native 64-bit ABI, the archive is elf64 so it
-	# breaks the 32-bit multilib build
-	if use mimalloc && multilib_is_native_abi; then
-		append-ldflags "-Wl,--push-state,${ESYSROOT}/usr/lib64/libmimalloc.a,--pop-state"
-	fi
 
 	# LLVM can have very high memory consumption while linking,
 	# exhausting the limit on 32-bit linker executable
