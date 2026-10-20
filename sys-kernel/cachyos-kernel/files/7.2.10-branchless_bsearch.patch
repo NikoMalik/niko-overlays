@@ -1,0 +1,89 @@
+From eb9b517ee13957e6347420045ff2792c7d00abb5 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 21 Oct 2026 00:35:59 +0300
+Subject: [PATCH] sort: branchless bsearch
+
+---
+ include/linux/bsearch.h  | 33 +++++++++++++++++++++++++++++++++
+ kernel/trace/bpf_trace.c | 12 ++++++------
+ 2 files changed, 39 insertions(+), 6 deletions(-)
+
+diff --git a/include/linux/bsearch.h b/include/linux/bsearch.h
+index e66b711d0..3899e10ed 100644
+--- a/include/linux/bsearch.h
++++ b/include/linux/bsearch.h
+@@ -27,6 +27,39 @@ void *__inline_bsearch(const void *key, const void *base, size_t num, size_t siz
+ 	return NULL;
+ }
+ 
++/*
++ * Branchless variant, the pivot step is a conditional move instead of a
++ * data dependent branch and there is no early exit on a match. Prefer it
++ * for a hot lookup with a cheap comparator and unpredictable keys, on arches
++ * with a conditional move. Avoid it for a heavy comparator on small tables
++ * where the early exit of __inline_bsearch() pays off, measure the caller
++ */
++static __always_inline
++void *__inline_bsearch_branchless(const void *key, const void *base, size_t num,
++				  size_t size, cmp_func_t cmp)
++{
++	const char *lo = base;
++
++	while (num > 1) {
++		size_t half = num >> 1;
++		const char *mid = lo + half * size;
++		int ge = cmp(key, mid) >= 0;
++
++		/*
++		 * clang >= 5 on x86 turns the select below back into a data
++		 * branch, which defeats the point. A fake dependency between
++		 * the loop counter and the flag forces it to keep the cmov
++		 */
++#if defined(__clang__) && (defined(__x86_64__) || defined(__i386__))
++		asm volatile("" : "+r"(num) : "r"(ge));
++#endif
++		lo = ge ? mid : lo;
++		num -= half;
++	}
++
++	return (num && cmp(key, lo) == 0) ? (void *)lo : NULL;
++}
++
+ extern void *bsearch(const void *key, const void *base, size_t num, size_t size, cmp_func_t cmp);
+ 
+ #endif /* _LINUX_BSEARCH_H */
+diff --git a/kernel/trace/bpf_trace.c b/kernel/trace/bpf_trace.c
+index 75495a5c3..b3009353b 100644
+--- a/kernel/trace/bpf_trace.c
++++ b/kernel/trace/bpf_trace.c
+@@ -2547,11 +2547,10 @@ static void bpf_kprobe_multi_cookie_swap(void *a, void *b, int size, const void
+ 
+ static int bpf_kprobe_multi_addrs_cmp(const void *a, const void *b)
+ {
+-	const unsigned long *addr_a = a, *addr_b = b;
++	const unsigned long addr_a = *(const unsigned long *)a;
++	const unsigned long addr_b = *(const unsigned long *)b;
+ 
+-	if (*addr_a == *addr_b)
+-		return 0;
+-	return *addr_a < *addr_b ? -1 : 1;
++	return (addr_a > addr_b) - (addr_a < addr_b);
+ }
+ 
+ static int bpf_kprobe_multi_cookie_cmp(const void *a, const void *b, const void *priv)
+@@ -2574,8 +2573,9 @@ static u64 bpf_kprobe_multi_cookie(struct bpf_run_ctx *ctx)
+ 	if (!link->cookies)
+ 		return 0;
+ 	entry_ip = run_ctx->entry_ip;
+-	addr = bsearch(&entry_ip, link->addrs, link->cnt, sizeof(entry_ip),
+-		       bpf_kprobe_multi_addrs_cmp);
++	addr = __inline_bsearch_branchless(&entry_ip, link->addrs, link->cnt,
++					   sizeof(entry_ip),
++					   bpf_kprobe_multi_addrs_cmp);
+ 	if (!addr)
+ 		return 0;
+ 	cookie = link->cookies + (addr - link->addrs);
+-- 
+2.56.0
+
+
