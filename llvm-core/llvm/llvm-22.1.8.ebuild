@@ -494,7 +494,7 @@ multilib_src_configure() {
 		-DLLVM_ENABLE_LTO=Thin
   )
 
-	use mimalloc && append-ldflags "-Wl,--push-state,${ESYSROOT}/usr/$(get_libdir)/libmimalloc.a,--pop-state"
+	use mimalloc && append-ldflags "-Wl,--push-state,${ESYSROOT}/usr/lib64/libmimalloc.a,--pop-state"
 
 	# LLVM can have very high memory consumption while linking,
 	# exhausting the limit on 32-bit linker executable
