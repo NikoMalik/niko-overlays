@@ -953,8 +953,9 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-fast_parse_uint2.patch"
   eapply "${FILESDIR}/7.2.10-lower_upper.patch"
   eapply "${FILESDIR}/7.2.10-shaves_prefill.patch"
-  eapply "${FILESDIR}/7.2.10-folio_page_cache.patch"
   eapply "${FILESDIR}/7.2.10-shaves_barns.patch"
+  eapply "${FILESDIR}/7.2.10-folio_page_cache.patch"
+  eapply "${FILESDIR}/7.2.10-folio_page_cache2.patch"
   eapply "${FILESDIR}/7.2.10-branchless_bsearch.patch"
 
 
