@@ -36,7 +36,7 @@ SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefo
 LICENSE="MPL-2.0"
 SLOT="0"
 
-IUSE="+X +full-lto +lto +pgo +wayland"
+IUSE="+X +full-lto +lto +pgo +wayland +system-av1 +system-libvpx"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
 RESTRICT="network-sandbox"
@@ -83,6 +83,10 @@ DEPEND="
 		x11-libs/libXScrnSaver
 		x11-libs/libXtst
 	)
+  system-av1? (
+		>=media-libs/dav1d-1.5.4:=
+		>=media-libs/libaom-3.12.1:=
+	)
 	wayland? (
 		dev-libs/wayland
 		x11-libs/libxkbcommon
@@ -112,6 +116,7 @@ BDEPEND="
 	dev-lang/nasm
 	dev-lang/yasm
 	virtual/pkgconfig
+  system-libvpx? ( >=media-libs/libvpx-1.8.2:0=[postproc] )
 	pgo? (
 		X? (
 			sys-devel/gettext
@@ -252,11 +257,21 @@ src_prepare() {
 		
 
 
+  if use system-av1; then
+				printf 'ac_add_options --with-system-av1\n' >> "${mozconf}" || die
+  fi
+
+  if use system-libvpx; then
+				printf 'ac_add_options --with-system-libvpx\n' >> "${mozconf}" || die
+  fi
 
 
 
 
 
+
+
+  use system-av1 && append-ldflags "-Wl,--undefined-version"
 
 
 	local toolkit
