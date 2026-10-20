@@ -21,7 +21,7 @@ LICENSE="Apache-2.0-with-LLVM-exceptions UoI-NCSA BSD public-domain rc"
 SLOT="${LLVM_MAJOR}/${LLVM_SOABI}"
 KEYWORDS="amd64 arm arm64 ~loong ~mips ppc ppc64 ~riscv ~sparc x86 ~arm64-macos ~x64-macos"
 IUSE="
-	+binutils-plugin debug debuginfod doc exegesis  libedit +libffi
+	+binutils-plugin debug debuginfod doc exegesis +mimalloc  libedit +libffi
 	test xml z3 +zstd
 "
 RESTRICT="!test? ( test )"
@@ -38,6 +38,8 @@ RDEPEND="
 	xml? ( dev-libs/libxml2:2=[${MULTILIB_USEDEP}] )
 	z3? ( >=sci-mathematics/z3-4.7.1:0=[${MULTILIB_USEDEP}] )
 	zstd? ( app-arch/zstd:=[${MULTILIB_USEDEP}] )
+	mimalloc? ( dev-libs/mimalloc:= )
+
 "
 DEPEND="
 	${RDEPEND}
@@ -491,6 +493,11 @@ multilib_src_configure() {
   tc-is-clang && mycmakeargs+=(
 		-DLLVM_ENABLE_LTO=Thin
   )
+
+  use mimalloc && mycmakeargs+=(
+		-DCMAKE_EXE_LINKER_FLAGS=-Wl,--push-state,/lib64/libmimalloc.a,--pop-state
+
+	)
 
 	# LLVM can have very high memory consumption while linking,
 	# exhausting the limit on 32-bit linker executable
