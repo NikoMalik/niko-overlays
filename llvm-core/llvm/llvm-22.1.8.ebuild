@@ -494,7 +494,11 @@ multilib_src_configure() {
 		-DLLVM_ENABLE_LTO=Thin
   )
 
-	use mimalloc && append-ldflags "-Wl,--push-state,${ESYSROOT}/usr/lib64/libmimalloc.a,--pop-state"
+	# only link mimalloc for the native 64-bit ABI, the archive is elf64 so it
+	# breaks the 32-bit multilib build
+	if use mimalloc && multilib_is_native_abi; then
+		append-ldflags "-Wl,--push-state,${ESYSROOT}/usr/lib64/libmimalloc.a,--pop-state"
+	fi
 
 	# LLVM can have very high memory consumption while linking,
 	# exhausting the limit on 32-bit linker executable
