@@ -1,0 +1,52 @@
+From 1de72e549a392c081d6462c13be4618e04526f34 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 16:18:46 +0300
+Subject: [PATCH] mm: sheaves barn_replace_empty_sheaf no dead memory
+
+---
+ mm/slub.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/mm/slub.c b/mm/slub.c
+index 49a7c38b6..a3c52bcfa 100644
+--- a/mm/slub.c
++++ b/mm/slub.c
+@@ -3160,7 +3160,8 @@ static struct slab_sheaf *barn_get_full_or_empty_sheaf(struct node_barn *barn)
+ /*
+  * If a full sheaf is available, return it and put the supplied empty one to
+  * barn. We ignore the limit on empty sheaves as the number of sheaves doesn't
+- * change.
++ * change. Fall back to the partial sheaf when there is no full one, the caller
++ * takes an at least partially full sheaf
+  */
+ static struct slab_sheaf *
+ barn_replace_empty_sheaf(struct node_barn *barn, struct slab_sheaf *empty,
+@@ -3169,7 +3170,7 @@ barn_replace_empty_sheaf(struct node_barn *barn, struct slab_sheaf *empty,
+ 	struct slab_sheaf *full = NULL;
+ 	unsigned long flags;
+ 
+-	if (!data_race(barn->nr_full))
++	if (!data_race(barn->nr_full) && !data_race(barn->sheaf_partial))
+ 		return NULL;
+ 
+ 	if (likely(allow_spin))
+@@ -3181,8 +3182,14 @@ barn_replace_empty_sheaf(struct node_barn *barn, struct slab_sheaf *empty,
+ 		full = list_first_entry(&barn->sheaves_full, struct slab_sheaf,
+ 					barn_list);
+ 		list_del(&full->barn_list);
+-		list_add(&empty->barn_list, &barn->sheaves_empty);
+ 		barn->nr_full--;
++	} else if (barn->sheaf_partial) {
++		full = barn->sheaf_partial;
++		barn->sheaf_partial = NULL;
++	}
++
++	if (full) {
++		list_add(&empty->barn_list, &barn->sheaves_empty);
+ 		barn->nr_empty++;
+ 	}
+ 
+-- 
+2.56.0
+
+

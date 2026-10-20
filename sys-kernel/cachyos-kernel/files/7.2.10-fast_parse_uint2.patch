@@ -1,0 +1,28 @@
+From 8976d247c97c88a398eb1b371ba343c09ee9d14e Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 16:37:14 +0300
+Subject: [PATCH] lib/kstrtox: optimize strlen call #2
+
+---
+ lib/kstrtox.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/lib/kstrtox.c b/lib/kstrtox.c
+index 436192041..e28314090 100644
+--- a/lib/kstrtox.c
++++ b/lib/kstrtox.c
+@@ -131,8 +131,9 @@ static inline bool parse_u64_decimal_fast(const char *s, u64 *res)
+ 	const u64 low_word_mask = 0x0000ffff0000ffffULL;
+ 	u64 value = 0;
+ 	unsigned int digits_count = 0;
++	const char *end = s + strnlen(s, 20);
+ 
+-	while (strnlen(s, 8) == 8) {
++	while (end - s >= 8) {
+ 		u64 word = get_unaligned_le64(s);
+ 		u64 digits, lo, hi, chunk;
+ 
+-- 
+2.56.0
+
+
