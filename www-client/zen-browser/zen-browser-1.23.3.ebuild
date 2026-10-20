@@ -255,9 +255,6 @@ src_prepare() {
 	fi
 	EOF
 
-  if tc-ld-mold ; then 
-				printf 'ac_add_options --disable-elf-hack\n' >> "${mozconf}" || die
-  fi
 
 
 
