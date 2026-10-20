@@ -29,6 +29,7 @@ src_configure() {
 		-DMI_BUILD_STATIC=ON
 		-DMI_BUILD_SHARED=ON
 		-DMI_TRACK_VALGRIND=OFF
+		-DMI_LOCAL_DYNAMIC_TLS=ON
 		-DMI_LIBC_MUSL=$(usex elibc_musl)
 		# Don't inject -march=XXX
 		-DMI_OPT_ARCH=OFF
