@@ -36,7 +36,7 @@ SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefo
 LICENSE="MPL-2.0"
 SLOT="0"
 
-IUSE="+X +full-lto +lto +pgo +wayland +system-av1 +system-libvpx"
+IUSE="+X +full-lto +lto +pgo +wayland +system-av1 +system-icu +system-jpeg +system-libvpx"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
 RESTRICT="network-sandbox"
@@ -117,6 +117,8 @@ BDEPEND="
 	dev-lang/yasm
 	virtual/pkgconfig
   system-libvpx? ( >=media-libs/libvpx-1.8.2:0=[postproc] )
+  system-icu? ( >=dev-libs/icu-78.1:= )
+  system-jpeg? ( >=media-libs/libjpeg-turbo-1.2.1:= )
 	pgo? (
 		X? (
 			sys-devel/gettext
@@ -227,6 +229,7 @@ src_prepare() {
   printf 'ac_add_options --disable-crashreporter\n' >> "${mozconf}" || die
   printf 'ac_add_options --allow-addon-sideload\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-legacy-profile-creation\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-debug-symbols\n' >> "${mozconf}" || die
 
 
 
@@ -264,6 +267,16 @@ src_prepare() {
   if use system-libvpx; then
 				printf 'ac_add_options --with-system-libvpx\n' >> "${mozconf}" || die
   fi
+
+  if use system-icu; then
+				printf 'ac_add_options --with-system-icu\n' >> "${mozconf}" || die
+  fi
+
+  if use system-jpeg; then
+				printf 'ac_add_options --with-system-jpeg\n' >> "${mozconf}" || die
+  fi
+
+
 
 
 
