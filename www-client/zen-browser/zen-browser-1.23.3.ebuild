@@ -339,7 +339,7 @@ virtwl() {
 	tinywl -h >/dev/null || die 'tinywl -h failed'
 
 	local VIRTWL VIRTWL_PID
-	coproc VIRTWL { WLR_BACKENDS=headless exec tinywl -s 'echo $WAYLAND_DISPLAY; read _; kill $PPID'; }
+	coproc VIRTWL { WLR_RENDERER=pixman WLR_BACKENDS=headless exec tinywl -s 'echo $WAYLAND_DISPLAY; read _; kill $PPID'; }
 	local -x WAYLAND_DISPLAY
 	read WAYLAND_DISPLAY <&${VIRTWL[0]}
 
@@ -519,6 +519,11 @@ src_compile() {
 
   if ! use X; then
 		local -x GDK_BACKEND=wayland
+		local -x LIBGL_ALWAYS_SOFTWARE=1
+		local -x GALLIUM_DRIVER=llvmpipe
+		local -x MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+		local -x __EGL_VENDOR_LIBRARY_FILENAMES="${EPREFIX}/usr/share/glvnd/egl_vendor.d/50_mesa.json"
+		local -x __GLX_VENDOR_LIBRARY_NAME=mesa
 	else
 		local -x GDK_BACKEND=x11
 	fi
