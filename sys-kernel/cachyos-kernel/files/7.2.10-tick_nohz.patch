@@ -27,7 +27,7 @@ Link: https://lore.kernel.org/lkml/20260203-fix-nohz-idle-v1-1-ad05a5872080@os.a
  1 file changed, 3 insertions(+), 2 deletions(-)
 
 diff --git a/kernel/time/tick-sched.c b/kernel/time/tick-sched.c
-index d1f27df1e60e..000000000000 100644
+index d1f27df1e60e..e1f27df1e60f 100644
 --- a/kernel/time/tick-sched.c
 +++ b/kernel/time/tick-sched.c
 @@ -1159,8 +1159,9 @@ void tick_nohz_idle_stop_tick(void)
