@@ -1,0 +1,45 @@
+From eac4c32c13b002913715e7858fa32e6db9d1862e Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 21 Oct 2026 07:20:30 +0300
+Subject: [PATCH] mm/folio: fixed linus folio check
+
+---
+ mm/page_alloc.c | 18 ++++++++++++++++--
+ 1 file changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index c3aad56b0..487a2876b 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1449,11 +1449,25 @@ static void rcu_free_expedite_workfn(struct work_struct *work)
+ 	rcu_free_pages(&list);
+ }
+ 
++/*
++ * The expedited grace period in rcu_free_expedite_workfn() IPIs every CPU, a
++ * jitter source. Routine churn drains on the normal grace period (rwork) and
++ * rcu_free_drain() is the backstop before OOM, so only pay the expedite when
++ * memory is actually tight, available under 1/8 of total
++ */
++static bool rcu_free_mem_tight(void)
++{
++	return si_mem_available() < totalram_pages() / 8;
++}
++
+ static void rcu_free_expedite(struct rcu_free_pcpu *r, unsigned long limit)
+ {
+ 	/* Unlocked: a stale @nr_pending moves the expedite by one free */
+-	if (data_race(r->nr_pending) > limit && !work_pending(&r->expedite))
+-		queue_work(rcu_free_wq, &r->expedite);
++	if (data_race(r->nr_pending) <= limit || work_pending(&r->expedite))
++		return;
++	if (!rcu_free_mem_tight())
++		return;
++	queue_work(rcu_free_wq, &r->expedite);
+ }
+ 
+ static void rcu_free_defer(struct folio *folio, unsigned int order)
+-- 
+2.56.0
+
+

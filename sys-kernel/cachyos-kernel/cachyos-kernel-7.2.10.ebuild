@@ -956,6 +956,8 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-shaves_barns.patch"
   eapply "${FILESDIR}/7.2.10-folio_page_cache.patch"
   eapply "${FILESDIR}/7.2.10-folio_page_cache2.patch"
+  eapply "${FILESDIR}/7.2.10-folio_page_cache_fix_after_2.patch"
+
   eapply "${FILESDIR}/7.2.10-branchless_bsearch.patch"
 
 
