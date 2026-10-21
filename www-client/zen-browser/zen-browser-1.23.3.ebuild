@@ -463,6 +463,13 @@ src_configure() {
 	if use pgo; then
 		sed -i -e 's/"merge",/"merge", "--failure-mode=all",/' \
 			engine/build/pgo/profileserver.py || die "failed patching PGO merge failure-mode"
+
+		local psjs=engine/testing/profiles/profileserver/user.js
+		[[ -f ${psjs} ]] || die "PGO profileserver user.js not found at ${psjs}"
+		cat >> "${psjs}" <<-'EOF' || die "failed adding PGO profileserver prefs"
+			user_pref("layers.gpu-process.enabled", false);
+			user_pref("gfx.webrender.software", true);
+		EOF
 	fi
 
 	# the elfhack inject object keeps only -g/-m/-I flags, which keeps a bare
