@@ -959,6 +959,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-folio_page_cache_fix_after_2.patch"
 
   eapply "${FILESDIR}/7.2.10-branchless_bsearch.patch"
+  eapply "${FILESDIR}/7.2.10-le9uo.patch"
 
 
 
