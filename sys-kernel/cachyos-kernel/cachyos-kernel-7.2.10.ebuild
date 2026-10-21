@@ -962,6 +962,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-tick_nohz.patch"
   eapply "${FILESDIR}/7.2.10-ata.patch"
   eapply "${FILESDIR}/7.2.10-usbhid_skip.patch"
+  eapply "${FILESDIR}/7.2.10-small_tasks.patch"
 
 
 
