@@ -460,6 +460,11 @@ src_configure() {
 			engine/build/pgo/profileserver.py || die "failed patching PGO profile filename"
 	fi
 
+	if use pgo; then
+		sed -i -e 's/"merge",/"merge", "--failure-mode=all",/' \
+			engine/build/pgo/profileserver.py || die "failed patching PGO merge failure-mode"
+	fi
+
 	# the elfhack inject object keeps only -g/-m/-I flags, which keeps a bare
 	# -mllvm while dropping its argument (our -mllvm -polly pairs), the orphan
 	# -mllvm then eats the next flag and sends it to LLVM option parsing and the
