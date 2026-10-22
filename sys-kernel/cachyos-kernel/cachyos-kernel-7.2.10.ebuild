@@ -888,8 +888,6 @@ src_prepare() {
 	# teach ld-version.sh about mold so LD=ld.mold is not rejected, non-LTO only
 	use mold && eapply "${FILESDIR}/6.18.1-mold-ld-version.patch"
 
-	eapply "${FILESDIR}/6.18.1-ttm.patch"
-
   if use bore; then
 		eapply "${FILESDIR}/7.2.10-bore.patch"
     eapply "${FILESDIR}/7.2.10-bore_fix_climb.patch"
