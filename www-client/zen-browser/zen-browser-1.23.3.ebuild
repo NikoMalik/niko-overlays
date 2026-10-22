@@ -36,7 +36,7 @@ SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefo
 LICENSE="MPL-2.0"
 SLOT="0"
 
-IUSE="+X +full-lto +lto +pgo +wayland +system-av1 +system-icu +system-jpeg +system-libvpx"
+IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-jpeg +system-libvpx +system-png"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
 RESTRICT="network-sandbox"
@@ -69,6 +69,9 @@ DEPEND="
 	x11-libs/libdrm
 	x11-libs/libnotify
 	x11-libs/pango
+  system-webp? ( >=media-libs/libwebp-1.1.0:0= )
+  system-png? ( >=media-libs/libpng-1.6.45:0=[apng] )
+  system-libevent? ( >=dev-libs/libevent-2.1.12:0=[threads(+)] )
 	X? (
 		x11-libs/libX11
 		x11-libs/libxcb
@@ -277,6 +280,23 @@ src_prepare() {
   if use system-jpeg; then
 				printf 'ac_add_options --with-system-jpeg\n' >> "${mozconf}" || die
   fi
+
+
+  if use system-libevent; then
+				printf 'ac_add_options --with-system-libevent\n' >> "${mozconf}" || die
+  fi
+
+  if use system-png; then
+				printf 'ac_add_options --with-system-png\n' >> "${mozconf}" || die
+  fi
+
+  if use system-web; then
+				printf 'ac_add_options --with-system-web\n' >> "${mozconf}" || die
+  fi
+
+
+
+
 
 
 
