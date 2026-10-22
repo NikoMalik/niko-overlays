@@ -1,4 +1,4 @@
-From 5b43c9189fabb33f436aa4461afbe22fbd76ed13 Mon Sep 17 00:00:00 2001
+From 10d40dc889eb9770681a2a627a750f5b3e57678d Mon Sep 17 00:00:00 2001
 From: NikoMalik <NikoMalik@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 00:52:08 +0300
 Subject: [PATCH] fair: optimize small tasks
@@ -29,13 +29,13 @@ Maximum                     8737 |  4043 (+54 %)
  kernel/sched/core.c          |    9 +-
  kernel/sched/deadline.c      |    2 +-
  kernel/sched/ext/ext.c       |    2 +-
- kernel/sched/fair.c          | 1016 ++++++++++++++++++++++++----------
+ kernel/sched/fair.c          | 1020 ++++++++++++++++++++++++----------
  kernel/sched/idle.c          |    2 +-
  kernel/sched/rt.c            |    2 +-
  kernel/sched/sched.h         |    8 +-
  kernel/sched/stop_task.c     |    2 +-
  kernel/sched/topology.c      |    3 +
- 11 files changed, 776 insertions(+), 380 deletions(-)
+ 11 files changed, 780 insertions(+), 380 deletions(-)
 
 diff --git a/include/linux/energy_model.h b/include/linux/energy_model.h
 index c909a8ba2..c4f9558b5 100644
@@ -259,7 +259,7 @@ index 54a53cd85..6c8d393db 100644
  	struct scx_sched *sch = scx_task_sched(curr);
  
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 763f23d45..a389e0dad 100644
+index 763f23d45..6012dc181 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
 @@ -865,10 +865,69 @@ bool update_entity_lag(struct cfs_rq *cfs_rq, struct sched_entity *se)
@@ -737,7 +737,7 @@ index 763f23d45..a389e0dad 100644
  {
  	unsigned long busy_time, max_cap = arch_scale_cpu_capacity(prev_cpu);
  	unsigned long irq = cpu_util_irq(cpu_rq(prev_cpu));
-@@ -9714,124 +9858,404 @@ static inline void eenv_task_busy_time(struct energy_env *eenv,
+@@ -9714,124 +9858,408 @@ static inline void eenv_task_busy_time(struct energy_env *eenv,
  	else
  		busy_time = scale_irq_capacity(task_util_est(p), irq, max_cap);
  
@@ -921,6 +921,10 @@ index 763f23d45..a389e0dad 100644
  
 +static int active_load_balance_cpu_stop(void *data);
 +
++static inline bool sched_push_task_enabled(void);
++static bool fair_check_pushable_task(struct rq *rq, struct task_struct *p, struct task_struct *next);
++static int select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags);
++
  /*
 - * Compute the maximum utilization for compute_energy() when the task @p
 - * is placed on the cpu @dst_cpu.
@@ -977,16 +981,16 @@ index 763f23d45..a389e0dad 100644
 +
 +	if (is_migration_disabled(p))
 +		return false;
- 
--		eff_util = sugov_effective_cpu_perf(cpu, eff_util, min, max);
--		max_util = max(max_util, eff_util);
++
 +	/* If there are several task, wait for being put back */
 +	if (rq->nr_running > 1)
 +		return false;
 +
 +	if (!fair_check_pushable_task(rq, p, NULL))
 +		return false;
-+
+ 
+-		eff_util = sugov_effective_cpu_perf(cpu, eff_util, min, max);
+-		max_util = max(max_util, eff_util);
 +	if (!raw_spin_trylock(&p->pi_lock))
 +		return false;
 +
@@ -1116,10 +1120,7 @@ index 763f23d45..a389e0dad 100644
 -compute_energy(struct energy_env *eenv, struct perf_domain *pd,
 -	       struct cpumask *pd_cpus, struct task_struct *p, int dst_cpu)
 +static bool fair_push_task(struct rq *rq)
- {
--	unsigned long max_util = eenv_pd_max_util(eenv, pd_cpus, p, dst_cpu);
--	unsigned long busy_time = eenv->pd_busy_time;
--	unsigned long energy;
++{
 +	struct task_struct *next_task;
 +	int prev_cpu, new_cpu;
 +	struct rq *new_rq;
@@ -1130,12 +1131,9 @@ index 763f23d45..a389e0dad 100644
 +
 +	if (is_migration_disabled(next_task))
 +		return true;
- 
--	if (dst_cpu >= 0)
--		busy_time = min(eenv->pd_cap, busy_time + eenv->task_busy_time);
++
 +	prev_cpu = rq->cpu;
- 
--	energy = em_cpu_energy(pd->em_pd, max_util, busy_time, eenv->cpu_cap);
++
 +	/*
 +	 * The safe lock ordering for task and rq is task 1st then rq but we
 +	 * already get the rq so just try to get task too. If task is already
@@ -1151,11 +1149,9 @@ index 763f23d45..a389e0dad 100644
 +	/* Task doesn't need to migrate */
 +	if (new_cpu == prev_cpu)
 +		goto no_push;
- 
--	trace_sched_compute_energy_tp(p, dst_cpu, energy, max_util, busy_time);
++
 +	new_rq = cpu_rq(new_cpu);
- 
--	return energy;
++
 +	deactivate_task(rq, next_task, 0);
 +	set_task_cpu(next_task, new_cpu);
 +	raw_spin_rq_unlock(rq);
@@ -1173,22 +1169,29 @@ index 763f23d45..a389e0dad 100644
 +	raw_spin_unlock(&next_task->pi_lock);
 +
 +	return true;
- }
- 
++}
++
 +static void fair_push_tasks(struct rq *rq)
-+{
+ {
+-	unsigned long max_util = eenv_pd_max_util(eenv, pd_cpus, p, dst_cpu);
+-	unsigned long busy_time = eenv->pd_busy_time;
+-	unsigned long energy;
 +	/* fair_push_task() will return true if it moved a fair task */
 +	while (fair_push_task(rq))
 +		;
 +}
-+
+ 
+-	if (dst_cpu >= 0)
+-		busy_time = min(eenv->pd_cap, busy_time + eenv->task_busy_time);
 +static DEFINE_PER_CPU(struct balance_callback, fair_push_head);
-+
+ 
+-	energy = em_cpu_energy(pd->em_pd, max_util, busy_time, eenv->cpu_cap);
 +static inline void fair_queue_push_tasks(struct rq *rq)
 +{
 +	if (!sched_push_task_enabled() || !has_pushable_tasks(rq))
 +		return;
-+
+ 
+-	trace_sched_compute_energy_tp(p, dst_cpu, energy, max_util, busy_time);
 +	queue_balance_callback(rq, &per_cpu(fair_push_head, rq->cpu), fair_push_tasks);
 +}
 +
@@ -1204,13 +1207,14 @@ index 763f23d45..a389e0dad 100644
 +	plist_node_init(&p->pushable_tasks, p->prio);
 +	plist_add(&p->pushable_tasks, &rq->cfs.pushable_tasks);
 +}
-+
+ 
+-	return energy;
 +static void fair_add_pushable_prev(struct rq *rq, struct task_struct *prev, struct task_struct *next)
 +{
 +	if (sched_push_task_enabled() && fair_check_pushable_task(rq, prev, next))
 +		__fair_add_pushable_task(rq, prev);
-+}
-+
+ }
+ 
 +static void fair_add_pushable_short(struct rq *rq, struct task_struct *p);
 +
  /*
@@ -1227,7 +1231,7 @@ index 763f23d45..a389e0dad 100644
   *
   * The rationale for this heuristic is as follows. In a performance domain,
   * all the most energy efficient CPU candidates (according to the Energy
-@@ -9868,17 +10292,14 @@ compute_energy(struct energy_env *eenv, struct perf_domain *pd,
+@@ -9868,17 +10296,14 @@ compute_energy(struct energy_env *eenv, struct perf_domain *pd,
  static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  {
  	struct cpumask *cpus = this_cpu_cpumask_var_ptr(select_rq_mask);
@@ -1250,7 +1254,7 @@ index 763f23d45..a389e0dad 100644
  
  	pd = rcu_dereference_all(rd->pd);
  	if (!pd)
-@@ -9897,19 +10318,19 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+@@ -9897,19 +10322,19 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  	target = prev_cpu;
  
  	sync_entity_load_avg(&p->se);
@@ -1281,7 +1285,7 @@ index 763f23d45..a389e0dad 100644
  
  		if (!cpumask_and(cpus, perf_domain_span(pd), cpu_online_mask))
  			continue;
-@@ -9918,13 +10339,9 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+@@ -9918,13 +10343,9 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  		cpu = cpumask_first(cpus);
  		cpu_actual_cap = get_actual_cpu_capacity(cpu);
  
@@ -1297,7 +1301,7 @@ index 763f23d45..a389e0dad 100644
  
  			if (!cpumask_test_cpu(cpu, sched_domain_span(sd)))
  				continue;
-@@ -9932,158 +10349,169 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+@@ -9932,158 +10353,169 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  			if (!cpumask_test_cpu(cpu, p->cpus_ptr))
  				continue;
  
@@ -1577,7 +1581,7 @@ index 763f23d45..a389e0dad 100644
  
  	for_each_domain(cpu, tmp) {
  		/*
-@@ -10115,8 +10543,8 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
+@@ -10115,8 +10547,8 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
  		return sched_balance_find_dst_cpu(sd, p, cpu, prev_cpu, sd_flag);
  
  	/* Fast path */
@@ -1588,7 +1592,7 @@ index 763f23d45..a389e0dad 100644
  
  	return new_cpu;
  }
-@@ -10401,6 +10829,7 @@ static void wakeup_preempt_fair(struct rq *rq, struct task_struct *p, int wake_f
+@@ -10401,6 +10833,7 @@ static void wakeup_preempt_fair(struct rq *rq, struct task_struct *p, int wake_f
  	if (preempt_action == PREEMPT_WAKEUP_SHORT) {
  		cancel_protect_slice(se);
  		clear_buddies(cfs_rq, se);
@@ -1596,7 +1600,7 @@ index 763f23d45..a389e0dad 100644
  	}
  
  	resched_curr_lazy(rq);
-@@ -10500,6 +10929,15 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev, struct t
+@@ -10500,6 +10933,15 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev, struct t
  	cfs_rq->curr = NULL;
  	if (se->on_rq)
  		__enqueue_entity(cfs_rq, se);
@@ -1612,7 +1616,7 @@ index 763f23d45..a389e0dad 100644
  }
  
  /*
-@@ -12655,6 +13093,8 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
+@@ -12655,6 +13097,8 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
  }
  #endif /* !CONFIG_NUMA_BALANCING */
  
@@ -1621,7 +1625,7 @@ index 763f23d45..a389e0dad 100644
  
  struct sg_lb_stats;
  
-@@ -13718,6 +14158,12 @@ static int need_active_balance(struct lb_env *env)
+@@ -13718,6 +14162,12 @@ static int need_active_balance(struct lb_env *env)
  	return 0;
  }
  
@@ -1634,7 +1638,7 @@ index 763f23d45..a389e0dad 100644
  static int active_load_balance_cpu_stop(void *data);
  static int active_load_balance_llc_cpu_stop(void *data);
  
-@@ -15417,7 +15863,7 @@ static inline void task_tick_core(struct rq *rq, struct task_struct *curr) {}
+@@ -15417,7 +15867,7 @@ static inline void task_tick_core(struct rq *rq, struct task_struct *curr) {}
   * and everything must be accessed through the @rq and @curr passed in
   * parameters.
   */
@@ -1643,7 +1647,7 @@ index 763f23d45..a389e0dad 100644
  {
  	struct sched_entity *se = &curr->se;
  
-@@ -15445,8 +15891,10 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
+@@ -15445,8 +15895,10 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
  
  	task_tick_cache(rq, curr);
  
@@ -1656,7 +1660,7 @@ index 763f23d45..a389e0dad 100644
  
  	task_tick_core(rq, curr);
  }
-@@ -15615,6 +16063,7 @@ static void set_next_task_fair(struct rq *rq, struct task_struct *p, bool first)
+@@ -15615,6 +16067,7 @@ static void set_next_task_fair(struct rq *rq, struct task_struct *p, bool first)
  	bool on_rq = se->on_rq;
  
  	clear_buddies(cfs_rq, se);
@@ -1664,7 +1668,7 @@ index 763f23d45..a389e0dad 100644
  
  	if (on_rq)
  		__dequeue_entity(cfs_rq, se);
-@@ -15668,6 +16117,7 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
+@@ -15668,6 +16121,7 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
  {
  	cfs_rq->tasks_timeline = RB_ROOT_CACHED;
  	cfs_rq->zero_vruntime = (u64)(-(1LL << 20));
