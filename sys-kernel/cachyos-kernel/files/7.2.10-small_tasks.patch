@@ -1,4 +1,4 @@
-From 10d40dc889eb9770681a2a627a750f5b3e57678d Mon Sep 17 00:00:00 2001
+From 27dc8bfeb270c000f1fa68e618c9af11f71d9e73 Mon Sep 17 00:00:00 2001
 From: NikoMalik <NikoMalik@users.noreply.github.com>
 Date: Thu, 22 Oct 2026 00:52:08 +0300
 Subject: [PATCH] fair: optimize small tasks
@@ -29,13 +29,13 @@ Maximum                     8737 |  4043 (+54 %)
  kernel/sched/core.c          |    9 +-
  kernel/sched/deadline.c      |    2 +-
  kernel/sched/ext/ext.c       |    2 +-
- kernel/sched/fair.c          | 1020 ++++++++++++++++++++++++----------
+ kernel/sched/fair.c          | 1021 ++++++++++++++++++++++++----------
  kernel/sched/idle.c          |    2 +-
  kernel/sched/rt.c            |    2 +-
  kernel/sched/sched.h         |    8 +-
  kernel/sched/stop_task.c     |    2 +-
  kernel/sched/topology.c      |    3 +
- 11 files changed, 780 insertions(+), 380 deletions(-)
+ 11 files changed, 780 insertions(+), 381 deletions(-)
 
 diff --git a/include/linux/energy_model.h b/include/linux/energy_model.h
 index c909a8ba2..c4f9558b5 100644
@@ -259,7 +259,7 @@ index 54a53cd85..6c8d393db 100644
  	struct scx_sched *sch = scx_task_sched(curr);
  
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 763f23d45..6012dc181 100644
+index 763f23d45..305c50c1d 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
 @@ -865,10 +865,69 @@ bool update_entity_lag(struct cfs_rq *cfs_rq, struct sched_entity *se)
@@ -379,7 +379,14 @@ index 763f23d45..6012dc181 100644
  	struct sched_entity *se = &p->se;
  	struct cfs_rq *cfs_rq = &rq->cfs;
  	unsigned long weight;
-@@ -8297,6 +8375,8 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
+@@ -8292,11 +8370,15 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
+ 	weight = enqueue_hierarchy(p, flags);
+ 
+ 	if (!curr) {
++		if (task_wake)
++			decay_entity_lag(cfs_rq, se, flags);
+ 		reweight_eevdf(cfs_rq, se, weight, false);
+ 		place_entity(cfs_rq, se, flags | ENQUEUE_QUEUED);
  		__enqueue_entity(cfs_rq, se);
  	}
  
@@ -388,7 +395,7 @@ index 763f23d45..6012dc181 100644
  	if (!rq_h_nr_queued && rq->cfs.h_nr_queued)
  		dl_server_start(&rq->fair_server);
  
-@@ -8317,7 +8397,7 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
+@@ -8317,7 +8399,7 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
  	 * into account, but that is not straightforward to implement,
  	 * and the following generally works well enough in practice.
  	 */
@@ -397,7 +404,7 @@ index 763f23d45..6012dc181 100644
  		check_update_overutilized_status(rq);
  
  	assert_list_leaf_cfs_rq(rq);
-@@ -8369,6 +8449,8 @@ static void dequeue_hierarchy(struct task_struct *p, int flags)
+@@ -8369,6 +8451,8 @@ static void dequeue_hierarchy(struct task_struct *p, int flags)
  	}
  }
  
@@ -406,7 +413,7 @@ index 763f23d45..6012dc181 100644
  /*
   * The part of dequeue_task_fair() that is needed to dequeue delayed tasks.
   *
-@@ -8385,6 +8467,7 @@ static bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags)
+@@ -8385,6 +8469,7 @@ static bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags)
  	bool task_delayed = flags & DEQUEUE_DELAYED;
  
  	clear_buddies(cfs_rq, se);
@@ -414,7 +421,7 @@ index 763f23d45..6012dc181 100644
  
  	update_curr(cfs_rq_of(se));
  	update_entity_lag(cfs_rq, se);
-@@ -8412,6 +8495,9 @@ static bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags)
+@@ -8412,6 +8497,9 @@ static bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags)
  
  	dequeue_hierarchy(p, flags);
  
@@ -424,7 +431,7 @@ index 763f23d45..6012dc181 100644
  	if (sched_feat(PLACE_REL_DEADLINE) && !task_sleep) {
  		se->deadline -= se->vruntime;
  		se->rel_deadline = 1;
-@@ -8419,6 +8505,8 @@ static bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags)
+@@ -8419,6 +8507,8 @@ static bool __dequeue_task(struct rq *rq, struct task_struct *p, int flags)
  	if (se != cfs_rq->curr)
  		__dequeue_entity(cfs_rq, se);
  
@@ -433,7 +440,7 @@ index 763f23d45..6012dc181 100644
  	sub_nr_running(rq, 1);
  
  	/* balance early to pull high priority tasks */
-@@ -8620,6 +8708,9 @@ static int wake_wide(struct task_struct *p)
+@@ -8620,6 +8710,9 @@ static int wake_wide(struct task_struct *p)
   * wake_affine_idle() - only considers 'now', it check if the waking CPU is
   *			cache-affine and is (or	will be) idle.
   *
@@ -443,7 +450,7 @@ index 763f23d45..6012dc181 100644
   * wake_affine_weight() - considers the weight to reflect the average
   *			  scheduling latency of the CPUs. This seems to work
   *			  for the overloaded case.
-@@ -8655,6 +8746,20 @@ wake_affine_idle(int this_cpu, int prev_cpu, int sync)
+@@ -8655,6 +8748,20 @@ wake_affine_idle(int this_cpu, int prev_cpu, int sync)
  	return nr_cpumask_bits;
  }
  
@@ -464,7 +471,7 @@ index 763f23d45..6012dc181 100644
  static int
  wake_affine_weight(struct sched_domain *sd, struct task_struct *p,
  		   int this_cpu, int prev_cpu, int sync)
-@@ -8706,6 +8811,9 @@ static int wake_affine(struct sched_domain *sd, struct task_struct *p,
+@@ -8706,6 +8813,9 @@ static int wake_affine(struct sched_domain *sd, struct task_struct *p,
  	if (sched_feat(WA_IDLE))
  		target = wake_affine_idle(this_cpu, prev_cpu, sync);
  
@@ -474,7 +481,7 @@ index 763f23d45..6012dc181 100644
  	if (sched_feat(WA_WEIGHT) && target == nr_cpumask_bits)
  		target = wake_affine_weight(sd, p, this_cpu, prev_cpu, sync);
  
-@@ -8971,10 +9079,11 @@ static int select_idle_smt(struct task_struct *p, struct sched_domain *sd, int t
+@@ -8971,10 +9081,11 @@ static int select_idle_smt(struct task_struct *p, struct sched_domain *sd, int t
   * comparing the average scan cost (tracked in sd->avg_scan_cost) against the
   * average idle time for this rq (as found in rq->avg_idle).
   */
@@ -488,7 +495,7 @@ index 763f23d45..6012dc181 100644
  
  	if (sched_feat(SIS_UTIL) && sd->shared) {
  		/*
-@@ -8995,6 +9104,8 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
+@@ -8995,6 +9106,8 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
  	if (!cpumask_and(cpus, sched_domain_span(sd), p->cpus_ptr))
  		return -1;
  
@@ -497,7 +504,7 @@ index 763f23d45..6012dc181 100644
  	if (static_branch_unlikely(&sched_cluster_active)) {
  		struct sched_group *sg = sd->groups;
  
-@@ -9014,6 +9125,10 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
+@@ -9014,6 +9127,10 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
  					if ((unsigned int)idle_cpu < nr_cpumask_bits)
  						return idle_cpu;
  				}
@@ -508,7 +515,7 @@ index 763f23d45..6012dc181 100644
  			}
  			cpumask_andnot(cpus, cpus, sched_group_span(sg));
  		}
-@@ -9032,11 +9147,18 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
+@@ -9032,11 +9149,18 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
  			if ((unsigned int)idle_cpu < nr_cpumask_bits)
  				break;
  		}
@@ -527,7 +534,7 @@ index 763f23d45..6012dc181 100644
  	return idle_cpu;
  }
  
-@@ -9051,14 +9173,19 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
+@@ -9051,14 +9175,19 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
   *
   *   Rank                            Val  Tier    Meaning
   *   ------------------------------  ---  ------  ---------------------------
@@ -549,7 +556,7 @@ index 763f23d45..6012dc181 100644
   *   ASYM_IDLE_THREAD_FITS           -2   thread  Busy SMT sibling; capacity
   *                                                fits util + uclamp.
   *   ASYM_IDLE_THREAD_UCLAMP_MISFIT  -1   thread  Busy SMT sibling; capacity
-@@ -9068,24 +9195,26 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
+@@ -9068,24 +9197,26 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool
   *   ASYM_IDLE_THREAD_MISFIT          0   thread  Busy SMT sibling; capacity
   *                                                does not fit.
   *
@@ -581,7 +588,7 @@ index 763f23d45..6012dc181 100644
  };
  
  /*
-@@ -9104,6 +9233,7 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
+@@ -9104,6 +9235,7 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
  	bool has_idle_core = sched_smt_active() && test_idle_cores(target);
  	unsigned long task_util, util_min, util_max, best_cap = 0;
  	int fits, best_fits = ASYM_IDLE_THREAD_MISFIT;
@@ -589,7 +596,7 @@ index 763f23d45..6012dc181 100644
  	int cpu, best_cpu = -1;
  	struct cpumask *cpus;
  	int nr = INT_MAX;
-@@ -9114,6 +9244,7 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
+@@ -9114,6 +9246,7 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
  	task_util = task_util_est(p);
  	util_min = uclamp_eff_value(p, UCLAMP_MIN);
  	util_max = uclamp_eff_value(p, UCLAMP_MAX);
@@ -597,7 +604,7 @@ index 763f23d45..6012dc181 100644
  
  	if (sched_feat(SIS_UTIL) && sd->shared) {
  		/*
-@@ -9137,42 +9268,47 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
+@@ -9137,42 +9270,47 @@ select_idle_capacity(struct task_struct *p, struct sched_domain *sd, int target)
  		if (!has_idle_core && --nr <= 0)
  			return best_cpu;
  
@@ -674,7 +681,7 @@ index 763f23d45..6012dc181 100644
  		 * This ensures that an idle core is always given priority over
  		 * (partially) busy core.
  		 *
-@@ -9409,7 +9545,7 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target, int
+@@ -9409,7 +9547,7 @@ static int select_idle_sibling(struct task_struct *p, int prev, int target, int
  		}
  	}
  
@@ -683,7 +690,7 @@ index 763f23d45..6012dc181 100644
  	if ((unsigned)i < nr_cpumask_bits)
  		return i;
  
-@@ -9682,29 +9818,37 @@ unsigned long sched_cpu_util(int cpu)
+@@ -9682,29 +9820,37 @@ unsigned long sched_cpu_util(int cpu)
  }
  
  /*
@@ -737,7 +744,7 @@ index 763f23d45..6012dc181 100644
  {
  	unsigned long busy_time, max_cap = arch_scale_cpu_capacity(prev_cpu);
  	unsigned long irq = cpu_util_irq(cpu_rq(prev_cpu));
-@@ -9714,124 +9858,408 @@ static inline void eenv_task_busy_time(struct energy_env *eenv,
+@@ -9714,124 +9860,408 @@ static inline void eenv_task_busy_time(struct energy_env *eenv,
  	else
  		busy_time = scale_irq_capacity(task_util_est(p), irq, max_cap);
  
@@ -981,16 +988,16 @@ index 763f23d45..6012dc181 100644
 +
 +	if (is_migration_disabled(p))
 +		return false;
-+
+ 
+-		eff_util = sugov_effective_cpu_perf(cpu, eff_util, min, max);
+-		max_util = max(max_util, eff_util);
 +	/* If there are several task, wait for being put back */
 +	if (rq->nr_running > 1)
 +		return false;
 +
 +	if (!fair_check_pushable_task(rq, p, NULL))
 +		return false;
- 
--		eff_util = sugov_effective_cpu_perf(cpu, eff_util, min, max);
--		max_util = max(max_util, eff_util);
++
 +	if (!raw_spin_trylock(&p->pi_lock))
 +		return false;
 +
@@ -1194,7 +1201,8 @@ index 763f23d45..6012dc181 100644
 -	trace_sched_compute_energy_tp(p, dst_cpu, energy, max_util, busy_time);
 +	queue_balance_callback(rq, &per_cpu(fair_push_head, rq->cpu), fair_push_tasks);
 +}
-+
+ 
+-	return energy;
 +static void fair_remove_pushable_task(struct rq *rq, struct task_struct *p)
 +{
 +	if (sched_push_task_enabled())
@@ -1207,8 +1215,7 @@ index 763f23d45..6012dc181 100644
 +	plist_node_init(&p->pushable_tasks, p->prio);
 +	plist_add(&p->pushable_tasks, &rq->cfs.pushable_tasks);
 +}
- 
--	return energy;
++
 +static void fair_add_pushable_prev(struct rq *rq, struct task_struct *prev, struct task_struct *next)
 +{
 +	if (sched_push_task_enabled() && fair_check_pushable_task(rq, prev, next))
@@ -1231,7 +1238,7 @@ index 763f23d45..6012dc181 100644
   *
   * The rationale for this heuristic is as follows. In a performance domain,
   * all the most energy efficient CPU candidates (according to the Energy
-@@ -9868,17 +10296,14 @@ compute_energy(struct energy_env *eenv, struct perf_domain *pd,
+@@ -9868,17 +10298,14 @@ compute_energy(struct energy_env *eenv, struct perf_domain *pd,
  static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  {
  	struct cpumask *cpus = this_cpu_cpumask_var_ptr(select_rq_mask);
@@ -1254,7 +1261,7 @@ index 763f23d45..6012dc181 100644
  
  	pd = rcu_dereference_all(rd->pd);
  	if (!pd)
-@@ -9897,19 +10322,19 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+@@ -9897,19 +10324,19 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  	target = prev_cpu;
  
  	sync_entity_load_avg(&p->se);
@@ -1285,7 +1292,7 @@ index 763f23d45..6012dc181 100644
  
  		if (!cpumask_and(cpus, perf_domain_span(pd), cpu_online_mask))
  			continue;
-@@ -9918,13 +10343,9 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+@@ -9918,13 +10345,9 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  		cpu = cpumask_first(cpus);
  		cpu_actual_cap = get_actual_cpu_capacity(cpu);
  
@@ -1301,7 +1308,7 @@ index 763f23d45..6012dc181 100644
  
  			if (!cpumask_test_cpu(cpu, sched_domain_span(sd)))
  				continue;
-@@ -9932,158 +10353,169 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
+@@ -9932,158 +10355,169 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu)
  			if (!cpumask_test_cpu(cpu, p->cpus_ptr))
  				continue;
  
@@ -1337,13 +1344,13 @@ index 763f23d45..6012dc181 100644
 +				continue;
 +
 +			/* Then select the CPU with lowest cost */
-+
-+			/* Get the performance of the CPU w/ the waking task */
-+			target_perf = find_cpu_max_util(cpu, p, cpu);
-+			target_perf = min(target_perf, cpu_actual_cap);
  
 -			fits = util_fits_cpu(util, util_min, util_max, cpu);
 -			if (!fits)
++			/* Get the performance of the CPU w/ the waking task */
++			target_perf = find_cpu_max_util(cpu, p, cpu);
++			target_perf = min(target_perf, cpu_actual_cap);
++
 +			/* Needing a higher OPP means a higher cost */
 +			if (target_perf > min_stat.max_perf)
  				continue;
@@ -1581,7 +1588,7 @@ index 763f23d45..6012dc181 100644
  
  	for_each_domain(cpu, tmp) {
  		/*
-@@ -10115,8 +10547,8 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
+@@ -10115,8 +10549,8 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
  		return sched_balance_find_dst_cpu(sd, p, cpu, prev_cpu, sd_flag);
  
  	/* Fast path */
@@ -1592,7 +1599,7 @@ index 763f23d45..6012dc181 100644
  
  	return new_cpu;
  }
-@@ -10401,6 +10833,7 @@ static void wakeup_preempt_fair(struct rq *rq, struct task_struct *p, int wake_f
+@@ -10401,6 +10835,7 @@ static void wakeup_preempt_fair(struct rq *rq, struct task_struct *p, int wake_f
  	if (preempt_action == PREEMPT_WAKEUP_SHORT) {
  		cancel_protect_slice(se);
  		clear_buddies(cfs_rq, se);
@@ -1600,7 +1607,7 @@ index 763f23d45..6012dc181 100644
  	}
  
  	resched_curr_lazy(rq);
-@@ -10500,6 +10933,15 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev, struct t
+@@ -10500,6 +10935,15 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev, struct t
  	cfs_rq->curr = NULL;
  	if (se->on_rq)
  		__enqueue_entity(cfs_rq, se);
@@ -1616,16 +1623,15 @@ index 763f23d45..6012dc181 100644
  }
  
  /*
-@@ -12655,6 +13097,8 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
+@@ -12655,7 +13099,6 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
  }
  #endif /* !CONFIG_NUMA_BALANCING */
  
-+	if (task_wake)
-+		decay_entity_lag(cfs_rq, se, flags);
- 
+-
  struct sg_lb_stats;
  
-@@ -13718,6 +14162,12 @@ static int need_active_balance(struct lb_env *env)
+ /*
+@@ -13718,6 +14161,12 @@ static int need_active_balance(struct lb_env *env)
  	return 0;
  }
  
@@ -1638,7 +1644,7 @@ index 763f23d45..6012dc181 100644
  static int active_load_balance_cpu_stop(void *data);
  static int active_load_balance_llc_cpu_stop(void *data);
  
-@@ -15417,7 +15867,7 @@ static inline void task_tick_core(struct rq *rq, struct task_struct *curr) {}
+@@ -15417,7 +15866,7 @@ static inline void task_tick_core(struct rq *rq, struct task_struct *curr) {}
   * and everything must be accessed through the @rq and @curr passed in
   * parameters.
   */
@@ -1647,7 +1653,7 @@ index 763f23d45..6012dc181 100644
  {
  	struct sched_entity *se = &curr->se;
  
-@@ -15445,8 +15895,10 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
+@@ -15445,8 +15894,10 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
  
  	task_tick_cache(rq, curr);
  
@@ -1660,7 +1666,7 @@ index 763f23d45..6012dc181 100644
  
  	task_tick_core(rq, curr);
  }
-@@ -15615,6 +16067,7 @@ static void set_next_task_fair(struct rq *rq, struct task_struct *p, bool first)
+@@ -15615,6 +16066,7 @@ static void set_next_task_fair(struct rq *rq, struct task_struct *p, bool first)
  	bool on_rq = se->on_rq;
  
  	clear_buddies(cfs_rq, se);
@@ -1668,7 +1674,7 @@ index 763f23d45..6012dc181 100644
  
  	if (on_rq)
  		__dequeue_entity(cfs_rq, se);
-@@ -15668,6 +16121,7 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
+@@ -15668,6 +16120,7 @@ void init_cfs_rq(struct cfs_rq *cfs_rq)
  {
  	cfs_rq->tasks_timeline = RB_ROOT_CACHED;
  	cfs_rq->zero_vruntime = (u64)(-(1LL << 20));
