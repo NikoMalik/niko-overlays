@@ -74,7 +74,7 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="bcachefs cfi clang debug autofdo propeller mold +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="+amdgpu bcachefs cfi clang debug autofdo propeller mold +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
@@ -784,6 +784,21 @@ cachy_use_config() {
   kconf unset SLUB_DEBUG
   kconf unset MITIGATION_SL
   kconf unset DRM_NOUVEAU
+
+	if ! use amdgpu; then
+		kconf unset DRM_AMDGPU
+		kconf unset DRM_AMDGPU_SI
+		kconf unset DRM_AMDGPU_CIK
+		kconf unset DRM_AMDGPU_USERPTR
+		kconf unset DRM_AMD_DC
+		kconf unset DRM_AMD_DC_FP
+		kconf unset DRM_AMD_DC_SI
+		kconf unset HSA_AMD
+		kconf unset DRM_RADEON
+		kconf unset DRM_TTM
+		kconf unset DRM_TTM_HELPER
+		einfo "amdgpu/radeon + in-tree TTM disabled (USE=-amdgpu)"
+	fi
 	# BPF_EVENTS will be enabled automatically when FTRACE and KPROBES are enabled
 
 
@@ -872,6 +887,8 @@ src_prepare() {
 
 	# teach ld-version.sh about mold so LD=ld.mold is not rejected, non-LTO only
 	use mold && eapply "${FILESDIR}/6.18.1-mold-ld-version.patch"
+
+	eapply "${FILESDIR}/6.18.1-ttm.patch"
 
   if use bore; then
 		eapply "${FILESDIR}/7.2.10-bore.patch"
