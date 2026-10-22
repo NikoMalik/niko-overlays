@@ -290,8 +290,8 @@ src_prepare() {
 				printf 'ac_add_options --with-system-png\n' >> "${mozconf}" || die
   fi
 
-  if use system-web; then
-				printf 'ac_add_options --with-system-web\n' >> "${mozconf}" || die
+  if use system-webp; then
+				printf 'ac_add_options --with-system-webp\n' >> "${mozconf}" || die
   fi
 
 
