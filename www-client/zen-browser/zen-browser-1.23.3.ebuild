@@ -233,6 +233,11 @@ src_prepare() {
   printf 'ac_add_options --allow-addon-sideload\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-legacy-profile-creation\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-debug-symbols\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-debug-js-modules\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-tests\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-wasm-simd\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-jit-simd\n' >> "${mozconf}" || die
+
 
 
 
