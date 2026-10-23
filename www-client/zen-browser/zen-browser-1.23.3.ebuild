@@ -265,6 +265,17 @@ src_prepare() {
 	fi
   EOF
 
+  mkdir -p "${T}"/gitshim || die
+	cat > "${T}"/gitshim/git <<-'EOF' || die
+		#!/usr/bin/env bash
+		if [[ ${1} == clone && ${*} == *mozilla-l10n/firefox-l10n* ]]; then
+			shift
+			exec /usr/bin/git clone --filter=blob:none "${@}"
+		fi
+		exec /usr/bin/git "${@}"
+	EOF
+
+
   
 
 
@@ -404,17 +415,8 @@ src_configure() {
 	zver=$(python3 -c \
 		"import json;print(json.load(open('surfer.json'))['brands']['release']['release']['displayVersion'])") \
 		|| die "cannot read displayVersion from surfer.json"
-
-	mkdir -p "${T}"/gitshim || die
-	cat > "${T}"/gitshim/git <<-'EOF' || die
-		#!/usr/bin/env bash
-		if [[ ${1} == clone && ${*} == *mozilla-l10n/firefox-l10n* ]]; then
-			shift
-			exec /usr/bin/git clone --filter=blob:none "${@}"
-		fi
-		exec /usr/bin/git "${@}"
-	EOF
 	chmod +x "${T}"/gitshim/git || die
+
 	local -x PATH="${T}/gitshim:${PATH}"
 
 	# force sharp to build from source with its vendored libvips (8.14.5) instead
