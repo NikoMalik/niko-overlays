@@ -36,7 +36,7 @@ SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefo
 LICENSE="MPL-2.0"
 SLOT="0"
 
-IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-jpeg +system-libvpx +system-png"
+IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-pipewire +system-jpeg +system-libvpx +system-png"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
 RESTRICT="network-sandbox"
@@ -70,6 +70,7 @@ DEPEND="
 	x11-libs/libnotify
 	x11-libs/pango
   system-webp? ( >=media-libs/libwebp-1.1.0:0= )
+  system-pipewire? ( >=media-video/pipewire-1.6.8:= )
   system-png? ( >=media-libs/libpng-1.6.45:0=[apng] )
   system-libevent? ( >=dev-libs/libevent-2.1.12:0=[threads(+)] )
 	X? (
@@ -307,6 +308,12 @@ EOF
   if use system-webp; then
 				printf 'ac_add_options --with-system-webp\n' >> "${mozconf}" || die
   fi
+
+
+  if use system-pipewire; then
+				printf 'ac_add_options --with-system-pipewire\n' >> "${mozconf}" || die
+  fi
+
 
 
 
