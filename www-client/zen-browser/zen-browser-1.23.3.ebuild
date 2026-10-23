@@ -263,7 +263,7 @@ src_prepare() {
 		export CXXFLAGS="$CXXFLAGS -mllvm -pgo-temporal-instrumentation"
 	  ac_add_options --disable-elf-hack
 	fi
-  EOF
+EOF
 
   mkdir -p "${T}"/gitshim || die
 	cat > "${T}"/gitshim/git <<-'EOF' || die
@@ -274,14 +274,7 @@ src_prepare() {
 		fi
 		exec /usr/bin/git "${@}"
 	EOF
-
-
-  
-
-
-
-
-
+	chmod +x "${T}"/gitshim/git || die
 
 
 		
