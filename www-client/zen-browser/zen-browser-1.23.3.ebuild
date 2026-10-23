@@ -259,15 +259,12 @@ src_prepare() {
 	if test -z "$MOZ_PROFILE_GENERATE"; then
 	  ac_add_options --enable-elf-hack=relr
 	else
+		export CFLAGS="$CFLAGS -mllvm -pgo-temporal-instrumentation"
+		export CXXFLAGS="$CXXFLAGS -mllvm -pgo-temporal-instrumentation"
 	  ac_add_options --disable-elf-hack
 	fi
-	EOF
-  cat >> "${mozconf}" <<-'EOF' || die
-	if test -n "$MOZ_PROFILE_GENERATE"; then
-	  export CFLAGS="$CFLAGS -mllvm -pgo-temporal-instrumentation"
-	  export CXXFLAGS="$CXXFLAGS -mllvm -pgo-temporal-instrumentation"
-	fi
   EOF
+
   
 
 
