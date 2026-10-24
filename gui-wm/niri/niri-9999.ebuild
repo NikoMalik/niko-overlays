@@ -84,10 +84,14 @@ src_unpack() {
 }
 
 src_prepare() {
-	sed -i \
-		-e 's/git = "[^ ]*"/version = "*"/' \
-		-e '/rev =/d' \
-		Cargo.toml || die
+  if [[ ${PV} != 9999 ]]; then
+        sed -i \
+            -e 's/git = "[^ ]*"/version = "*"/' \
+            -e '/rev =/d' \
+            -e '/branch =/d' \
+            -e '/tag =/d' \
+            Cargo.toml || die
+  fi
 	# niri-session doesn't work on OpenRC
 	if ! use systemd; then
 		local cmd="niri --session"
