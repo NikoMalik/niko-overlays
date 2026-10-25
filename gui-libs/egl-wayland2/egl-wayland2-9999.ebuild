@@ -28,7 +28,7 @@ BDEPEND="
 "
 
 PATCHES=(
-	"${FILESDIR}/leak_fix.patch"
+	# "${FILESDIR}/leak_fix.patch"
 )
 
 
