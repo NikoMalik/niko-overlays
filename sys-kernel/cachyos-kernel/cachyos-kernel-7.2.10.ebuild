@@ -74,7 +74,7 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="+amdgpu bcachefs cfi clang debug autofdo propeller mold +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="+amdgpu bcachefs -nouveau cfi clang debug autofdo propeller mold +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
@@ -783,7 +783,18 @@ cachy_use_config() {
 	kconf unset SND_DEBUG
   kconf unset SLUB_DEBUG
   kconf unset MITIGATION_SL
-  kconf unset DRM_NOUVEAU
+
+
+  if ! use nouveau; then
+    kconf unset DRM_NOUVEAU
+    kconf unset DRM_NOUVEAU_BACKLIGHT
+    kconf unset DRM_NOUVEAU_SVM
+    kconf unset DRM_NOUVEAU_CH7006
+    kconf unset DRM_NOUVEAU_SIL164
+    kconf unset DRM_NOUVEAU_DEBUG
+    kconf unset DRM_NOUVEAU_DEBUGFS
+    einfo "nouveau disabled (USE=-nouveau)"
+  fi
 
 	if ! use amdgpu; then
 		kconf unset DRM_AMDGPU
