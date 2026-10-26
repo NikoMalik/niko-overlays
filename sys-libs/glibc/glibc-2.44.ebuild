@@ -1057,7 +1057,7 @@ src_prepare() {
 		eapply "${FILESDIR}/glibc-2.43-mutex-spin-count.patch"
 		eapply "${FILESDIR}/glibc-2.44-set-vector-width.patch"
 		eapply "${FILESDIR}/glibc-2.41-nanosleep.patch"
-		# eapply "${FILESDIR}/glibc-2.41-madvise-free.patch"
+		eapply "${FILESDIR}/glibc-2.41-madvise-free.patch"
 		# eapply "${FILESDIR}/glibc-2.43-tcache.patch"
 		eapply "${FILESDIR}/glibc-2.41-memmem.patch"
 		eapply "${FILESDIR}/glibc-2.41-qsort.patch"
