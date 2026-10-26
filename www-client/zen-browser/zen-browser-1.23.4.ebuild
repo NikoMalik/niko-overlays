@@ -9,6 +9,8 @@ PYTHON_REQ_USE="ncurses,sqlite,ssl"
 
 
 
+RUST_NEEDS_LLVM=1
+RUST_MIN_VER=1.90.0
 
 inherit check-reqs desktop flag-o-matic gnome2-utils linux-info llvm-r1 multiprocessing \
 	optfeature pax-utils python-any-r1 readme.gentoo-r1 rust toolchain-funcs virtualx \
@@ -35,7 +37,6 @@ SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefo
 
 LICENSE="MPL-2.0"
 SLOT="0"
-
 IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-pipewire +system-jpeg +system-libvpx +system-png"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
@@ -283,6 +284,9 @@ EOF
   if use system-av1; then
 				printf 'ac_add_options --with-system-av1\n' >> "${mozconf}" || die
   fi
+  # System-av1 fix
+	use system-av1 && append-ldflags "-Wl,--undefined-version"
+
 
   if use system-libvpx; then
 				printf 'ac_add_options --with-system-libvpx\n' >> "${mozconf}" || die
