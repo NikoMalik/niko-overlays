@@ -429,6 +429,8 @@ src_configure() {
 		CFLAGS="-O3 -pipe" CXXFLAGS="-O3 -pipe" npm ci || die
 	npm run surfer -- ci --brand release --display-version "${zver}" || die
 
+
+
 	local l10n_mirror=${ZEN_L10N_MIRROR:-/var/cache/zen/firefox-l10n.git}
 	if [[ -d ${l10n_mirror} ]]; then
 		git config --global url."${l10n_mirror}".insteadOf \
@@ -438,6 +440,14 @@ src_configure() {
 	npm run download || die
 
 	npm run import || die
+
+
+  local sc
+  while IFS= read -r -d '' sc; do
+    sed -i 's/MOZ_STDCXX_COMPAT=1/MOZ_STDCXX_COMPAT=/' "${sc}" || die "failed disabling MOZ_STDCXX_COMPAT in ${sc}"
+    einfo "Disabled MOZ_STDCXX_COMPAT in ${sc}"
+  done < <(grep -rlZ 'MOZ_STDCXX_COMPAT=1' configs 2>/dev/null)
+
 
 
   # Zen sets MOZ_STDCXX_COMPAT=1 (linux/mozconfig), which builds the old-ABI shim

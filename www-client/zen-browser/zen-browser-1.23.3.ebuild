@@ -429,6 +429,12 @@ src_configure() {
 	npm run import || die
 
 
+  local sc
+  while IFS= read -r -d '' sc; do
+    sed -i 's/MOZ_STDCXX_COMPAT=1/MOZ_STDCXX_COMPAT=/' "${sc}" || die "failed disabling MOZ_STDCXX_COMPAT in ${sc}"
+    einfo "Disabled MOZ_STDCXX_COMPAT in ${sc}"
+  done < <(grep -rlZ 'MOZ_STDCXX_COMPAT=1' configs 2>/dev/null)
+
   # Zen sets MOZ_STDCXX_COMPAT=1 (linux/mozconfig), which builds the old-ABI shim
   # stdc++compat.cpp. libstdc++ 15 changed std::thread to an inline impl and
   # dropped the throwing data() signature, which breaks that shim and trips
