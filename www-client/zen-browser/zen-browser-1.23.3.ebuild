@@ -467,6 +467,9 @@ src_configure() {
   fi
 	sh scripts/download-language-packs.sh || die
 
+	sed -i -e 's/-ffp-contract=off/-ffp-contract=fast/' \
+		engine/python/mozbuild/mozbuild/frontend/context.py || die "failed patching FP_CONTRACT"
+
 	# Make LTO/PGO configure respect MAKEOPTS instead of multiprocessing.cpu_count()
 	local f
 	for f in \
