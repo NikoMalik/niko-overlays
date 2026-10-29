@@ -619,6 +619,7 @@ src_install() {
 	local bindir
 	bindir=$(echo engine/obj-*/dist/bin)
 	[[ -d ${bindir} ]] || die "build output not found at ${bindir}"
+	[[ -f ${bindir}/zen ]] || die "no zen binary in ${bindir}, build did not finish linking (check build log)"
 
 	local destdir="/opt/zen-browser"
 	dodir "${destdir}"
