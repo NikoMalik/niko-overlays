@@ -1,0 +1,298 @@
+From d15d9e4c4f87202da936080c8c347d8644f639ed Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 01:31:30 +0300
+Subject: [PATCH] ext4: mballoc/DIO patches
+
+---
+ fs/ext4/ext4.h    |  12 +++--
+ fs/ext4/file.c    | 132 +++++++++++++++++++++++++++++++---------------
+ fs/ext4/inode.c   |   3 ++
+ fs/ext4/mballoc.c |  21 ++++----
+ 4 files changed, 112 insertions(+), 56 deletions(-)
+
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index ed4241797ae3..602fdbb9652c 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -2429,7 +2429,7 @@ static inline int ext4_emergency_state(struct super_block *sb)
+  */
+ #define	EXT4_DEF_PROJID		0
+ 
+-#define EXT4_DEF_INODE_READAHEAD_BLKS	32
++#define EXT4_DEF_INODE_READAHEAD_BLKS	64
+ 
+ /*
+  * Default mount options
+@@ -2453,7 +2453,7 @@ static inline int ext4_emergency_state(struct super_block *sb)
+  */
+ #define EXT4_DEF_MIN_BATCH_TIME	0
+ #define EXT4_DEF_MAX_BATCH_TIME	15000 /* 15ms */
+-#define EXT4_DEF_JOURNAL_IOPRIO (IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 3))
++#define EXT4_DEF_JOURNAL_IOPRIO (IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 0))
+ 
+ 
+ /*
+@@ -3641,7 +3641,13 @@ struct ext4_group_info {
+ #define EXT4_MB_GRP_CLEAR_TRIMMED(grp)	\
+ 	(clear_bit(EXT4_GROUP_INFO_WAS_TRIMMED_BIT, &((grp)->bb_state)))
+ #define EXT4_MB_GRP_TEST_AND_SET_READ(grp)	\
+-	(test_and_set_bit(EXT4_GROUP_INFO_BBITMAP_READ_BIT, &((grp)->bb_state)))
++	(ext4_mb_grp_test_and_set_read((grp)))
++
++static inline int ext4_mb_grp_test_and_set_read(struct ext4_group_info *grp)
++{
++	return (test_bit(EXT4_GROUP_INFO_BBITMAP_READ_BIT, &grp->bb_state) ||
++		test_and_set_bit(EXT4_GROUP_INFO_BBITMAP_READ_BIT, &grp->bb_state));
++}
+ 
+ #define EXT4_MAX_CONTENTION		8
+ #define EXT4_CONTENTION_THRESHOLD	2
+diff --git a/fs/ext4/file.c b/fs/ext4/file.c
+index 130edf1ac242..d12445e3907a 100644
+--- a/fs/ext4/file.c
++++ b/fs/ext4/file.c
+@@ -213,31 +213,60 @@ ext4_extending_io(struct inode *inode, loff_t offset, size_t len)
+ 	return false;
+ }
+ 
+-/* Is IO overwriting allocated or initialized blocks? */
+-static bool ext4_overwrite_io(struct inode *inode,
+-			      loff_t pos, loff_t len, bool *unwritten)
++/*
++ * Does an unaligned DIO write require partial block zeroing?
++ *
++ * Partial block zeroing is performed only for the head and tail blocks
++ * when they are partially covered by the write and the underlying extent
++ * is a hole or unwritten. Middle blocks (fully covered by the write)
++ * are written as whole blocks without zeroing.
++ *
++ * When zeroing is required, two concurrent unaligned DIO writes to the
++ * same partial block can race and corrupt each other's data, so the
++ * caller must take the exclusive i_rwsem and drain in-flight DIO. When
++ * zeroing is not required, shared lock is safe -- block allocation and
++ * unwritten conversion for middle blocks are protected by i_data_sem
++ * and inode_dio_begin().
++ */
++static bool ext4_dio_needs_zeroing(struct inode *inode, loff_t pos, loff_t len)
+ {
+ 	struct ext4_map_blocks map;
+ 	unsigned int blkbits = inode->i_blkbits;
+-	int err, blklen;
++	unsigned long blockmask = inode->i_sb->s_blocksize - 1;
++	bool head_partial, tail_partial;
++	ext4_lblk_t head_lblk, tail_lblk;
++	int err;
+ 
+ 	if (pos + len > i_size_read(inode))
+-		return false;
++		return true;
+ 
+-	map.m_lblk = pos >> blkbits;
+-	map.m_len = EXT4_MAX_BLOCKS(len, pos, blkbits);
+-	blklen = map.m_len;
++	head_partial = (pos & blockmask) != 0;
++	tail_partial = ((pos + len) & blockmask) != 0;
++	head_lblk = pos >> blkbits;
++	tail_lblk = (pos + len - 1) >> blkbits;
++
++	/* Check the head partial block. */
++	if (head_partial) {
++		map.m_lblk = head_lblk;
++		map.m_len = tail_lblk - head_lblk + 1;
++		err = ext4_map_blocks(NULL, inode, &map, 0);
++		if (err <= 0 || !(map.m_flags & EXT4_MAP_MAPPED))
++			return true;
++		/* If this mapping already covers the tail block, we're done. */
++		if (!tail_partial || map.m_lblk + err > tail_lblk)
++			return false;
++	}
+ 
+-	err = ext4_map_blocks(NULL, inode, &map, 0);
+-	if (err != blklen)
+-		return false;
+-	/*
+-	 * 'err==len' means that all of the blocks have been preallocated,
+-	 * regardless of whether they have been initialized or not. We need to
+-	 * check m_flags to distinguish the unwritten extents.
+-	 */
+-	*unwritten = !(map.m_flags & EXT4_MAP_MAPPED);
+-	return true;
++	/* Check the tail partial block. */
++	if (tail_partial) {
++		map.m_lblk = tail_lblk;
++		map.m_len = 1;
++		err = ext4_map_blocks(NULL, inode, &map, 0);
++		if (err <= 0 || !(map.m_flags & EXT4_MAP_MAPPED))
++			return true;
++	}
++
++	return false;
+ }
+ 
+ static ssize_t ext4_generic_write_checks(struct kiocb *iocb,
+@@ -435,16 +464,28 @@ static const struct iomap_dio_ops ext4_dio_write_ops = {
+  * condition requires an exclusive inode lock. If yes, then we restart the
+  * whole operation by releasing the shared lock and acquiring exclusive lock.
+  *
+- * - For unaligned_io we never take shared lock as it may cause data corruption
+- *   when two unaligned IO tries to modify the same block e.g. while zeroing.
++ * The decision is layered, evaluated in this order:
+  *
+- * - For extending writes case we don't take the shared lock, since it requires
+- *   updating inode i_disksize and/or orphan handling with exclusive lock.
++ * 1. If file_modified() needs to update security info (!IS_NOSEC), upgrade
++ *    to the exclusive lock -- the security update itself requires it,
++ *    regardless of whether the write extends the file or is aligned.
+  *
+- * - shared locking will only be true mostly with overwrites, including
+- *   initialized blocks and unwritten blocks.
++ * 2. If the write extends i_size or i_disksize, upgrade to the exclusive
++ *    lock to safely update i_disksize and the orphan list, regardless of
++ *    alignment.
+  *
+- * - Otherwise we will switch to exclusive i_rwsem lock.
++ * 3. Otherwise, for aligned non-extending writes, shared lock is always
++ *    sufficient regardless of extent state (written, unwritten, or hole).
++ *    truncate/punch_hole cannot run while we hold the shared i_rwsem
++ *    (they need it exclusively); after we release it, inode_dio_begin()
++ *    keeps their inode_dio_wait() blocked until in-flight bios complete.
++ *    i_data_sem serializes concurrent extent tree modifications.
++ *
++ * 4. Otherwise, the write is unaligned and non-extending. Shared lock is
++ *    safe unless the DIO layer needs to perform partial block zeroing --
++ *    i.e. the head or tail partial block sits on a hole or unwritten
++ *    extent. In that case upgrade to the exclusive lock and drain
++ *    in-flight DIO to avoid races with concurrent partial block zeroing.
+  */
+ static ssize_t ext4_dio_write_checks(struct kiocb *iocb, struct iov_iter *from,
+ 				     bool *ilock_shared, bool *extend,
+@@ -455,7 +496,7 @@ static ssize_t ext4_dio_write_checks(struct kiocb *iocb, struct iov_iter *from,
+ 	loff_t offset;
+ 	size_t count;
+ 	ssize_t ret;
+-	bool overwrite, unaligned_io, unwritten;
++	bool needs_zeroing = false;
+ 
+ restart:
+ 	ret = ext4_generic_write_checks(iocb, from);
+@@ -465,24 +506,22 @@ static ssize_t ext4_dio_write_checks(struct kiocb *iocb, struct iov_iter *from,
+ 	offset = iocb->ki_pos;
+ 	count = ret;
+ 
+-	unaligned_io = ext4_unaligned_io(inode, from, offset);
+ 	*extend = ext4_extending_io(inode, offset, count);
+-	overwrite = ext4_overwrite_io(inode, offset, count, &unwritten);
+ 
+ 	/*
+-	 * Determine whether we need to upgrade to an exclusive lock. This is
+-	 * required to change security info in file_modified(), for extending
+-	 * I/O, any form of non-overwrite I/O, and unaligned I/O to unwritten
+-	 * extents (as partial block zeroing may be required).
++	 * For unaligned writes, check whether partial block zeroing will be
++	 * needed. If so, exclusive lock is required to serialize against
++	 * concurrent DIO that could race with the zeroing.
+ 	 *
+-	 * Note that unaligned writes are allowed under shared lock so long as
+-	 * they are pure overwrites. Otherwise, concurrent unaligned writes risk
+-	 * data corruption due to partial block zeroing in the dio layer, and so
+-	 * the I/O must occur exclusively.
++	 * For aligned writes we skip this check entirely since allocation
++	 * under shared lock is safe.
+ 	 */
++	if (ext4_unaligned_io(inode, from, offset))
++		needs_zeroing = ext4_dio_needs_zeroing(inode, offset, count);
++
++	/* Determine whether we need to upgrade to an exclusive lock. */
+ 	if (*ilock_shared &&
+-	    ((!IS_NOSEC(inode) || *extend || !overwrite ||
+-	     (unaligned_io && unwritten)))) {
++	    (!IS_NOSEC(inode) || *extend || needs_zeroing)) {
+ 		if (iocb->ki_flags & IOCB_NOWAIT) {
+ 			ret = -EAGAIN;
+ 			goto out;
+@@ -496,16 +535,23 @@ static ssize_t ext4_dio_write_checks(struct kiocb *iocb, struct iov_iter *from,
+ 	/*
+ 	 * Now that locking is settled, determine dio flags and exclusivity
+ 	 * requirements. We don't use DIO_OVERWRITE_ONLY because we enforce
+-	 * behavior already. The inode lock is already held exclusive if the
+-	 * write is non-overwrite or extending, so drain all outstanding dio and
+-	 * set the force wait dio flag.
++	 * behavior already. When holding the exclusive lock for a write that
++	 * needs partial block zeroing or is extending the file, we must wait
++	 * for the I/O to complete synchronously:
++	 *
++	 *  - needs_zeroing: drain in-flight DIO whose end_io could race with
++	 *    our partial block zeroing, and force synchronous completion so we
++	 *    don't leave in-flight zeroing bios for the next writer to drain.
++	 *
++	 *  - extend: the caller must update i_disksize after I/O completion,
++	 *    which requires the data to be on disk first.
+ 	 */
+-	if (!*ilock_shared && (unaligned_io || *extend)) {
++	if (!*ilock_shared && (needs_zeroing || *extend)) {
+ 		if (iocb->ki_flags & IOCB_NOWAIT) {
+ 			ret = -EAGAIN;
+ 			goto out;
+ 		}
+-		if (unaligned_io && (!overwrite || unwritten))
++		if (needs_zeroing)
+ 			inode_dio_wait(inode);
+ 		*dio_flags = IOMAP_DIO_FORCE_WAIT;
+ 	}
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 32f79f48a9dd..a5269e37bfed 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -3688,6 +3688,9 @@ static int ext4_iomap_alloc(struct inode *inode, struct ext4_map_blocks *map,
+ 	int ret, dio_credits, m_flags = 0, retries = 0;
+ 	bool force_commit = false;
+ 
++	if (flags & IOMAP_NOWAIT)
++		return -EAGAIN;
++
+ 	/*
+ 	 * Trim the mapping request to the maximum value that we can map at
+ 	 * once for direct I/O.
+diff --git a/fs/ext4/mballoc.c b/fs/ext4/mballoc.c
+index ed1bd00e11cd..06171a11db12 100644
+--- a/fs/ext4/mballoc.c
++++ b/fs/ext4/mballoc.c
+@@ -2861,8 +2861,6 @@ ext4_group_t ext4_mb_prefetch(struct super_block *sb, ext4_group_t group,
+ 
+ 	blk_start_plug(&plug);
+ 	while (nr-- > 0) {
+-		struct ext4_group_desc *gdp = ext4_get_group_desc(sb, group,
+-								  NULL);
+ 		struct ext4_group_info *grp = ext4_get_group_info(sb, group);
+ 
+ 		/*
+@@ -2872,14 +2870,17 @@ ext4_group_t ext4_mb_prefetch(struct super_block *sb, ext4_group_t group,
+ 		 * prefetch once, so we avoid getblk() call, which can
+ 		 * be expensive.
+ 		 */
+-		if (gdp && grp && !EXT4_MB_GRP_TEST_AND_SET_READ(grp) &&
+-		    EXT4_MB_GRP_NEED_INIT(grp) &&
+-		    ext4_free_group_clusters(sb, gdp) > 0 ) {
+-			bh = ext4_read_block_bitmap_nowait(sb, group, true);
+-			if (!IS_ERR_OR_NULL(bh)) {
+-				if (!buffer_uptodate(bh) && cnt)
+-					(*cnt)++;
+-				brelse(bh);
++		if (grp && !EXT4_MB_GRP_TEST_AND_SET_READ(grp) &&
++		    EXT4_MB_GRP_NEED_INIT(grp)) {
++			struct ext4_group_desc *gdp = ext4_get_group_desc(sb, group, NULL);
++
++			if (gdp && ext4_free_group_clusters(sb, gdp) > 0) {
++				bh = ext4_read_block_bitmap_nowait(sb, group, true);
++				if (!IS_ERR_OR_NULL(bh)) {
++					if (!buffer_uptodate(bh) && cnt)
++						(*cnt)++;
++					brelse(bh);
++				}
+ 			}
+ 		}
+ 		if (++group >= ngroups)
+-- 
+2.56.0
+
+

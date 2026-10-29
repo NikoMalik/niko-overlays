@@ -990,6 +990,8 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-usbhid_skip.patch"
   eapply "${FILESDIR}/7.2.10-small_tasks.patch"
   eapply "${FILESDIR}/7.2.10-btrfs.patch"
+  eapply "${FILESDIR}/7.2.10-btrfs-reflink.patch"
+  eapply "${FILESDIR}/7.2.10-ext4_dio.patch"
 
 
 

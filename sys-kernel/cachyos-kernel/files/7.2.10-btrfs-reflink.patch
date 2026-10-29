@@ -1,0 +1,234 @@
+From 57dd8d751335850f2d482bdf649e2e6583b9958e Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 01:24:23 +0300
+Subject: [PATCH] btrfs: backport reflink/fsync/drop patches
+
+---
+ fs/btrfs/btrfs_inode.h |  6 +++++
+ fs/btrfs/direct-io.c   |  7 ++++++
+ fs/btrfs/extent-tree.c | 10 +++++++++
+ fs/btrfs/qgroup.c      | 18 +++++++++++++++
+ fs/btrfs/qgroup.h      |  1 +
+ fs/btrfs/reflink.c     | 51 +++++++++++++++++++++++++++++++++++++-----
+ fs/btrfs/tree-log.c    |  3 +--
+ 7 files changed, 88 insertions(+), 8 deletions(-)
+
+diff --git a/fs/btrfs/btrfs_inode.h b/fs/btrfs/btrfs_inode.h
+index 1082fa92c145..27fb07d03bdf 100644
+--- a/fs/btrfs/btrfs_inode.h
++++ b/fs/btrfs/btrfs_inode.h
+@@ -98,6 +98,12 @@ enum {
+ 	 * range).
+ 	 */
+ 	BTRFS_INODE_COW_WRITE_ERROR,
++	/*
++	 * Set by reflink while it holds the source's VFS inode lock shared.
++	 * Direct IO writes also take that lock shared; one that finds this bit
++	 * set after acquiring it must retry with the exclusive lock.
++	 */
++	BTRFS_INODE_REFLINK_SRC,
+ 	/*
+ 	 * Indicate this is a directory that points to a subvolume for which
+ 	 * there is no root reference item. That's a case like the following:
+diff --git a/fs/btrfs/direct-io.c b/fs/btrfs/direct-io.c
+index 19a1259b3b2f..8c0b6be290fe 100644
+--- a/fs/btrfs/direct-io.c
++++ b/fs/btrfs/direct-io.c
+@@ -896,6 +896,13 @@ ssize_t btrfs_direct_write(struct kiocb *iocb, struct iov_iter *from)
+ 		goto relock;
+ 	}
+ 
++	if ((ilock_flags & BTRFS_ILOCK_SHARED) &&
++	    test_bit(BTRFS_INODE_REFLINK_SRC, &BTRFS_I(inode)->runtime_flags)) {
++		btrfs_inode_unlock(BTRFS_I(inode), ilock_flags);
++		ilock_flags &= ~BTRFS_ILOCK_SHARED;
++		goto relock;
++	}
++
+ 	ret = generic_write_checks(iocb, from);
+ 	if (ret <= 0) {
+ 		btrfs_inode_unlock(BTRFS_I(inode), ilock_flags);
+diff --git a/fs/btrfs/extent-tree.c b/fs/btrfs/extent-tree.c
+index 624d76e0ca01..4002db9e1055 100644
+--- a/fs/btrfs/extent-tree.c
++++ b/fs/btrfs/extent-tree.c
+@@ -6313,6 +6313,16 @@ int btrfs_drop_snapshot(struct btrfs_root *root, bool update_ref, bool for_reloc
+ 	set_bit(BTRFS_ROOT_DELETING, &root->state);
+ 	unfinished_drop = test_bit(BTRFS_ROOT_UNFINISHED_DROP, &root->state);
+ 
++	/*
++	 * For subvolume dropping, check if the subvolume is large enough so
++	 * that we need to mark qgroup inconsistent to avoid long qgroup stall.
++	 *
++	 * Even for a subvolume without any snapshot, there can still be
++	 * a lot of qgroup records queued into one transaction.
++	 */
++	if (!for_reloc)
++		btrfs_qgroup_check_tree_drop(fs_info, rootid,
++					     btrfs_header_level(root->node));
+ 	if (btrfs_disk_key_objectid(&root_item->drop_progress) == 0) {
+ 		level = btrfs_header_level(root->node);
+ 		path->nodes[level] = btrfs_lock_root_node(root);
+diff --git a/fs/btrfs/qgroup.c b/fs/btrfs/qgroup.c
+index f64a4537be31..1058f5683241 100644
+--- a/fs/btrfs/qgroup.c
++++ b/fs/btrfs/qgroup.c
+@@ -2740,6 +2740,24 @@ int btrfs_qgroup_trace_subtree(struct btrfs_trans_handle *trans,
+ 	return 0;
+ }
+ 
++void btrfs_qgroup_check_tree_drop(struct btrfs_fs_info *fs_info, u64 rootid, u8 level)
++{
++	u8 drop_subtree_thres;
++
++	if (btrfs_qgroup_mode(fs_info) != BTRFS_QGROUP_MODE_FULL)
++		return;
++
++	if (!btrfs_is_fstree(rootid))
++		return;
++
++	spin_lock(&fs_info->qgroup_lock);
++	drop_subtree_thres = fs_info->qgroup_drop_subtree_thres;
++	spin_unlock(&fs_info->qgroup_lock);
++
++	if (level >= drop_subtree_thres)
++		qgroup_mark_inconsistent(fs_info, "subtree level reached threshold");
++}
++
+ static void qgroup_iterator_nested_add(struct list_head *head, struct btrfs_qgroup *qgroup)
+ {
+ 	if (!list_empty(&qgroup->nested_iterator))
+diff --git a/fs/btrfs/qgroup.h b/fs/btrfs/qgroup.h
+index 80dd2dacd56d..f3c4781e3761 100644
+--- a/fs/btrfs/qgroup.h
++++ b/fs/btrfs/qgroup.h
+@@ -365,6 +365,7 @@ int btrfs_qgroup_trace_leaf_items(struct btrfs_trans_handle *trans,
+ int btrfs_qgroup_trace_subtree(struct btrfs_trans_handle *trans,
+ 			       struct extent_buffer *root_eb,
+ 			       u64 root_gen, int root_level);
++void btrfs_qgroup_check_tree_drop(struct btrfs_fs_info *fs_info, u64 rootid, u8 level);
+ int btrfs_qgroup_account_extent(struct btrfs_trans_handle *trans, u64 bytenr,
+ 				u64 num_bytes, struct ulist *old_roots,
+ 				struct ulist *new_roots);
+diff --git a/fs/btrfs/reflink.c b/fs/btrfs/reflink.c
+index 9a49d2ecb949..fa7ef3dd0b34 100644
+--- a/fs/btrfs/reflink.c
++++ b/fs/btrfs/reflink.c
+@@ -835,6 +835,17 @@ static noinline int btrfs_clone_files(struct file *file, struct file *file_src,
+ 	return 0;
+ }
+ 
++static u64 calc_remap_wb_len(struct btrfs_inode *src_inode, loff_t off, loff_t len,
++			     unsigned int remap_flags)
++{
++	const u32 bs = src_inode->root->fs_info->sectorsize;
++	const loff_t isize = i_size_read(&src_inode->vfs_inode);
++
++	if (len == 0 && !(remap_flags & REMAP_FILE_DEDUP))
++		return ALIGN(isize, bs) - ALIGN_DOWN(off, bs);
++	return ALIGN(len, bs);
++}
++
+ static int btrfs_remap_file_range_prep(struct file *file_in, loff_t pos_in,
+ 				       struct file *file_out, loff_t pos_out,
+ 				       loff_t *len, unsigned int remap_flags)
+@@ -878,10 +889,7 @@ static int btrfs_remap_file_range_prep(struct file *file_in, loff_t pos_in,
+ 	 *    not for the ordered extents to complete. We need to wait for them
+ 	 *    to complete so that new file extent items are in the fs tree.
+ 	 */
+-	if (*len == 0 && !(remap_flags & REMAP_FILE_DEDUP))
+-		wb_len = ALIGN(inode_in->vfs_inode.i_size, bs) - ALIGN_DOWN(pos_in, bs);
+-	else
+-		wb_len = ALIGN(*len, bs);
++	wb_len = calc_remap_wb_len(inode_in, pos_in, *len, remap_flags);
+ 
+ 	/*
+ 	 * Workaround to make sure NOCOW buffered write reach disk as NOCOW.
+@@ -932,6 +940,8 @@ loff_t btrfs_remap_file_range(struct file *src_file, loff_t off,
+ 	struct btrfs_inode *src_inode = BTRFS_I(file_inode(src_file));
+ 	struct btrfs_inode *dst_inode = BTRFS_I(file_inode(dst_file));
+ 	bool same_inode = dst_inode == src_inode;
++	u64 wb_start, wb_len;
++	bool src_downgraded = false;
+ 	int ret;
+ 
+ 	if (btrfs_is_shutdown(inode_to_fs_info(file_inode(src_file))))
+@@ -940,6 +950,23 @@ loff_t btrfs_remap_file_range(struct file *src_file, loff_t off,
+ 	if (remap_flags & ~(REMAP_FILE_DEDUP | REMAP_FILE_ADVISORY))
+ 		return -EINVAL;
+ 
++	/*
++	 * Optimistically write out the src inode before taking locks.
++	 * Consistency is properly ensured by the btrfs_wait_ordered_range()
++	 * inside btrfs_remap_file_range_prep(). This optimization causes
++	 * redundant writeback if there is a concurrent writer to the src file
++	 * so try to catch anyone holding the file open for writes and skip
++	 * the optimization in that case.
++	 */
++	wb_start = ALIGN_DOWN(off, src_inode->root->fs_info->sectorsize);
++	wb_len = calc_remap_wb_len(src_inode, off, len, remap_flags);
++	if (!inode_is_open_for_write(&src_inode->vfs_inode) &&
++	    !mapping_writably_mapped(src_inode->vfs_inode.i_mapping)) {
++		ret = btrfs_wait_ordered_range(src_inode, wb_start, wb_len);
++		if (ret < 0)
++			return ret;
++	}
++
+ 	if (same_inode) {
+ 		btrfs_inode_lock(src_inode, BTRFS_ILOCK_MMAP);
+ 	} else {
+@@ -952,6 +979,12 @@ loff_t btrfs_remap_file_range(struct file *src_file, loff_t off,
+ 	if (ret < 0 || len == 0)
+ 		goto out_unlock;
+ 
++	if (!same_inode) {
++		set_bit(BTRFS_INODE_REFLINK_SRC, &src_inode->runtime_flags);
++		downgrade_write(&src_inode->vfs_inode.i_rwsem);
++		src_downgraded = true;
++	}
++
+ 	if (remap_flags & REMAP_FILE_DEDUP)
+ 		ret = btrfs_extent_same(&src_inode->vfs_inode, off, len,
+ 					&dst_inode->vfs_inode, destoff);
+@@ -963,8 +996,14 @@ loff_t btrfs_remap_file_range(struct file *src_file, loff_t off,
+ 		btrfs_inode_unlock(src_inode, BTRFS_ILOCK_MMAP);
+ 	} else {
+ 		btrfs_double_mmap_unlock(src_inode, dst_inode);
+-		unlock_two_nondirectories(&src_inode->vfs_inode,
+-					  &dst_inode->vfs_inode);
++		if (src_downgraded) {
++			clear_bit(BTRFS_INODE_REFLINK_SRC, &src_inode->runtime_flags);
++			inode_unlock_shared(&src_inode->vfs_inode);
++			inode_unlock(&dst_inode->vfs_inode);
++		} else {
++			unlock_two_nondirectories(&src_inode->vfs_inode,
++						  &dst_inode->vfs_inode);
++		}
+ 	}
+ 
+ 	/*
+diff --git a/fs/btrfs/tree-log.c b/fs/btrfs/tree-log.c
+index c87f6a7e8d61..c428eb2be61f 100644
+--- a/fs/btrfs/tree-log.c
++++ b/fs/btrfs/tree-log.c
+@@ -5380,7 +5380,7 @@ static int btrfs_log_changed_extents(struct btrfs_trans_handle *trans,
+ 		 * have a bunch of extents we just want to commit since it will
+ 		 * be faster.
+ 		 */
+-		if (++num > 32768) {
++		if (++num > SZ_16K) {
+ 			list_del_init(&tree->modified_extents);
+ 			ret = -EFBIG;
+ 			goto process;
+@@ -5398,7 +5398,6 @@ static int btrfs_log_changed_extents(struct btrfs_trans_handle *trans,
+ 		refcount_inc(&em->refs);
+ 		em->flags |= EXTENT_FLAG_LOGGING;
+ 		list_add_tail(&em->list, &extents);
+-		num++;
+ 	}
+ 
+ 	list_sort(NULL, &extents, extent_cmp);
+-- 
+2.56.0
+
+
