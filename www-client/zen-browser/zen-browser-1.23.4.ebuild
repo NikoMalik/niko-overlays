@@ -203,7 +203,6 @@ src_prepare() {
 			-e 's/^([[:space:]]*)ac_add_options --enable-profile-(generate|use).*/\1:/' \
 			-e 's/^([[:space:]]*)ac_add_options --with-pgo-(profile-path|jarlog).*/\1:/' \
 			-e 's/^([[:space:]]*)ac_add_options --enable-optimize=.*/\1:/' \
-			-e 's/^([[:space:]]*)ac_add_options --(enable|disable)-elf-hack.*/\1:/' \
 		  -e 's/^([[:space:]]*)ac_add_options --enable-linker=.*/\1:/' \
 			"${zc}" || die "failed to sanitize ${zc}"
 	done
@@ -254,15 +253,12 @@ src_prepare() {
   printf 'ac_add_options --with-system-pixman\n' >> "${mozconf}" || die
   printf 'ac_add_options --with-system-zlib\n' >> "${mozconf}" || die
   printf 'ac_add_options --with-unsigned-addon-scopes=app,system\n' >> "${mozconf}" || die
-  # elf-hack (relr) must be off for the instrumented PGO pass and on for the
-  # final build, mach sets MOZ_PROFILE_GENERATE only while building instrumented
+  # add temporal instrumentation only while building the instrumented PGO pass,
+  # mach sets MOZ_PROFILE_GENERATE then, Zen's own --disable-elf-hack stays
   cat >> "${mozconf}" <<-'EOF' || die
-	if test -z "$MOZ_PROFILE_GENERATE"; then
-	  ac_add_options --enable-elf-hack=relr
-	else
+	if test -n "$MOZ_PROFILE_GENERATE"; then
 		export CFLAGS="$CFLAGS -mllvm -pgo-temporal-instrumentation"
 		export CXXFLAGS="$CXXFLAGS -mllvm -pgo-temporal-instrumentation"
-	  ac_add_options --disable-elf-hack
 	fi
 EOF
 
@@ -501,11 +497,10 @@ src_configure() {
 		[[ -f ${f} ]] && { sed -i -e "s/multiprocessing.cpu_count()/$(makeopts_jobs)/" "${f}" || die "failed sedding ${f}"; }
 	done
 
-	# with mold (not lld) Firefox turns on PGO temporal instrumentation but keeps
-	# the %m online-merge in the profraw name, those two are incompatible so the
-	# runtime drops profiles, strip %m so each process writes its own file and
-	# llvm-profdata merges them offline like the error message asks
-	if use pgo && tc-ld-is-mold; then
+	# temporal instrumentation and the %m online-merge in the profraw name are
+	# incompatible, the runtime then drops profiles, strip %m so each process
+	# writes its own file and llvm-profdata merges them offline
+	if use pgo; then
 		sed -i -e 's/default_%p_random_%m\.profraw/default_%p_random.profraw/' \
 			engine/build/pgo/profileserver.py || die "failed patching PGO profile filename"
 	fi
