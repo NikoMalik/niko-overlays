@@ -22,8 +22,9 @@ VIRTUALX_REQUIRED="manual"
 DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
 HOMEPAGE="https://zen-browser.app"
 EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
-# shallow depth-1 fetch of the tag, drop the multi-GB full-history mirror
-: "${EGIT_CLONE_TYPE:=shallow}"
+# shallow depth-1 fetch of the tag, drop the multi-GB full history, set
+# unconditionally since git-r3 already defaulted it to single at inherit
+EGIT_CLONE_TYPE="shallow"
 if [[ ${PV} == 9999 ]]; then
 	KEYWORDS=""
 else
