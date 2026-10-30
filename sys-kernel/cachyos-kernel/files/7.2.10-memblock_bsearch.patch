@@ -1,0 +1,103 @@
+From 4ec39d16eb4ca24425c183a51e4c15ec2e772832 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 11:02:30 +0300
+Subject: [PATCH] memblock: optimize memblock in boot with bsearch
+
+---
+ mm/memblock.c | 57 +++++++++++++++++++++++++++++++++++----------------
+ 1 file changed, 39 insertions(+), 18 deletions(-)
+
+diff --git a/mm/memblock.c b/mm/memblock.c
+index a8d1992ba7a1..0ac7e081fa12 100644
+--- a/mm/memblock.c
++++ b/mm/memblock.c
+@@ -592,6 +592,28 @@ static void __init_memblock memblock_insert_region(struct memblock_type *type,
+ 	type->total_size += size;
+ }
+ 
++static int __init_memblock __memblock_search(struct memblock_type *type,
++					     phys_addr_t base)
++{
++	int lo = 0;
++	int len = type->cnt;
++
++	while (len > 0) {
++		int half = len >> 1;
++		int mid = lo + half;
++		int go_right = (type->regions[mid].base +
++				type->regions[mid].size) <= base;
++
++#if defined(__clang__) && (defined(__x86_64__) || defined(__i386__))
++		asm volatile("" : "+r"(len) : "r"(go_right));
++#endif
++		lo = go_right ? mid + 1 : lo;
++		len = go_right ? len - half - 1 : half;
++	}
++
++	return lo;
++}
++
+ /**
+  * memblock_add_range - add new memblock region
+  * @type: memblock type to add new region into
+@@ -652,9 +674,13 @@ static int __init_memblock memblock_add_range(struct memblock_type *type,
+ 	base = obase;
+ 	nr_new = 0;
+ 
+-	for_each_memblock_type(idx, type, rgn) {
+-		phys_addr_t rbase = rgn->base;
+-		phys_addr_t rend = rbase + rgn->size;
++	for (idx = __memblock_search(type, base); idx < type->cnt; idx++) {
++		phys_addr_t rbase;
++		phys_addr_t rend;
++
++		rgn = &type->regions[idx];
++		rbase = rgn->base;
++		rend = rbase + rgn->size;
+ 
+ 		if (rbase >= end)
+ 			break;
+@@ -828,9 +854,13 @@ static int __init_memblock memblock_isolate_range(struct memblock_type *type,
+ 		if (memblock_double_array(type, base, size) < 0)
+ 			return -ENOMEM;
+ 
+-	for_each_memblock_type(idx, type, rgn) {
+-		phys_addr_t rbase = rgn->base;
+-		phys_addr_t rend = rbase + rgn->size;
++	for (idx = __memblock_search(type, base); idx < type->cnt; idx++) {
++		phys_addr_t rbase;
++		phys_addr_t rend;
++
++		rgn = &type->regions[idx];
++		rbase = rgn->base;
++		rend = rbase + rgn->size;
+ 
+ 		if (rbase >= end)
+ 			break;
+@@ -1970,19 +2000,10 @@ void __init memblock_mem_limit_remove_map(phys_addr_t limit)
+ 
+ static int __init_memblock memblock_search(struct memblock_type *type, phys_addr_t addr)
+ {
+-	unsigned int left = 0, right = type->cnt;
+-
+-	do {
+-		unsigned int mid = (right + left) / 2;
++	int idx = __memblock_search(type, addr);
+ 
+-		if (addr < type->regions[mid].base)
+-			right = mid;
+-		else if (addr >= (type->regions[mid].base +
+-				  type->regions[mid].size))
+-			left = mid + 1;
+-		else
+-			return mid;
+-	} while (left < right);
++	if (idx < type->cnt && addr >= type->regions[idx].base)
++		return idx;
+ 	return -1;
+ }
+ 
+-- 
+2.56.0
+
+

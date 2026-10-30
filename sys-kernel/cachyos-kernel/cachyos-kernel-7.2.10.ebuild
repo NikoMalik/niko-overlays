@@ -992,6 +992,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-btrfs.patch"
   eapply "${FILESDIR}/7.2.10-btrfs-reflink.patch"
   eapply "${FILESDIR}/7.2.10-ext4_dio.patch"
+  eapply "${FILESDIR}/7.2.10-memblock_bsearch.patch"
 
 
 
