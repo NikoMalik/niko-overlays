@@ -1,0 +1,661 @@
+# Copyright 2024-2026 Gentoo Authors
+# Distributed under the terms of the GNU General Public License v2
+
+EAPI=8
+
+LLVM_COMPAT=( 22 )
+PYTHON_COMPAT=( python3_{12..14} )
+PYTHON_REQ_USE="ncurses,sqlite,ssl"
+
+
+
+RUST_NEEDS_LLVM=1
+RUST_MIN_VER=1.90.0
+
+inherit check-reqs desktop flag-o-matic gnome2-utils linux-info llvm-r1 multiprocessing \
+	optfeature pax-utils python-any-r1 readme.gentoo-r1 rust toolchain-funcs virtualx \
+	xdg-utils xdg git-r3
+
+
+
+VIRTUALX_REQUIRED="manual"
+DESCRIPTION="Welcome to a calmer internet, built from source with native optimizations"
+HOMEPAGE="https://zen-browser.app"
+EGIT_REPO_URI="https://github.com/zen-browser/desktop.git"
+# shallow depth-1 fetch of the tag, drop the multi-GB full history, set
+# unconditionally since git-r3 already defaulted it to single at inherit
+EGIT_CLONE_TYPE="shallow"
+if [[ ${PV} == 9999 ]]; then
+	KEYWORDS=""
+else
+	EGIT_COMMIT="${PV}b"
+	KEYWORDS="~amd64"
+fi
+
+# Firefox base version Zen 1.22.x builds on, bump when surfer.json changes it,
+# then regen Manifest. Fetched via SRC_URI so portage caches it in DISTDIR
+# (the in-sandbox copy-back cannot persist under RESTRICT=network-sandbox)
+FF_PV="159.0"
+SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefox-${FF_PV}.source.tar.xz"
+
+LICENSE="MPL-2.0"
+SLOT="0"
+IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-pipewire +system-jpeg +system-libvpx +system-png"
+REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
+
+RESTRICT="network-sandbox"
+
+DEPEND="
+	app-accessibility/at-spi2-core:2
+	dev-libs/expat
+	dev-libs/glib:2
+	dev-libs/libffi
+	>=dev-libs/nspr-4.39
+	>=dev-libs/nss-3.127
+	media-libs/alsa-lib
+	media-libs/fontconfig
+	media-libs/freetype
+	media-libs/libepoxy
+	media-libs/libpng:0=[apng]
+	media-libs/mesa
+	media-video/ffmpeg
+	media-video/pipewire
+	net-print/cups
+	sys-apps/dbus
+	sys-apps/pciutils
+	sys-libs/glibc
+	sys-libs/zlib
+	x11-libs/pixman
+	virtual/freedesktop-icon-theme
+	x11-libs/cairo[X?]
+	x11-libs/gdk-pixbuf:2
+	x11-libs/gtk+:3[X?,wayland?]
+	x11-libs/libdrm
+	x11-libs/libnotify
+	x11-libs/pango
+  system-webp? ( >=media-libs/libwebp-1.1.0:0= )
+  system-pipewire? ( >=media-video/pipewire-1.6.8:= )
+  system-png? ( >=media-libs/libpng-1.6.45:0=[apng] )
+  system-libevent? ( >=dev-libs/libevent-2.1.12:0=[threads(+)] )
+	X? (
+		x11-libs/libX11
+		x11-libs/libxcb
+		x11-libs/libXcomposite
+		x11-libs/libXcursor
+		x11-libs/libXdamage
+		x11-libs/libXext
+		x11-libs/libXfixes
+		x11-libs/libXi
+		x11-libs/libXrandr
+		x11-libs/libXrender
+		x11-libs/libXScrnSaver
+		x11-libs/libXtst
+	)
+  system-av1? (
+		>=media-libs/dav1d-1.5.4:=
+		>=media-libs/libaom-3.12.1:=
+	)
+	wayland? (
+		dev-libs/wayland
+		x11-libs/libxkbcommon
+	)
+"
+RDEPEND="${DEPEND}"
+
+BDEPEND="
+	${PYTHON_DEPS}
+	dev-vcs/git
+	net-misc/curl
+	dev-lang/python
+  dev-libs/libffi:=
+  >=dev-libs/nss-3.127
+	>=net-libs/nodejs-22.13.1[npm]
+	|| (
+		>=dev-lang/rust-bin-1.94.1
+		>=dev-lang/rust-1.94.1
+	)
+	dev-util/cbindgen
+	$(llvm_gen_dep '
+		llvm-core/clang:${LLVM_SLOT}=
+		llvm-core/llvm:${LLVM_SLOT}=
+		llvm-core/lld:${LLVM_SLOT}=
+		pgo? ( llvm-runtimes/compiler-rt-sanitizers:${LLVM_SLOT}[profile] )
+	')
+	dev-lang/nasm
+	dev-lang/yasm
+	virtual/pkgconfig
+  system-libvpx? ( >=media-libs/libvpx-1.8.2:0=[postproc] )
+  system-icu? ( >=dev-libs/icu-78.1:= )
+  system-jpeg? ( >=media-libs/libjpeg-turbo-1.2.1:= )
+	pgo? (
+		X? (
+			sys-devel/gettext
+			x11-base/xorg-server[xvfb]
+			x11-apps/xhost
+		)
+		!X? (
+			gui-wm/tinywl
+			x11-misc/xkeyboard-config
+		)
+	)
+"
+
+pkg_setup() {
+	if [[ ${MERGE_TYPE} != binary ]]; then
+		if use pgo || use debug; then
+			CHECKREQS_DISK_BUILD="18700M"
+		elif tc-is-lto; then
+			CHECKREQS_DISK_BUILD="10900M"
+		else
+			CHECKREQS_DISK_BUILD="9700M"
+		fi
+
+		check-reqs_pkg_setup
+		llvm-r1_pkg_setup
+		python-any-r1_pkg_setup
+		rust_pkg_setup
+
+		if use pgo && ! has userpriv ${FEATURES}; then
+			eerror "Building ${PN} with USE=pgo and FEATURES=-userpriv is not supported!"
+		fi
+	fi
+}
+
+pkg_pretend() {
+  if [[ ${MERGE_TYPE} != binary ]] ; then
+		# Ensure we have enough disk space to compile
+		if use pgo || use debug ; then
+			CHECKREQS_DISK_BUILD="18700M"
+		elif tc-is-lto ; then
+			CHECKREQS_DISK_BUILD="10900M"
+		else
+			CHECKREQS_DISK_BUILD="9700M"
+		fi
+
+		check-reqs_pkg_pretend
+	fi
+
+	if [[ ${MERGE_TYPE} != binary ]]; then
+		use pgo && ewarn "PGO builds Zen twice and profile-runs it under Xvfb, expect long build time and high RAM"
+		use full-lto && ewarn "full-lto: the libxul link is very RAM-heavy, on low RAM use USE=-full-lto (thin) or MAKEOPTS=-j2 plus swap"
+	fi
+}
+
+src_prepare() {
+	default
+  if tc-is-lto; then
+    filter-lto
+  fi
+
+	local mozconf="configs/common/mozconfig"
+	[[ -f ${mozconf} ]] || die "mozconfig template not found at ${mozconf}"
+
+	# Match www-client/firefox: strip via portage (prepstrip), not Firefox, and
+	# do local PGO (MOZ_PGO=1), not Zen's CI cross-profile. Drop Zen's in-tree
+	# strip settings (incl. the STRIP_FLAGS string that breaks the packager) and
+	# its GA-artifact PGO profile lines (~/artifact/*.profdata does not exist here)
+	local zc
+	for zc in configs/common/mozconfig configs/linux/mozconfig; do
+		[[ -f ${zc} ]] || continue
+		# replace with the shell no-op ':' (NOT a comment - a comment-only
+		# if/else block is still empty to bash -> "syntax error near fi").
+		# ':' keeps every block non-empty while neutralizing the option
+		sed -i -E \
+			-e 's/^([[:space:]]*)ac_add_options --enable-(install-)?strip.*/\1:/' \
+			-e 's/^([[:space:]]*)export STRIP_FLAGS=.*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --enable-profile-(generate|use).*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --with-pgo-(profile-path|jarlog).*/\1:/' \
+			-e 's/^([[:space:]]*)ac_add_options --enable-optimize=.*/\1:/' \
+		  -e 's/^([[:space:]]*)ac_add_options --enable-linker=.*/\1:/' \
+			"${zc}" || die "failed to sanitize ${zc}"
+	done
+
+  # eapply "${FILESDIR}/build-id.patch" // later
+
+
+
+	# use system clang/llvm instead of a bootstrapped mozbuild toolchain
+	printf '\nac_add_options --disable-bootstrap\n' >> "${mozconf}" || die
+	printf 'ac_add_options --with-libclang-path=%s\n' "$(llvm-config --libdir)" >> "${mozconf}" || die
+	printf 'ac_add_options --without-wasm-sandboxed-libraries\n' >> "${mozconf}" || die
+	printf 'ac_add_options --disable-clang-plugin\n' >> "${mozconf}" || die
+	printf 'ac_add_options --disable-updater\n' >> "${mozconf}" || die
+	printf 'ac_add_options --disable-cargo-incremental\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-optimize=-O3\n' >> "${mozconf}" || die
+  if tc-ld-is-mold ; then
+				printf 'ac_add_options --enable-linker=mold\n' >> "${mozconf}" || die
+
+			else
+				printf 'ac_add_options --enable-linker=lld\n' >> "${mozconf}" || die
+			fi
+  printf 'ac_add_options --disable-install-strip\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-strip\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-parental-controls\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-packed-relative-relocs\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-geckodriver\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-crashreporter\n' >> "${mozconf}" || die
+  printf 'ac_add_options --allow-addon-sideload\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-legacy-profile-creation\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-debug-symbols\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-debug-js-modules\n' >> "${mozconf}" || die
+  printf 'ac_add_options --disable-tests\n' >> "${mozconf}" || die
+  printf 'ac_add_options --enable-jit-simd\n' >> "${mozconf}" || die
+
+
+
+
+
+
+  printf 'ac_add_options --without-ccache\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-intl-api\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-ffi\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-gbm\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-libdrm\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-nspr\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-nss\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-pixman\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-system-zlib\n' >> "${mozconf}" || die
+  printf 'ac_add_options --with-unsigned-addon-scopes=app,system\n' >> "${mozconf}" || die
+  # add temporal instrumentation only while building the instrumented PGO pass,
+  # mach sets MOZ_PROFILE_GENERATE then, Zen's own --disable-elf-hack stays
+  cat >> "${mozconf}" <<-'EOF' || die
+	if test -n "$MOZ_PROFILE_GENERATE"; then
+		export CFLAGS="$CFLAGS -mllvm -pgo-temporal-instrumentation"
+		export CXXFLAGS="$CXXFLAGS -mllvm -pgo-temporal-instrumentation"
+	fi
+EOF
+
+  mkdir -p "${T}"/gitshim || die
+	cat > "${T}"/gitshim/git <<-'EOF' || die
+		#!/usr/bin/env bash
+		if [[ ${1} == clone && ${*} == *mozilla-l10n/firefox-l10n* ]]; then
+			shift
+			exec /usr/bin/git clone --filter=blob:none "${@}"
+		fi
+		exec /usr/bin/git "${@}"
+	EOF
+	chmod +x "${T}"/gitshim/git || die
+
+
+		
+
+
+  if use system-av1; then
+				printf 'ac_add_options --with-system-av1\n' >> "${mozconf}" || die
+  fi
+  # System-av1 fix
+	use system-av1 && append-ldflags "-Wl,--undefined-version"
+
+
+  if use system-libvpx; then
+				printf 'ac_add_options --with-system-libvpx\n' >> "${mozconf}" || die
+  fi
+
+  if use system-icu; then
+				printf 'ac_add_options --with-system-icu\n' >> "${mozconf}" || die
+  fi
+
+  if use system-jpeg; then
+				printf 'ac_add_options --with-system-jpeg\n' >> "${mozconf}" || die
+  fi
+
+
+  if use system-libevent; then
+				printf 'ac_add_options --with-system-libevent\n' >> "${mozconf}" || die
+  fi
+
+  if use system-png; then
+				printf 'ac_add_options --with-system-png\n' >> "${mozconf}" || die
+  fi
+
+  if use system-webp; then
+				printf 'ac_add_options --with-system-webp\n' >> "${mozconf}" || die
+  fi
+
+
+  if use system-pipewire; then
+				printf 'ac_add_options --with-system-pipewire\n' >> "${mozconf}" || die
+  fi
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  use system-av1 && append-ldflags "-Wl,--undefined-version"
+
+
+	local toolkit
+	if use X && use wayland; then
+		toolkit="cairo-gtk3-x11-wayland"
+	elif use wayland; then
+		toolkit="cairo-gtk3-wayland-only"
+	else
+		toolkit="cairo-gtk3-x11-only"
+	fi
+	printf 'ac_add_options --enable-default-toolkit=%s\n' "${toolkit}" >> "${mozconf}" || die
+
+	if use pgo; then
+		printf 'ac_add_options MOZ_PGO=1\nmk_add_options MOZ_PGO=1\n' >> "${mozconf}" || die
+	fi
+
+	if use lto; then
+		local ltotype=cross,thin
+		use full-lto && ltotype=cross,full
+		printf 'ac_add_options --enable-lto=%s\nmk_add_options MOZ_LTO=%s\n' "${ltotype}" "${ltotype}" >> "${mozconf}" || die
+	else
+		printf 'ac_add_options --disable-lto\n' >> "${mozconf}" || die
+	fi
+
+
+
+	local want_ff
+	want_ff=$(python3 -c \
+		"import json;print(json.load(open('surfer.json'))['version']['version'])" 2>/dev/null) \
+		|| die "cannot read Firefox version from surfer.json"
+
+	mkdir -p .surfer/engine || die
+	if [[ ${want_ff} == ${FF_PV} ]]; then
+		# portage fetched it via SRC_URI, seed it so surfer skips the ~810MB download
+		cp "${DISTDIR}/firefox-${FF_PV}.source.tar.xz" .surfer/engine/ \
+			|| die "Firefox ${FF_PV} not in DISTDIR (SRC_URI/Manifest issue)"
+		einfo "Seeded Firefox ${FF_PV} source from DISTDIR"
+	else
+		ewarn "surfer.json wants Firefox ${want_ff} but FF_PV=${FF_PV}"
+		ewarn "bump FF_PV in the ebuild and regen Manifest, surfer will download for now"
+	fi
+}
+
+
+virtwl() {
+	debug-print-function ${FUNCNAME} "$@"
+
+	[[ $# -lt 1 ]] && die "${FUNCNAME} needs at least one argument"
+	[[ -n $XDG_RUNTIME_DIR ]] || die "${FUNCNAME} needs XDG_RUNTIME_DIR to be set; try xdg_environment_reset"
+	tinywl -h >/dev/null || die 'tinywl -h failed'
+
+	local VIRTWL VIRTWL_PID
+	coproc VIRTWL { WLR_RENDERER=pixman WLR_BACKENDS=headless exec tinywl -s 'echo $WAYLAND_DISPLAY; read _; kill $PPID'; }
+	local -x WAYLAND_DISPLAY
+	read WAYLAND_DISPLAY <&${VIRTWL[0]}
+
+	debug-print "${FUNCNAME}: $@"
+	"$@"
+	local r=$?
+
+	[[ -n $VIRTWL_PID ]] || die "tinywl exited unexpectedly"
+	exec {VIRTWL[0]}<&- {VIRTWL[1]}>&-
+	return $r
+}
+
+
+src_configure() {
+	local want wantmaj nodever havemaj
+	want=$(<.nvmrc)
+	wantmaj=${want%%.*}
+	nodever=$(node --version 2>/dev/null)
+	havemaj=${nodever#v}
+	havemaj=${havemaj%%.*}
+	if [[ -z ${havemaj} ]]; then
+		die "Node.js not found, install >=net-libs/nodejs-${wantmaj}"
+	elif [[ ${havemaj} -lt ${wantmaj} ]]; then
+		die "Zen needs Node.js >=${wantmaj} (.nvmrc wants ${want}), active node is ${nodever}"
+	elif [[ ${havemaj} -ne ${wantmaj} ]]; then
+		ewarn "Zen upstream pins Node.js ${want} (.nvmrc), building with ${nodever}"
+		ewarn "if surfer or npm fails, install net-libs/nodejs-${wantmaj} and retry"
+	fi
+
+	local zver
+	zver=$(python3 -c \
+		"import json;print(json.load(open('surfer.json'))['brands']['release']['release']['displayVersion'])") \
+		|| die "cannot read displayVersion from surfer.json"
+	chmod +x "${T}"/gitshim/git || die
+
+	local -x PATH="${T}/gitshim:${PATH}"
+
+	# force sharp to build from source with its vendored libvips (8.14.5) instead
+	# of the flaky prebuild-install network download that falls back to the
+	# ABI-incompatible system vips, SHARP_IGNORE_GLOBAL_LIBVIPS keeps it vendored
+	SHARP_IGNORE_GLOBAL_LIBVIPS=1  \
+		CFLAGS="-O3 -pipe" CXXFLAGS="-O3 -pipe" npm ci || die
+	npm run surfer -- ci --brand release --display-version "${zver}" || die
+
+
+
+	local l10n_mirror=${ZEN_L10N_MIRROR:-/var/cache/zen/firefox-l10n.git}
+	if [[ -d ${l10n_mirror} ]]; then
+		git config --global url."${l10n_mirror}".insteadOf \
+			"https://github.com/mozilla-l10n/firefox-l10n" || die
+	fi
+
+	npm run download || die
+
+	npm run import || die
+
+
+  local sc
+  while IFS= read -r -d '' sc; do
+    sed -i 's/MOZ_STDCXX_COMPAT=1/MOZ_STDCXX_COMPAT=/' "${sc}" || die "failed disabling MOZ_STDCXX_COMPAT in ${sc}"
+    einfo "Disabled MOZ_STDCXX_COMPAT in ${sc}"
+  done < <(grep -rlZ 'MOZ_STDCXX_COMPAT=1' configs 2>/dev/null)
+
+
+
+  # Zen sets MOZ_STDCXX_COMPAT=1 (linux/mozconfig), which builds the old-ABI shim
+  # stdc++compat.cpp. libstdc++ 15 changed std::thread to an inline impl and
+  # dropped the throwing data() signature, which breaks that shim and trips
+  # check_binary_compat. Only patch when the active libstdc++ is 15 or newer,
+  # older libstdc++ builds the shim unchanged
+  local compat_since=15 gxxrel
+  gxxrel=$(printf '#include <cstddef>\n_GLIBCXX_RELEASE\n' \
+    | g++ -x c++ -E -P - 2>/dev/null | tail -n1)
+  [[ ${gxxrel} =~ ^[0-9]+$ ]] || gxxrel=0
+  einfo "Detected libstdc++ release ${gxxrel} (compat patch threshold ${compat_since})"
+
+  if [[ ${gxxrel} -ge ${compat_since} ]]; then
+    local compat_file
+    compat_file=$(find engine -name "stdc++compat.cpp" -print -quit)
+    if [[ -n ${compat_file} ]]; then
+      sed -i '1i #define _GLIBCXX_THREAD_IMPL 1' "${compat_file}" \
+        || die "failed to patch ${compat_file}"
+      sed -i 's/::data() noexcept;/::data() noexcept(false);/g' "${compat_file}" \
+        || die "failed to patch ${compat_file} for data() noexcept"
+      einfo "Patched ${compat_file} for libstdc++ >=${compat_since}"
+    else
+      ewarn "stdc++compat.cpp not found, skipping libstdc++ >=${compat_since} patch"
+    fi
+
+    local check_binary_py
+    check_binary_py=$(find engine -name "check_binary.py" -print -quit)
+    if [[ -n ${check_binary_py} ]]; then
+      sed -i 's/checks.append(check_binary_compat)/pass/' "${check_binary_py}" \
+        || die "failed to patch ${check_binary_py}"
+      einfo "Disabled check_binary_compat in ${check_binary_py}"
+    else
+      ewarn "check_binary.py not found, skipping binary compat patch"
+    fi
+  else
+    einfo "libstdc++ <${compat_since}, leaving stdc++compat.cpp and check_binary_compat untouched"
+  fi
+	sh scripts/download-language-packs.sh || die
+
+  sed -i -e 's/-ffp-contract=off/-ffp-contract=fast/' \
+		engine/python/mozbuild/mozbuild/frontend/context.py || die "failed patching FP_CONTRACT"
+
+
+	# Make LTO/PGO configure respect MAKEOPTS instead of multiprocessing.cpu_count()
+	local f
+	for f in \
+		engine/build/moz.configure/lto-pgo.configure \
+		engine/third_party/chromium/build/toolchain/get_cpu_count.py \
+		engine/third_party/python/gyp/pylib/gyp/input.py ; do
+		[[ -f ${f} ]] && { sed -i -e "s/multiprocessing.cpu_count()/$(makeopts_jobs)/" "${f}" || die "failed sedding ${f}"; }
+	done
+
+	# temporal instrumentation and the %m online-merge in the profraw name are
+	# incompatible, the runtime then drops profiles, strip %m so each process
+	# writes its own file and llvm-profdata merges them offline
+	if use pgo; then
+		sed -i -e 's/default_%p_random_%m\.profraw/default_%p_random.profraw/' \
+			engine/build/pgo/profileserver.py || die "failed patching PGO profile filename"
+	fi
+
+	if use pgo; then
+		sed -i -e 's/"merge",/"merge", "--failure-mode=all",/' \
+			engine/build/pgo/profileserver.py || die "failed patching PGO merge failure-mode"
+
+		local psjs=engine/testing/profiles/profileserver/user.js
+		[[ -f ${psjs} ]] || die "PGO profileserver user.js not found at ${psjs}"
+		cat >> "${psjs}" <<-'EOF' || die "failed adding PGO profileserver prefs"
+			user_pref("layers.gpu-process.enabled", false);
+			user_pref("gfx.webrender.software", true);
+		EOF
+	fi
+
+	# the elfhack inject object keeps only -g/-m/-I flags, which keeps a bare
+	# -mllvm while dropping its argument (our -mllvm -polly pairs), the orphan
+	# -mllvm then eats the next flag and sends it to LLVM option parsing and the
+	# build dies, drop -mllvm from that object, it is -O2 -fno-lto anyway
+	sed -i -e 's/^    COMPILE_FLAGS\[v\] = flags$/    COMPILE_FLAGS[v] = [f for f in flags if f != "-mllvm"]/' \
+		engine/build/unix/elfhack/inject/moz.build || die "failed patching elfhack inject flags"
+
+	# mach starts a Glean telemetry future (create_telemetry_from_environment)
+	# that never resolves in the portage sandbox, then blocks forever on
+	# _telemetry_init_done.wait() in _run's finally (mach/main.py) after the
+	# build finished. Null the future so the Event is never created and both
+	# waits are skipped, no Glean thread to hang the process at exit either
+	sed -i -E \
+		's/(driver\._telemetry_future =) telemetry_executor\.submit\(_create_telemetry\)/\1 None/g' \
+		engine/build/mach_initialize.py || die "failed disabling mach telemetry future"
+}
+
+src_compile() {
+	export ZEN_RELEASE=1
+	export CC=clang
+	export CXX=clang++
+	export AR=llvm-ar
+	export NM=llvm-nm
+	export RANLIB=llvm-ranlib
+	export LLVM_PROFDATA=llvm-profdata
+	export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=none
+	export PIP_NETWORK_INSTALL_RESTRICTED_VIRTUALENVS=mach
+	export MOZBUILD_STATE_PATH="${WORKDIR}/.mozbuild"
+	export MOZ_MAKE_FLAGS="${MAKEOPTS}"
+	export MOZ_NOSPAM=1
+	export XARGS="${EPREFIX}/usr/bin/xargs"
+	export RUSTC_OPT_LEVEL=3
+	# mach build telemetry starts a Glean SDK future and waits on it in a
+	# finally block (mach/main.py:493), the future never resolves in the
+	# portage sandbox so mach hangs forever AFTER the build finishes, disable
+	# it so _telemetry_init_done is never created
+	export DISABLE_TELEMETRY=1
+
+	# Avoid PGO profiling problems due to environment leakage (www-client/firefox),
+	# a leaked session DBus/DISPLAY makes the instrumented profiling run deadlock
+	unset \
+		DBUS_SESSION_BUS_ADDRESS \
+		DISPLAY \
+		ORBIT_SOCKETDIR \
+		SESSION_MANAGER \
+		XAUTHORITY \
+		XDG_CACHE_HOME \
+		XDG_SESSION_COOKIE
+
+	addpredict /proc/self/oom_score_adj
+	if use pgo; then
+		gnome2_environment_reset
+		addpredict /root
+		addpredict /proc
+		addpredict /dev
+		# tar container for the instrumented package, saves >=10 min (firefox.ebuild)
+		export MOZ_PKG_FORMAT=TAR
+	fi
+
+  if use lto && tc-ld-is-mold; then
+		if use full-lto; then
+        append-ldflags "-flto=full"
+				export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-flto=full"
+    else
+        append-ldflags "-flto=thin"
+				export RUSTFLAGS="${RUSTFLAGS} -C link-arg=-flto=thin"
+    fi
+		# increase ulimit with mold+lto
+		if ! ulimit -n 16384 1>/dev/null 2>&1 ; then
+			ewarn "Unable to modify ulimits - building with mold+lto might fail due to low ulimit -n resources."
+			ewarn "Please see bugs #892641 & #907485."
+		else
+			ulimit -n 16384
+		fi
+	fi
+
+  if ! use X; then
+		local -x GDK_BACKEND=wayland
+		local -x LIBGL_ALWAYS_SOFTWARE=1
+		local -x GALLIUM_DRIVER=llvmpipe
+		local -x MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+		local -x __EGL_VENDOR_LIBRARY_FILENAMES="${EPREFIX}/usr/share/glvnd/egl_vendor.d/50_mesa.json"
+		local -x __GLX_VENDOR_LIBRARY_NAME=mesa
+	else
+		local -x GDK_BACKEND=x11
+	fi
+
+  if ! use X; then
+		virtx_cmd=virtwl
+	else
+		virtx_cmd=virtx
+	fi
+
+	${virtx_cmd} npm run build
+}
+
+src_install() {
+	local bindir
+	bindir=$(echo engine/obj-*/dist/bin)
+	[[ -d ${bindir} ]] || die "build output not found at ${bindir}"
+	[[ -f ${bindir}/zen ]] || die "no zen binary in ${bindir}, build did not finish linking (check build log)"
+
+	local destdir="/opt/zen-browser"
+	dodir "${destdir}"
+	cp -RL "${bindir}"/. "${ED}${destdir}"/ || die
+
+	dosym -r "${destdir}/zen" /usr/bin/zen || die
+
+	local size
+	for size in 16 32 48 64 128; do
+		local icon="${bindir}/browser/chrome/icons/default/default${size}.png"
+		[[ -f ${icon} ]] && newicon -s ${size} "${icon}" zen.png
+	done
+
+	make_desktop_entry "/usr/bin/zen %u" "Zen Browser" zen \
+		"Network;WebBrowser" "$(cat "${FILESDIR}"/desktop_options)"
+
+	local bin
+	for bin in zen-bin updater glxtest vaapitest; do
+		[[ -f ${ED}${destdir}/${bin} ]] && fperms 0755 "${destdir}/${bin}"
+	done
+	[[ -f ${ED}${destdir}/pingsender ]] && fperms 0750 "${destdir}/pingsender"
+
+	insinto "${destdir}"/distribution
+	doins "${FILESDIR}"/policies.json
+}
+
+pkg_postinst() {
+	xdg_desktop_database_update
+	xdg_icon_cache_update
+}
+
+pkg_postrm() {
+	xdg_desktop_database_update
+	xdg_icon_cache_update
+}
+
+
+
