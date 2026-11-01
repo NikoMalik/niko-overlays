@@ -1,0 +1,74 @@
+From 750857f5ecface394cf5358b28027983ff32c64a Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 14:08:25 +0300
+Subject: [PATCH] gpu/amd: fixes for vblank+race condition+power limit+15%
+
+---
+ drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c  | 14 +++++++++++++-
+ .../drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c    |  2 --
+ drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c          |  2 ++
+ 3 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+index cc1c16945e89..242fdd01b9e2 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -10471,8 +10471,20 @@ static void dm_arm_vblank_event(struct amdgpu_crtc *acrtc,
+ 			      "crtc:%d, pflip_stat:AMDGPU_FLIP_SUBMITTED\n",
+ 			      acrtc->crtc_id);
+ 	} else if (cursor_update) {
+-		acrtc->event = acrtc->base.state->event;
++		/*
++		 * Cursor updates are committed to hardware immediately, so
++		 * complete the event now instead of deferring it into
++		 * acrtc->event for amdgpu_dm_crtc_handle_vblank() to send on
++		 * a later vblank. Deferring it left a window where a
++		 * subsequent real page flip's arm above could clobber this
++		 * stashed cursor event before it was ever sent, and where
++		 * that handler's "pflip_status != AMDGPU_FLIP_SUBMITTED"
++		 * check (also true for the idle AMDGPU_FLIP_NONE state)
++		 * could send or drop the wrong flip's event under load.
++		 */
++		drm_crtc_send_vblank_event(&acrtc->base, acrtc->base.state->event);
+ 		acrtc->base.state->event = NULL;
++		drm_crtc_vblank_put(&acrtc->base);
+ 	}
+ }
+ 
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
+index f8946c4dba4c..f00578442010 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm_plane.c
+@@ -50,7 +50,6 @@
+ static const uint32_t rgb_formats[] = {
+ 	DRM_FORMAT_XRGB8888,
+ 	DRM_FORMAT_ARGB8888,
+-	DRM_FORMAT_RGBA8888,
+ 	DRM_FORMAT_XRGB2101010,
+ 	DRM_FORMAT_XBGR2101010,
+ 	DRM_FORMAT_ARGB2101010,
+@@ -67,7 +66,6 @@ static const uint32_t rgb_formats[] = {
+ static const uint32_t overlay_formats[] = {
+ 	DRM_FORMAT_XRGB8888,
+ 	DRM_FORMAT_ARGB8888,
+-	DRM_FORMAT_RGBA8888,
+ 	DRM_FORMAT_XBGR8888,
+ 	DRM_FORMAT_ABGR8888,
+ 	DRM_FORMAT_RGB565,
+diff --git a/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c b/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c
+index f148c70d3e9e..aea144e40cf7 100644
+--- a/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c
++++ b/drivers/gpu/drm/amd/pm/swsmu/amdgpu_smu.c
+@@ -960,6 +960,8 @@ static int smu_late_init(struct amdgpu_ip_block *ip_block)
+ 		return ret;
+ 	}
+ 
++	smu->max_power_limit = smu->max_power_limit * 115 / 100;
++
+ 	if (!amdgpu_sriov_vf(adev))
+ 		smu_get_unique_id(smu);
+ 
+-- 
+2.56.0
+
+
