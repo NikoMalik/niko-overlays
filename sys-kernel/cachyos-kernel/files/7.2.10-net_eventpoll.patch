@@ -1,0 +1,70 @@
+From cc26f5ce0a8e23cda84198830dc7afe3f9525ce0 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 22:31:43 +0300
+Subject: [PATCH] net/eventpoll: conditional smp_rmb in tcp_poll + lazy timer
+ slack
+
+---
+ fs/eventpoll.c | 6 ++++--
+ net/ipv4/tcp.c | 9 ++++++---
+ 2 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/fs/eventpoll.c b/fs/eventpoll.c
+index eed8cecd94e3..e0c4bf88a838 100644
+--- a/fs/eventpoll.c
++++ b/fs/eventpoll.c
+@@ -2264,7 +2264,6 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
+ 	lockdep_assert_irqs_enabled();
+ 
+ 	if (timeout && (timeout->tv_sec | timeout->tv_nsec)) {
+-		slack = select_estimate_accuracy(timeout);
+ 		to = &expires;
+ 		*to = timespec64_to_ktime(*timeout);
+ 	} else if (timeout) {
+@@ -2343,10 +2342,13 @@ static int ep_poll(struct eventpoll *ep, struct epoll_event __user *events,
+ 
+ 		spin_unlock_irq(&ep->lock);
+ 
+-		if (!eavail)
++		if (!eavail) {
++			if (to)
++				slack = select_estimate_accuracy(timeout);
+ 			timed_out = !ep_schedule_timeout(to) ||
+ 				!schedule_hrtimeout_range(to, slack,
+ 							  HRTIMER_MODE_ABS);
++		}
+ 		__set_current_state(TASK_RUNNING);
+ 
+ 		/*
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 8585fbf52fa7..b29a087ef78c 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -578,8 +578,13 @@ __poll_t tcp_poll(struct file *file, struct socket *sock, poll_table *wait)
+ 	 * blocking on fresh not-connected or disconnected socket. --ANK
+ 	 */
+ 	shutdown = READ_ONCE(sk->sk_shutdown);
+-	if (shutdown == SHUTDOWN_MASK || state == TCP_CLOSE)
++	if (shutdown == SHUTDOWN_MASK || state == TCP_CLOSE) {
+ 		mask |= EPOLLHUP;
++		/* Coupled with smp_wmb() in tcp_done_with_error() to ensure
++		 * sk->sk_err is visible if socket closure was observed.
++		 */
++		smp_rmb();
++	}
+ 	if (shutdown & RCV_SHUTDOWN)
+ 		mask |= EPOLLIN | EPOLLRDNORM | EPOLLRDHUP;
+ 
+@@ -626,8 +631,6 @@ __poll_t tcp_poll(struct file *file, struct socket *sock, poll_table *wait)
+ 		 */
+ 		mask |= EPOLLOUT | EPOLLWRNORM;
+ 	}
+-	/* This barrier is coupled with smp_wmb() in tcp_done_with_error() */
+-	smp_rmb();
+ 	if (READ_ONCE(sk->sk_err) ||
+ 	    !skb_queue_empty_lockless(&sk->sk_error_queue))
+ 		mask |= EPOLLERR;
+-- 
+2.56.0
+
+

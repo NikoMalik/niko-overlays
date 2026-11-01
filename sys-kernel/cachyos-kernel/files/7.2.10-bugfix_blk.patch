@@ -1,0 +1,121 @@
+From 6e1a0540b139bf1e71fb869eb0efc7e7746e46ae Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 22:09:29 +0300
+Subject: [PATCH] feat: bugfix blk xfs maple
+
+---
+ block/blk-mq.c            | 10 +++++++++-
+ block/blk-stat.c          |  2 +-
+ fs/xfs/libxfs/xfs_btree.c |  5 +++--
+ fs/xfs/xfs_buf_item.c     |  5 +++++
+ lib/maple_tree.c          |  2 +-
+ 5 files changed, 19 insertions(+), 5 deletions(-)
+
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 3be2dd4d9001..3150797e7969 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -1112,7 +1112,9 @@ static inline void blk_account_io_start(struct request *req)
+ 		return;
+ 
+ 	req->rq_flags |= RQF_IO_STAT;
+-	req->start_time_ns = blk_time_get_ns();
++
++	if (!current->plug)
++		req->start_time_ns = blk_time_get_ns();
+ 
+ 	/*
+ 	 * All non-passthrough requests are created from a bio with one
+@@ -2953,6 +2955,8 @@ static void blk_mq_dispatch_multiple_queue_requests(struct rq_list *rqs)
+ void blk_mq_flush_plug_list(struct blk_plug *plug, bool from_schedule)
+ {
+ 	unsigned int depth;
++	struct request *rq;
++	u64 now;
+ 
+ 	/*
+ 	 * We may have been called recursively midway through handling
+@@ -2966,6 +2970,10 @@ void blk_mq_flush_plug_list(struct blk_plug *plug, bool from_schedule)
+ 	depth = plug->rq_count;
+ 	plug->rq_count = 0;
+ 
++	now = ktime_get_ns();
++	rq_list_for_each(&plug->mq_list, rq)
++		rq->start_time_ns = now;
++
+ 	if (!plug->has_elevator && !from_schedule) {
+ 		if (plug->multiple_queues) {
+ 			blk_mq_dispatch_multiple_queue_requests(&plug->mq_list);
+diff --git a/block/blk-stat.c b/block/blk-stat.c
+index d57c2fc6bf06..a1a936ea2666 100644
+--- a/block/blk-stat.c
++++ b/block/blk-stat.c
+@@ -161,7 +161,7 @@ void blk_stat_remove_callback(struct request_queue *q,
+ 		blk_queue_flag_clear(QUEUE_FLAG_STATS, q);
+ 	spin_unlock_irqrestore(&q->stats->lock, flags);
+ 
+-	timer_delete_sync(&cb->timer);
++	timer_shutdown_sync(&cb->timer);
+ }
+ 
+ static void blk_stat_free_callback_rcu(struct rcu_head *head)
+diff --git a/fs/xfs/libxfs/xfs_btree.c b/fs/xfs/libxfs/xfs_btree.c
+index 60ef7f08b1d3..1e4c43b7fa3d 100644
+--- a/fs/xfs/libxfs/xfs_btree.c
++++ b/fs/xfs/libxfs/xfs_btree.c
+@@ -3010,6 +3010,7 @@ xfs_btree_split_worker(
+ 						struct xfs_btree_split_args, work);
+ 	unsigned long		pflags;
+ 	unsigned long		new_pflags = 0;
++	unsigned int		nofs_flags;
+ 
+ 	/*
+ 	 * we are in a transaction context here, but may also be doing work
+@@ -3021,12 +3022,12 @@ xfs_btree_split_worker(
+ 		new_pflags |= PF_MEMALLOC | PF_KSWAPD;
+ 
+ 	current_set_flags_nested(&pflags, new_pflags);
+-	xfs_trans_set_context(args->cur->bc_tp);
++	nofs_flags = memalloc_nofs_save();
+ 
+ 	args->result = __xfs_btree_split(args->cur, args->level, args->ptrp,
+ 					 args->key, args->curp, args->stat);
+ 
+-	xfs_trans_clear_context(args->cur->bc_tp);
++	memalloc_nofs_restore(nofs_flags);
+ 	current_restore_flags_nested(&pflags, new_pflags);
+ 
+ 	/*
+diff --git a/fs/xfs/xfs_buf_item.c b/fs/xfs/xfs_buf_item.c
+index 1f055cd6732e..b73e283b524f 100644
+--- a/fs/xfs/xfs_buf_item.c
++++ b/fs/xfs/xfs_buf_item.c
+@@ -1066,6 +1066,11 @@ void
+ xfs_buf_item_done(
+ 	struct xfs_buf		*bp)
+ {
++	if (bp->b_log_item->bli_item.li_log->l_cilp) {
++		down_read(&bp->b_log_item->bli_item.li_log->l_cilp->xc_ctx_lock);
++		list_del_init(&bp->b_log_item->bli_item.li_cil);
++		up_read(&bp->b_log_item->bli_item.li_log->l_cilp->xc_ctx_lock);
++	}
+ 	/*
+ 	 * If we are forcibly shutting down, this may well be off the AIL
+ 	 * already. That's because we simulate the log-committed callbacks to
+diff --git a/lib/maple_tree.c b/lib/maple_tree.c
+index 1a3815973add..3c021f66487b 100644
+--- a/lib/maple_tree.c
++++ b/lib/maple_tree.c
+@@ -2932,7 +2932,7 @@ static inline void mas_extend_spanning_null(struct ma_wr_state *l_wr_mas,
+ 	    (r_mas->last < r_mas->max) &&
+ 	    !mas_slot_locked(r_mas, r_wr_mas->slots, r_mas->offset + 1)) {
+ 		r_mas->last = mas_safe_pivot(r_mas, r_wr_mas->pivots,
+-					     r_wr_mas->type, r_mas->offset + 1);
++					     r_mas->offset + 1, r_wr_mas->type);
+ 		r_mas->offset++;
+ 		r_wr_mas->r_max = r_mas->last;
+ 	}
+-- 
+2.56.0
+
+

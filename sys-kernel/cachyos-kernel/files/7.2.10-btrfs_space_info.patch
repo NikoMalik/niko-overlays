@@ -1,0 +1,38 @@
+From 8c9ca36dbd6f2968b884be59d8cfc245cc7db2e2 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 22:00:32 +0300
+Subject: [PATCH] btrfs: space info reclaim
+
+---
+ fs/btrfs/space-info.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/fs/btrfs/space-info.c b/fs/btrfs/space-info.c
+index e6641597b321..5984bb4bb09d 100644
+--- a/fs/btrfs/space-info.c
++++ b/fs/btrfs/space-info.c
+@@ -261,6 +261,7 @@ static void init_space_info(struct btrfs_fs_info *info,
+ 	space_info->clamp = 1;
+ 	btrfs_update_space_info_chunk_size(space_info, calc_chunk_size(info, flags));
+ 	space_info->subgroup_id = BTRFS_SUB_GROUP_PRIMARY;
++	space_info->periodic_reclaim_ready = true;
+ 
+ 	if (btrfs_is_zoned(info))
+ 		space_info->bg_reclaim_threshold = BTRFS_DEFAULT_ZONED_RECLAIM_THRESH;
+@@ -316,6 +317,12 @@ static int create_space_info(struct btrfs_fs_info *info, u64 flags)
+ 
+ 		if (ret)
+ 			goto out_free;
++	} else {
++		if ((flags & BTRFS_BLOCK_GROUP_DATA) &&
++		    !(flags & BTRFS_BLOCK_GROUP_METADATA)) {
++			space_info->dynamic_reclaim = 1;
++			space_info->periodic_reclaim = 1;
++		}
+ 	}
+ 
+ 	ret = btrfs_sysfs_add_space_info_type(space_info);
+-- 
+2.56.0
+
+

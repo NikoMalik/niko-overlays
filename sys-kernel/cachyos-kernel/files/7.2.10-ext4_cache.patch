@@ -1,0 +1,173 @@
+From b4d243aa9c685c8eb63bd26ad739275bf1f94f42 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 22:31:42 +0300
+Subject: [PATCH] ext4: cache full extents during mapping lookup
+
+---
+ fs/ext4/extents.c        | 17 +++++++++++++----
+ fs/ext4/extents_status.c | 17 ++++++++++++++++-
+ fs/ext4/extents_status.h |  2 +-
+ fs/ext4/inode.c          | 15 +++++++++++----
+ 4 files changed, 41 insertions(+), 10 deletions(-)
+
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index 44ab246a3176..923b518ab5f6 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -537,12 +537,12 @@ static void ext4_cache_extents(struct inode *inode,
+ 
+ 		if (prev && (prev != lblk))
+ 			ext4_es_cache_extent(inode, prev, lblk - prev, ~0,
+-					     EXTENT_STATUS_HOLE);
++					     EXTENT_STATUS_HOLE, false);
+ 
+ 		if (ext4_ext_is_unwritten(ex))
+ 			status = EXTENT_STATUS_UNWRITTEN;
+ 		ext4_es_cache_extent(inode, lblk, len,
+-				     ext4_ext_pblock(ex), status);
++				     ext4_ext_pblock(ex), status, false);
+ 		prev = lblk + len;
+ 	}
+ }
+@@ -4239,7 +4239,8 @@ static ext4_lblk_t ext4_ext_determine_insert_hole(struct inode *inode,
+ insert_hole:
+ 	/* Put just found gap into cache to speed up subsequent requests */
+ 	ext_debug(inode, " -> %u:%u\n", hole_start, len);
+-	ext4_es_cache_extent(inode, hole_start, len, ~0, EXTENT_STATUS_HOLE);
++	ext4_es_cache_extent(inode, hole_start, len, ~0, EXTENT_STATUS_HOLE,
++			     false);
+ 
+ 	/* Update hole_len to reflect hole size after lblk */
+ 	if (hole_start != lblk)
+@@ -4310,13 +4311,15 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 		ext4_lblk_t ee_block = le32_to_cpu(ex->ee_block);
+ 		ext4_fsblk_t ee_start = ext4_ext_pblock(ex);
+ 		unsigned short ee_len;
+-
++		unsigned int status;
+ 
+ 		/*
+ 		 * unwritten extents are treated as holes, except that
+ 		 * we split out initialized portions during a write.
+ 		 */
+ 		ee_len = ext4_ext_get_actual_len(ex);
++		status = ext4_ext_is_unwritten(ex) ?
++			 EXTENT_STATUS_UNWRITTEN : EXTENT_STATUS_WRITTEN;
+ 
+ 		trace_ext4_ext_show_extent(inode, ee_block, ee_start, ee_len);
+ 
+@@ -4328,6 +4331,12 @@ int ext4_ext_map_blocks(handle_t *handle, struct inode *inode,
+ 			ext_debug(inode, "%u fit into %u:%d -> %llu\n",
+ 				  map->m_lblk, ee_block, ee_len, newblock);
+ 
++			if (!(flags & (EXT4_GET_BLOCKS_CREATE |
++				       EXT4_EX_NOCACHE)))
++				ext4_es_cache_extent(inode, ee_block, ee_len,
++						     ee_start, status,
++						     true);
++
+ 			/*
+ 			 * If the extent is initialized check whether the
+ 			 * caller wants to convert it to unwritten.
+diff --git a/fs/ext4/extents_status.c b/fs/ext4/extents_status.c
+index 6e4a191e8219..5a03878b0616 100644
+--- a/fs/ext4/extents_status.c
++++ b/fs/ext4/extents_status.c
+@@ -1023,7 +1023,7 @@ void ext4_es_insert_extent(struct inode *inode, ext4_lblk_t lblk,
+  */
+ void ext4_es_cache_extent(struct inode *inode, ext4_lblk_t lblk,
+ 			  ext4_lblk_t len, ext4_fsblk_t pblk,
+-			  unsigned int status)
++			  unsigned int status, bool pre_search)
+ {
+ 	struct extent_status *es;
+ 	struct extent_status chkes, newes;
+@@ -1043,6 +1043,21 @@ void ext4_es_cache_extent(struct inode *inode, ext4_lblk_t lblk,
+ 
+ 	BUG_ON(end < lblk);
+ 
++	/*
++	 * Avoid taking i_es_lock for writing if the entire extent is already
++	 * cached. The write-locked search below rechecks after a miss.
++	 */
++	if (pre_search) {
++		read_lock(&EXT4_I(inode)->i_es_lock);
++		es = __es_tree_search(&EXT4_I(inode)->i_es_tree.root, lblk);
++		if (es && es->es_lblk <= lblk && ext4_es_end(es) >= end &&
++		    !__es_check_extent_status(es, status, NULL)) {
++			read_unlock(&EXT4_I(inode)->i_es_lock);
++			return;
++		}
++		read_unlock(&EXT4_I(inode)->i_es_lock);
++	}
++
+ 	write_lock(&EXT4_I(inode)->i_es_lock);
+ 	es = __es_tree_search(&EXT4_I(inode)->i_es_tree.root, lblk);
+ 	if (es && es->es_lblk <= end) {
+diff --git a/fs/ext4/extents_status.h b/fs/ext4/extents_status.h
+index f3396cf32b44..c2da72e3c82b 100644
+--- a/fs/ext4/extents_status.h
++++ b/fs/ext4/extents_status.h
+@@ -139,7 +139,7 @@ extern void ext4_es_insert_extent(struct inode *inode, ext4_lblk_t lblk,
+ 				  bool delalloc_reserve_used);
+ extern void ext4_es_cache_extent(struct inode *inode, ext4_lblk_t lblk,
+ 				 ext4_lblk_t len, ext4_fsblk_t pblk,
+-				 unsigned int status);
++				 unsigned int status, bool pre_search);
+ extern void ext4_es_remove_extent(struct inode *inode, ext4_lblk_t lblk,
+ 				  ext4_lblk_t len);
+ extern void ext4_es_find_extent_range(struct inode *inode,
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index a5269e37bfed..161fddc5ef79 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -523,7 +523,7 @@ static int ext4_map_query_blocks_next_in_leaf(handle_t *handle,
+ 
+ 	if (retval <= 0) {
+ 		ext4_es_cache_extent(inode, map->m_lblk, map->m_len,
+-				     map->m_pblk, status);
++				     map->m_pblk, status, true);
+ 		return map->m_len;
+ 	}
+ 
+@@ -546,11 +546,11 @@ static int ext4_map_query_blocks_next_in_leaf(handle_t *handle,
+ 			status == status2) {
+ 		ext4_es_cache_extent(inode, map->m_lblk,
+ 				     map->m_len + map2.m_len, map->m_pblk,
+-				     status);
++				     status, true);
+ 		map->m_len += map2.m_len;
+ 	} else {
+ 		ext4_es_cache_extent(inode, map->m_lblk, map->m_len,
+-				     map->m_pblk, status);
++				     map->m_pblk, status, true);
+ 	}
+ 
+ 	return map->m_len;
+@@ -562,6 +562,13 @@ int ext4_map_query_blocks(handle_t *handle, struct inode *inode,
+ 	unsigned int status;
+ 	int retval;
+ 	unsigned int orig_mlen = map->m_len;
++	/*
++	 * ext4_ext_map_blocks() may have already cached the full extent, so
++	 * search first to avoid taking i_es_lock for writing. The indirect
++	 * path does not prepopulate the ES tree after the initial lookup miss.
++	 */
++	bool pre_search = ext4_test_inode_flag(inode,
++					      EXT4_INODE_EXTENTS);
+ 
+ 	flags &= EXT4_EX_QUERY_FILTER;
+ 	if (ext4_test_inode_flag(inode, EXT4_INODE_EXTENTS))
+@@ -593,7 +600,7 @@ int ext4_map_query_blocks(handle_t *handle, struct inode *inode,
+ 		status = map->m_flags & EXT4_MAP_UNWRITTEN ?
+ 				EXTENT_STATUS_UNWRITTEN : EXTENT_STATUS_WRITTEN;
+ 		ext4_es_cache_extent(inode, map->m_lblk, map->m_len,
+-				     map->m_pblk, status);
++				     map->m_pblk, status, pre_search);
+ 	} else {
+ 		retval = ext4_map_query_blocks_next_in_leaf(handle, inode, map,
+ 							    orig_mlen);
+-- 
+2.56.0
+
+

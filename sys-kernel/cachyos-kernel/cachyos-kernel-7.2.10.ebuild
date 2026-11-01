@@ -996,6 +996,13 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-btrfs_fsync.patch"
   eapply "${FILESDIR}/7.2.10-amd_race.patch"
   eapply "${FILESDIR}/7.2.10-cambyses.patch"
+  eapply "${FILESDIR}/7.2.10-btrfs_space_info.patch"
+  eapply "${FILESDIR}/7.2.10-bugfix_blk.patch"
+  eapply "${FILESDIR}/7.2.10-block_sync.patch"
+  eapply "${FILESDIR}/7.2.10-ext4_cache.patch"
+  eapply "${FILESDIR}/7.2.10-large_folio.patch"
+  eapply "${FILESDIR}/7.2.10-net_eventpoll.patch"
+  eapply "${FILESDIR}/7.2.10-block_direct.patch"
 
 
 
