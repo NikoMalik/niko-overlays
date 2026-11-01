@@ -995,6 +995,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-memblock_bsearch.patch"
   eapply "${FILESDIR}/7.2.10-btrfs_fsync.patch"
   eapply "${FILESDIR}/7.2.10-amd_race.patch"
+  eapply "${FILESDIR}/7.2.10-cambyses.patch"
 
 
 
