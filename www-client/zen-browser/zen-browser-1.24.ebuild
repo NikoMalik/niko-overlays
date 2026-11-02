@@ -32,7 +32,7 @@ else
 	KEYWORDS="~amd64"
 fi
 
-# Firefox base version Zen 1.22.x builds on, bump when surfer.json changes it,
+# Firefox base version Zen 1.24 builds on, bump when surfer.json changes it,
 # then regen Manifest. Fetched via SRC_URI so portage caches it in DISTDIR
 # (the in-sandbox copy-back cannot persist under RESTRICT=network-sandbox)
 FF_PV="159.0"
@@ -40,7 +40,7 @@ SRC_URI="https://archive.mozilla.org/pub/firefox/releases/${FF_PV}/source/firefo
 
 LICENSE="MPL-2.0"
 SLOT="0"
-IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-pipewire +system-jpeg +system-libvpx +system-png"
+IUSE="+X  +full-lto +lto +pgo +wayland +system-av1  +system-webp +system-icu +system-libevent +system-pipewire +system-jpeg +system-libvpx +system-png debug-symbols"
 REQUIRED_USE="|| ( X wayland ) full-lto? ( lto )"
 
 RESTRICT="network-sandbox"
@@ -142,7 +142,7 @@ BDEPEND="
 
 pkg_setup() {
 	if [[ ${MERGE_TYPE} != binary ]]; then
-		if use pgo || use debug; then
+		if use pgo || use debug || use debug-symbols; then
 			CHECKREQS_DISK_BUILD="18700M"
 		elif tc-is-lto; then
 			CHECKREQS_DISK_BUILD="10900M"
@@ -164,7 +164,7 @@ pkg_setup() {
 pkg_pretend() {
   if [[ ${MERGE_TYPE} != binary ]] ; then
 		# Ensure we have enough disk space to compile
-		if use pgo || use debug ; then
+		if use pgo || use debug || use debug-symbols ; then
 			CHECKREQS_DISK_BUILD="18700M"
 		elif tc-is-lto ; then
 			CHECKREQS_DISK_BUILD="10900M"
@@ -178,6 +178,7 @@ pkg_pretend() {
 	if [[ ${MERGE_TYPE} != binary ]]; then
 		use pgo && ewarn "PGO builds Zen twice and profile-runs it under Xvfb, expect long build time and high RAM"
 		use full-lto && ewarn "full-lto: the libxul link is very RAM-heavy, on low RAM use USE=-full-lto (thin) or MAKEOPTS=-j2 plus swap"
+		use debug-symbols && ewarn "debug-symbols: build with FEATURES=splitdebug to keep /usr/lib/debug/*.debug for gdb, needs several extra GB of disk"
 	fi
 }
 
@@ -236,7 +237,11 @@ src_prepare() {
   printf 'ac_add_options --disable-crashreporter\n' >> "${mozconf}" || die
   printf 'ac_add_options --allow-addon-sideload\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-legacy-profile-creation\n' >> "${mozconf}" || die
-  printf 'ac_add_options --disable-debug-symbols\n' >> "${mozconf}" || die
+  if use debug-symbols; then
+    printf 'ac_add_options --enable-debug-symbols=-g2\n' >> "${mozconf}" || die
+  else
+    printf 'ac_add_options --disable-debug-symbols\n' >> "${mozconf}" || die
+  fi
   printf 'ac_add_options --disable-debug-js-modules\n' >> "${mozconf}" || die
   printf 'ac_add_options --disable-tests\n' >> "${mozconf}" || die
   printf 'ac_add_options --enable-jit-simd\n' >> "${mozconf}" || die
@@ -552,6 +557,11 @@ src_compile() {
 	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 	export RUSTC_OPT_LEVEL=3
+	# keep Rust debug info so gdb can name Rust frames too, overrides the
+	# debuginfo=0/strip in user RUSTFLAGS, FEATURES=splitdebug extracts it
+	if use debug-symbols; then
+		export RUSTFLAGS="${RUSTFLAGS} -Cdebuginfo=2 -Cstrip=none"
+	fi
 	# mach build telemetry starts a Glean SDK future and waits on it in a
 	# finally block (mach/main.py:493), the future never resolves in the
 	# portage sandbox so mach hangs forever AFTER the build finishes, disable
@@ -656,6 +666,5 @@ pkg_postrm() {
 	xdg_desktop_database_update
 	xdg_icon_cache_update
 }
-
 
 
