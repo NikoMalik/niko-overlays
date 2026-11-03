@@ -1,0 +1,105 @@
+From 80bce813f6049fde1f822fb71d22db83fc24cbbb Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:44:36 +0300
+Subject: [PATCH] lib/string: word-at-a-time strnlen/strchr
+
+---
+ lib/string.c | 65 ++++++++++++++++++++++++++++++++++++++++++----------
+ 1 file changed, 53 insertions(+), 12 deletions(-)
+
+diff --git a/lib/string.c b/lib/string.c
+index 6461ba5c63de..8e7b12df0600 100644
+--- a/lib/string.c
++++ b/lib/string.c
+@@ -310,10 +310,9 @@ EXPORT_SYMBOL(strncmp);
+  */
+ char *strchr(const char *s, int c)
+ {
+-	for (; *s != (char)c; ++s)
+-		if (*s == '\0')
+-			return NULL;
+-	return (char *)s;
++	char *p = strchrnul(s, c);
++
++	return *p == (char)c ? p : NULL;
+ }
+ EXPORT_SYMBOL(strchr);
+ #endif
+@@ -327,11 +326,35 @@ EXPORT_SYMBOL(strchr);
+  * Returns pointer to first occurrence of 'c' in s. If c is not found, then
+  * return a pointer to the null byte at the end of s.
+  */
+-char *strchrnul(const char *s, int c)
++__no_sanitize_address char *strchrnul(const char *s, int c)
+ {
+-	while (*s && *s != (char)c)
+-		s++;
+-	return (char *)s;
++	const unsigned long mask01 = ~0UL / 0xFF;
++	const unsigned long mask80 = (~0UL / 0xFF) * 0x80;
++	unsigned long bc = (unsigned long)(unsigned char)c * mask01;
++	const unsigned long *lp;
++	const char *p;
++	unsigned long w, x;
++	unsigned int i;
++
++	lp = (const unsigned long *)((uintptr_t)s & ~(sizeof(long) - 1));
++	w = *lp;
++	x = w ^ bc;
++	lp++;
++	if (((w - mask01) & ~w & mask80) | ((x - mask01) & ~x & mask80))
++		for (p = s; p < (const char *)lp; p++)
++			if (*p == (char)c || *p == '\0')
++				return (char *)p;
++
++	for (;; lp++) {
++		w = *lp;
++		x = w ^ bc;
++		if (((w - mask01) & ~w & mask80) | ((x - mask01) & ~x & mask80)) {
++			p = (const char *)lp;
++			for (i = 0; i < sizeof(long); i++)
++				if (p[i] == (char)c || p[i] == '\0')
++					return (char *)(p + i);
++		}
++	}
+ }
+ EXPORT_SYMBOL(strchrnul);
+ #endif
+@@ -435,11 +458,29 @@ EXPORT_SYMBOL(strlen);
+ #ifndef __HAVE_ARCH_STRNLEN
+ size_t strnlen(const char *s, size_t count)
+ {
+-	const char *sc;
++	const char *p = s;
++	size_t n = count;
++#ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
++	const unsigned long mask01 = ~0UL / 0xFF;
++	const unsigned long mask80 = (~0UL / 0xFF) * 0x80;
+ 
+-	for (sc = s; count-- && *sc != '\0'; ++sc)
+-		/* nothing */;
+-	return sc - s;
++	while (n >= sizeof(unsigned long)) {
++		unsigned long v = get_unaligned((const unsigned long *)p);
++		unsigned int i;
++
++		if ((v - mask01) & ~v & mask80)
++			for (i = 0; i < sizeof(unsigned long); i++)
++				if (p[i] == '\0')
++					return (p - s) + i;
++		p += sizeof(unsigned long);
++		n -= sizeof(unsigned long);
++	}
++#endif
++	while (n && *p != '\0') {
++		p++;
++		n--;
++	}
++	return p - s;
+ }
+ EXPORT_SYMBOL(strnlen);
+ #endif
+-- 
+2.56.0
+
+
