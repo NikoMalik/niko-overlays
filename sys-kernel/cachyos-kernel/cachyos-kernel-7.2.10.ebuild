@@ -1003,6 +1003,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-large_folio.patch"
   eapply "${FILESDIR}/7.2.10-net_eventpoll.patch"
   eapply "${FILESDIR}/7.2.10-block_direct.patch"
+  eapply "${FILESDIR}/7.2.10-strlen.patch"
 
 
 

@@ -1,0 +1,98 @@
+From fe9042a75e4465904e637b508586fb24e3ae4789 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 20:22:34 +0300
+Subject: [PATCH] lib/string: word-at-a-time strlen (from FreeBSD) and memchr
+ word-at-a-time (swar)
+
+---
+ lib/string.c | 65 ++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 55 insertions(+), 10 deletions(-)
+
+diff --git a/lib/string.c b/lib/string.c
+index a3778d5aab4a..6461ba5c63de 100644
+--- a/lib/string.c
++++ b/lib/string.c
+@@ -395,13 +395,39 @@ EXPORT_SYMBOL(strnchr);
+ #endif
+ 
+ #ifndef __HAVE_ARCH_STRLEN
+-size_t strlen(const char *s)
++/*
++ * Word-at-a-time strlen ported from FreeBSD sys/libkern/strlen.c
++ * SPDX-License-Identifier: BSD-2-Clause
++ * Copyright (c) 2009, 2010 Xin LI <delphij@FreeBSD.org>
++ */
++__no_sanitize_address size_t strlen(const char *s)
+ {
+-	const char *sc;
+-
+-	for (sc = s; *sc != '\0'; ++sc)
+-		/* nothing */;
+-	return sc - s;
++	const unsigned long mask01 = ~0UL / 0xFF;
++	const unsigned long mask80 = (~0UL / 0xFF) * 0x80;
++	const unsigned long *lp;
++	const char *p;
++	unsigned long va, vb;
++	unsigned int i;
++
++	lp = (const unsigned long *)((uintptr_t)s & ~(sizeof(long) - 1));
++	va = *lp - mask01;
++	vb = ~*lp & mask80;
++	lp++;
++	if (va & vb)
++		for (p = s; p < (const char *)lp; p++)
++			if (*p == '\0')
++				return p - s;
++
++	for (;; lp++) {
++		va = *lp - mask01;
++		vb = ~*lp & mask80;
++		if (va & vb) {
++			p = (const char *)lp;
++			for (i = 0; i < sizeof(long); i++)
++				if (p[i] == '\0')
++					return p - s + i;
++		}
++	}
+ }
+ EXPORT_SYMBOL(strlen);
+ #endif
+@@ -787,10 +813,29 @@ EXPORT_SYMBOL(strnstr);
+ void *memchr(const void *s, int c, size_t n)
+ {
+ 	const unsigned char *p = s;
+-	while (n-- != 0) {
+-        	if ((unsigned char)c == *p++) {
+-			return (void *)(p - 1);
+-		}
++	unsigned char cc = c;
++#ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
++	const unsigned long mask01 = ~0UL / 0xFF;
++	const unsigned long mask80 = (~0UL / 0xFF) * 0x80;
++	unsigned long bc = (unsigned long)cc * mask01;
++
++	while (n >= sizeof(unsigned long)) {
++		unsigned long v = get_unaligned((const unsigned long *)p) ^ bc;
++		unsigned int i;
++
++		if ((v - mask01) & ~v & mask80)
++			for (i = 0; i < sizeof(unsigned long); i++)
++				if (p[i] == cc)
++					return (void *)(p + i);
++		p += sizeof(unsigned long);
++		n -= sizeof(unsigned long);
++	}
++#endif
++	while (n) {
++		if (*p == cc)
++			return (void *)p;
++		p++;
++		n--;
+ 	}
+ 	return NULL;
+ }
+-- 
+2.56.0
+
+
