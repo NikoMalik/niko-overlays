@@ -353,8 +353,13 @@ EOF
 	fi
 
 	if use lto; then
-		local ltotype=cross,thin
-		use full-lto && ltotype=cross,full
+		local ltotype=thin
+		use full-lto && ltotype=full
+		if zen_rust_llvm_matches; then
+			ltotype=cross,${ltotype}
+		else
+			ewarn "rustc LLVM $(zen_rust_llvm_major) != clang LLVM ${LLVM_SLOT}, cross-language LTO off, C++ only LTO"
+		fi
 		printf 'ac_add_options --enable-lto=%s\nmk_add_options MOZ_LTO=%s\n' "${ltotype}" "${ltotype}" >> "${mozconf}" || die
 	else
 		printf 'ac_add_options --disable-lto\n' >> "${mozconf}" || die
@@ -542,6 +547,15 @@ src_configure() {
 		engine/build/mach_initialize.py || die "failed disabling mach telemetry future"
 }
 
+zen_rust_llvm_major() {
+	rustc -vV | sed -n 's/^LLVM version: \([0-9]*\).*/\1/p'
+}
+
+# cross-language LTO is only safe when rustc and clang share the LLVM major
+zen_rust_llvm_matches() {
+	[[ $(zen_rust_llvm_major) == "${LLVM_SLOT}" ]]
+}
+
 src_compile() {
 	export ZEN_RELEASE=1
 	export CC=clang
@@ -557,6 +571,10 @@ src_compile() {
 	export MOZ_NOSPAM=1
 	export XARGS="${EPREFIX}/usr/bin/xargs"
 	export RUSTC_OPT_LEVEL=3
+	# user RUSTFLAGS -Clinker-plugin-lto would still mix Rust bitcode of another LLVM into the C++ LTO link
+	if use lto && ! zen_rust_llvm_matches; then
+		export RUSTFLAGS=$(sed -E 's/-C ?linker-plugin-lto//g' <<<"${RUSTFLAGS}")
+	fi
 	# keep Rust debug info so gdb can name Rust frames too, overrides the
 	# debuginfo=0/strip in user RUSTFLAGS, FEATURES=splitdebug extracts it
 	if use debug-symbols; then
