@@ -44,7 +44,7 @@ src_unpack() {
 	default
 	cd "${WORKDIR}/${P}"
 	cargo update
-	cd "${WORKDIR}"
+	cd "${S}" || die
 	cargo_live_src_unpack
 }
 

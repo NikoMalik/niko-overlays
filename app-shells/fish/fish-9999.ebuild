@@ -46,6 +46,7 @@ QA_FLAGS_IGNORED="usr/bin/.*"
 src_unpack() {
 	if [[ ${PV} == 9999 ]]; then
 		git-r3_src_unpack
+		cd "${S}" || die
 		cargo_live_src_unpack
 	else
 		cargo_src_unpack
