@@ -74,7 +74,7 @@ SRC_URI="
 		-> gentoo-kernel-config-${GENTOO_CONFIG_VER}.tar.gz
 "
 
-IUSE="+amdgpu bcachefs -nouveau cfi clang debug autofdo propeller mold +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
+IUSE="+amdgpu bcachefs -nouveau cfi clang debug autofdo propeller mold -server +bbr +lto +polly ${FLAVOURS/cachyos/+cachyos}"
 REQUIRED_USE="
 	^^ ( ${FLAVOURS} )
 	cfi? ( clang )
@@ -689,6 +689,13 @@ cachy_use_config() {
 		kconf set BCACHEFS_SIX_OPTIMISTIC_SPIN
 	fi
 
+	# le9uo memory protection profile, desktop protects anon working set, server leaves it to the admin
+	if use server; then
+		kconf set LE9UO_PROFILE_CUSTOM
+	else
+		kconf set LE9UO_PROFILE_ANON
+	fi
+
 
 
     # possible issues on nvidia and amd
@@ -985,6 +992,7 @@ src_prepare() {
   # eapply "${FILESDIR}/7.2.10-folio_page_cache_fix_after_2.patch"
   eapply "${FILESDIR}/7.2.10-branchless_bsearch.patch"
   eapply "${FILESDIR}/7.2.10-le9uo.patch"
+  eapply "${FILESDIR}/7.2.10-le9uo-profile.patch"
   eapply "${FILESDIR}/7.2.10-tick_nohz.patch"
   eapply "${FILESDIR}/7.2.10-ata.patch"
   eapply "${FILESDIR}/7.2.10-usbhid_skip.patch"

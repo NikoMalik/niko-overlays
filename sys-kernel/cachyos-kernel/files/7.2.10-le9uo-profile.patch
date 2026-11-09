@@ -1,0 +1,78 @@
+From 958609ef40c6802cbd4eb10f581fd2a58321e0d2 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 00:32:27 +0300
+Subject: [PATCH] mm/Kconfig: le9uo profiles with reswapiness
+
+---
+ mm/Kconfig | 33 ++++++++++++++++++++++++++++-----
+ 1 file changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 937c8f967407..cb89d47c6d2a 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -478,11 +478,31 @@ config ARCH_WANT_OPTIMIZE_HUGETLB_VMEMMAP
+ config ARCH_WANT_HUGETLB_VMEMMAP_PREINIT
+ 	bool
+ 
++choice
++	prompt "le9uo memory protection profile"
++	default LE9UO_PROFILE_ANON
++	help
++	  Presets anon_min_ratio / clean_low_ratio / clean_min_ratio for a
++	  workload, sysctl still overrides at runtime
++
++config LE9UO_PROFILE_ANON
++	bool "Protect anonymous working set (desktop, games, Redis, VMs, in-memory DB)"
++
++config LE9UO_PROFILE_FILE
++	bool "Protect file cache (file/web server, page-cache DB)"
++
++config LE9UO_PROFILE_CUSTOM
++	bool "Custom (le9uo off by default, set ratios by hand)"
++
++endchoice
++
+ config ANON_MIN_RATIO
+-	int "Default value for vm.anon_min_ratio"
++	int "Default value for vm.anon_min_ratio" if LE9UO_PROFILE_CUSTOM
+ 	depends on SYSCTL
+ 	range 0 100
+-	default 15
++	default 30 if LE9UO_PROFILE_ANON
++	default 1 if LE9UO_PROFILE_FILE
++	default 0
+ 	help
+ 	  This option sets the default value for vm.anon_min_ratio sysctl knob.
+ 
+@@ -497,9 +517,10 @@ config ANON_MIN_RATIO
+ 	  inability to swap and can lead to early OOM under memory pressure.
+ 
+ config CLEAN_LOW_RATIO
+-	int "Default value for vm.clean_low_ratio"
++	int "Default value for vm.clean_low_ratio" if LE9UO_PROFILE_CUSTOM
+ 	depends on SYSCTL
+ 	range 0 100
++	default 25 if LE9UO_PROFILE_FILE
+ 	default 0
+ 	help
+ 	  This option sets the default value for vm.clean_low_ratio sysctl knob.
+@@ -519,10 +540,12 @@ config CLEAN_LOW_RATIO
+ 	  of clean file pages in memory.
+ 
+ config CLEAN_MIN_RATIO
+-	int "Default value for vm.clean_min_ratio"
++	int "Default value for vm.clean_min_ratio" if LE9UO_PROFILE_CUSTOM
+ 	depends on SYSCTL
+ 	range 0 100
+-	default 15
++	default 1 if LE9UO_PROFILE_ANON
++	default 15 if LE9UO_PROFILE_FILE
++	default 0
+ 	help
+ 	  This option sets the default value for vm.clean_min_ratio sysctl knob.
+ 
+-- 
+2.56.0
+
+
