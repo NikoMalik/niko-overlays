@@ -8,7 +8,7 @@ Subject: [PATCH] mm/Kconfig: le9uo profiles with reswapiness
  1 file changed, 28 insertions(+), 5 deletions(-)
 
 diff --git a/mm/Kconfig b/mm/Kconfig
-index 937c8f967407..cb89d47c6d2a 100644
+index 937c8f967407f..cb89d47c6d2a3 100644
 --- a/mm/Kconfig
 +++ b/mm/Kconfig
 @@ -478,11 +478,31 @@ config ARCH_WANT_OPTIMIZE_HUGETLB_VMEMMAP
@@ -75,4 +75,62 @@ index 937c8f967407..cb89d47c6d2a 100644
 -- 
 2.56.0
 
+From 2f3a68b46e5f2e71b23a1109349a3f5ffdfd0f27 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 19:11:29 +0300
+Subject: [PATCH] mm/vmscan: enable le9uo workingset protection by default
+
+---
+ mm/vmscan.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 17de5d6b5acd4..f8b34965a221f 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -202,7 +202,7 @@ struct scan_control {
+ #define prefetchw_prev_lru_folio(_folio, _base, _field) do { } while (0)
+ #endif
+ 
+-bool sysctl_workingset_protection __read_mostly = false;
++bool sysctl_workingset_protection __read_mostly = true;
+ u8 sysctl_anon_min_ratio  __read_mostly = CONFIG_ANON_MIN_RATIO;
+ u8 sysctl_clean_low_ratio __read_mostly = CONFIG_CLEAN_LOW_RATIO;
+ u8 sysctl_clean_min_ratio __read_mostly = CONFIG_CLEAN_MIN_RATIO;
+-- 
+2.56.0
+
+From 526aca86e8c28d0c60567f2b1b0a78db35f7a312 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 19:13:48 +0300
+Subject: [PATCH] mm/Kconfig: small anon floor for le9uo custom profile
+
+---
+ mm/Kconfig | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/mm/Kconfig b/mm/Kconfig
+index cb89d47c6d2a3..40310f5eb23d0 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -492,7 +492,7 @@ config LE9UO_PROFILE_FILE
+ 	bool "Protect file cache (file/web server, page-cache DB)"
+ 
+ config LE9UO_PROFILE_CUSTOM
+-	bool "Custom (le9uo off by default, set ratios by hand)"
++	bool "Custom (small anon floor, set ratios by hand)"
+ 
+ endchoice
+ 
+@@ -502,7 +502,7 @@ config ANON_MIN_RATIO
+ 	range 0 100
+ 	default 30 if LE9UO_PROFILE_ANON
+ 	default 1 if LE9UO_PROFILE_FILE
+-	default 0
++	default 10
+ 	help
+ 	  This option sets the default value for vm.anon_min_ratio sysctl knob.
+ 
+-- 
+2.56.0
 
