@@ -134,3 +134,29 @@ index cb89d47c6d2a3..40310f5eb23d0 100644
 -- 
 2.56.0
 
+From 2b7572ceaffd87d20d06deec73e1a3cf035e7fd5 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 23:37:41 +0300
+Subject: [PATCH] mm/Kconfig: lower le9uo anon floor of the anon profile to 15
+
+30 was picked against the reswap aging bug,with it fixed a 30% floor leaves kswapd only the file cache and ages it too fast
+---
+ mm/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 40310f5eb23d0..0e37cac37c748 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -500,7 +500,7 @@ config ANON_MIN_RATIO
+ 	int "Default value for vm.anon_min_ratio" if LE9UO_PROFILE_CUSTOM
+ 	depends on SYSCTL
+ 	range 0 100
+-	default 30 if LE9UO_PROFILE_ANON
++	default 15 if LE9UO_PROFILE_ANON
+ 	default 1 if LE9UO_PROFILE_FILE
+ 	default 10
+ 	help
+-- 
+2.56.0
+
