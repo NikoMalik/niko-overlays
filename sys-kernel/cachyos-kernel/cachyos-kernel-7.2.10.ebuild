@@ -1016,6 +1016,8 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-lz4kdr.patch"
   eapply "${FILESDIR}/7.2.10-zram-7.3.patch"
   eapply "${FILESDIR}/7.2.10-reswappiness.patch"
+  eapply "${FILESDIR}/7.2.10-vmd-mtl016.patch"
+  eapply "${FILESDIR}/7.2.10-btrfs-compr-pool.patch"
   eapply "${FILESDIR}/7.2.10-more-inline.patch"
 
 
