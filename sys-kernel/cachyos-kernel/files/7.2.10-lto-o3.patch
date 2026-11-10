@@ -1,0 +1,31 @@
+From b5cecea7c040dbb1978b94a260b088c6c8892663 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 01:40:58 +0300
+Subject: [PATCH] kbuild: pass --lto-O3 to ld.lld for O3 builds
+
+ld.lld runs the lto pipeline at O2 by default whatever -O the compile
+step used, so an O3 config only got O3 in the thinlto prelink
+---
+ Makefile | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 256ae86cc2ea2..c7abb656c5395 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1158,6 +1158,12 @@ endif
+ CC_FLAGS_LTO	+= -fvisibility=hidden
+ 
+ KBUILD_LDFLAGS += -mllvm -import-instr-limit=1000
++
++# With LTO the real optimisation runs inside ld.lld, which defaults to
++# O2 no matter what -O the compile step used, so match it to the O3 build
++ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
++KBUILD_LDFLAGS += --lto-O3
++endif
+ endif
+ 
+ ifdef CONFIG_LTO
+-- 
+2.56.0
+

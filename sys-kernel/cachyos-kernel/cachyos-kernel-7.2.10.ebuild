@@ -648,11 +648,12 @@ cachy_use_config() {
 			kconf mod TCP_CONG_CUBIC
 			kconf unset DEFAULT_CUBIC
 			kconf set TCP_CONG_BBR
+			kconf set DEFAULT_BBR
 			kconf val DEFAULT_TCP_CONG "\"bbr\""
 			kconf mod NET_SCH_FQ_CODEL
 			kconf set NET_SCH_FQ
-			kconf unset CONFIG_DEFAULT_FQ_CODEL
-			kconf set CONFIG_DEFAULT_FQ
+			kconf unset DEFAULT_FQ_CODEL
+			kconf set DEFAULT_FQ
 			;;
 		no)	;;
 		*) die "Invalid _tcp_bbr3 value: ${_tcp_bbr3}" ;;
@@ -1024,6 +1025,8 @@ src_prepare() {
   use bore && eapply "${FILESDIR}/7.2.10-bore-7.0.1.patch"
   eapply "${FILESDIR}/7.2.10-poc-3.0.patch"
   eapply "${FILESDIR}/7.2.10-mglru-min-ttl-order.patch"
+  eapply "${FILESDIR}/7.2.10-polly-lto.patch"
+  eapply "${FILESDIR}/7.2.10-lto-o3.patch"
 
 
 
