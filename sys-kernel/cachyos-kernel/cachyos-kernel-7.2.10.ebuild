@@ -1019,6 +1019,11 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-vmd-mtl016.patch"
   eapply "${FILESDIR}/7.2.10-btrfs-compr-pool.patch"
   eapply "${FILESDIR}/7.2.10-more-inline.patch"
+  eapply "${FILESDIR}/7.2.10-poc-sticky.patch"
+  eapply "${FILESDIR}/7.2.10-cambyses-0.7.patch"
+  use bore && eapply "${FILESDIR}/7.2.10-bore-7.0.1.patch"
+  eapply "${FILESDIR}/7.2.10-poc-3.0.patch"
+  eapply "${FILESDIR}/7.2.10-mglru-min-ttl-order.patch"
 
 
 

@@ -1,0 +1,31 @@
+From 86bf5581353a0cc3501faf9b949f6b12b1ac6ada Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 23:18:38 +0300
+Subject: [PATCH] mm/mglru: no min_ttl oom kill on high-order kswapd runs
+
+kswapd woken for a THP sized block with plenty of fragmented free memory aged the lru until every gen was younger than min_ttl and oom killed tasks one after another with ~8G free,a missing contiguous block is compaction's job
+---
+ mm/vmscan.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 3bd1b450f2ad8..90673e80e6f72 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4312,8 +4312,12 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
+ 	 * The main goal is to OOM kill if every generation from all memcgs is
+ 	 * younger than min_ttl. However, another possibility is all memcgs are
+ 	 * either too small or below min.
++	 *
++	 * Not for a high-order kswapd run: a missing contiguous block is for
++	 * compaction to fix, killing a task frees order-0 pages that may not
++	 * merge and leaves plenty of free memory behind.
+ 	 */
+-	if (!reclaimable && mutex_trylock(&oom_lock)) {
++	if (!reclaimable && !sc->order && mutex_trylock(&oom_lock)) {
+ 		struct oom_control oc = {
+ 			.gfp_mask = sc->gfp_mask,
+ 		};
+-- 
+2.56.0
+

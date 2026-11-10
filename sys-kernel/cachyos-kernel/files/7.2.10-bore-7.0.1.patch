@@ -1,0 +1,89 @@
+From c3f59f4ad3004ce3ce3c72b6666b2725d7899db8 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 23:06:12 +0300
+Subject: [PATCH] sched/bore: update to 7.0.1r2
+
+rcu safe children count,reset credit_sleep on fork,scale wakeup credit to virtual time
+---
+ include/linux/sched/bore.h |  2 +-
+ kernel/sched/bore.c        | 17 ++++++++++++-----
+ kernel/sched/fair.c        |  8 ++++++--
+ 3 files changed, 19 insertions(+), 8 deletions(-)
+
+diff --git a/include/linux/sched/bore.h b/include/linux/sched/bore.h
+index e8fe703ead218..c9f6f270a93f9 100644
+--- a/include/linux/sched/bore.h
++++ b/include/linux/sched/bore.h
+@@ -11,7 +11,7 @@
+ #define SCHED_BORE_AUTHOR   "Masahito Suzuki"
+ #define SCHED_BORE_PROGNAME "BORE CPU Scheduler modification"
+ 
+-#define SCHED_BORE_VERSION  "7.0.0"
++#define SCHED_BORE_VERSION  "7.0.1"
+ 
+ extern u8   __read_mostly sched_bore;
+ DECLARE_STATIC_KEY_TRUE(sched_bore_key);
+diff --git a/kernel/sched/bore.c b/kernel/sched/bore.c
+index 97313beadf396..e69057fc7685f 100644
+--- a/kernel/sched/bore.c
++++ b/kernel/sched/bore.c
+@@ -181,11 +181,16 @@ static inline bool task_is_bore_eligible(struct task_struct *p)
+ 	list_for_each_entry_rcu(t, &(p)->children, sibling)
+ #endif
+ 
+-static inline u32 count_children_upto2(struct task_struct *p) {
+-	struct list_head *head = &p->children;
+-	struct list_head *first = READ_ONCE(head->next);
+-	struct list_head *second = READ_ONCE(first->next);
+-	return (first != head) + (second != head);
++static inline u32 count_children_upto2(struct task_struct *p)
++{
++	struct task_struct *child;
++	u32 count = 0;
++
++	list_for_each_entry_rcu(child, &p->children, sibling) {
++		if (++count >= 2)
++			break;
++	}
++	return count;
+ }
+ 
+ static inline bool burst_cache_expired(struct bore_bc *bc, u64 now) {
+@@ -331,6 +336,7 @@ void task_fork_bore(struct task_struct *p,
+ 		ctx->prev_penalty = inherited_penalty;
+ 	ctx->curr_penalty  = 0;
+ 	ctx->burst_time    = 0;
++	ctx->credit_sleep  = 0;
+ 	ctx->stop_update   = false;
+ 	ctx->futex_waiting = false;
+ 	update_penalty(p);
+@@ -360,6 +366,7 @@ void __init sched_init_bore(void) {
+ 	printk(KERN_INFO "%s %s by %s\n",
+ 		SCHED_BORE_PROGNAME, SCHED_BORE_VERSION, SCHED_BORE_AUTHOR);
+ 
++	bore_reciprocal_lut[0] = 0;
+ 	for (int i = 1; i <= BURST_CACHE_SAMPLE_LIMIT; i++)
+ 		bore_reciprocal_lut[i] = (u32)div64_u64(0xffffffffULL + i, i);
+ 
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 5f02435fc0a41..b0a88622f7d8c 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -6632,8 +6632,12 @@ place_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
+ 	    entity_is_task(se) && (flags & ENQUEUE_WAKEUP)) {
+ 		u64 credit = bore_credit_ns(task_of(se));
+ 
+-		if (credit && se->deadline > credit)
+-			se->deadline -= credit;
++		if (credit) {
++			u64 vcredit = calc_delta_fair(credit, se);
++
++			if (se->deadline > vcredit)
++				se->deadline -= vcredit;
++		}
+ 	}
+ #endif /* CONFIG_SCHED_BORE */
+ }
+-- 
+2.56.0
+

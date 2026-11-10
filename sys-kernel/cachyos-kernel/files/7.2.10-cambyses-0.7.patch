@@ -1,0 +1,91 @@
+From d7568caa0a7bca689752bb16cc482ad1e5289e80 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 23:06:10 +0300
+Subject: [PATCH] sched/cambyses: update to v0.7.0
+
+concede to the cheapest candidate only when pulling into an idle cpu,LB_STRICT_BUDGET renamed to LB_CONCEDE_CHEAPEST
+---
+ kernel/sched/fair.c     | 31 +++++++++++++++++++++++++------
+ kernel/sched/features.h |  9 +++++++--
+ 2 files changed, 32 insertions(+), 8 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 4c32a2f0dba5d..5f02435fc0a41 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -11899,18 +11899,37 @@ struct lb_concession {
+ 	unsigned long		cost;
+ };
+ 
++/*
++ * Whether this balance operation concedes to the cheapest candidate.
++ *
++ * Only a balance pulling into an idle CPU does: handing it work is a win even
++ * when the task overshoots, so conceding on the first scan that admits nothing
++ * is worth it.  A busy destination gains nothing from an overshoot but can
++ * flip the imbalance and bounce the task back, so it keeps the upstream
++ * relaxation, which concedes only after failures have been recorded.
++ *
++ * Decided from env->idle, which is fixed for the whole operation, rather than
++ * idle_cpu(env->dst_cpu), which a wakeup can change between candidates and so
++ * split one scan across both rules.  detach_tasks() needs no matching test:
++ * the concession is only ever recorded when this returns true.
++ */
++static inline bool lb_concede_cheapest(struct lb_env *env)
++{
++	return sched_feat(LB_CONCEDE_CHEAPEST) && env->idle != __CPU_NOT_IDLE;
++}
++
+ /*
+  * Does moving @p, costing @cost, fit the remaining imbalance budget?
+  *
+- * LB_STRICT_BUDGET compares directly and notes the smallest overshoot seen so
+- * far.  Upstream instead relaxes the comparison by sd->nr_balance_failed; see
+- * features.h for why that relaxation is unreachable while cheaper candidates
+- * keep succeeding.
++ * With LB_CONCEDE_CHEAPEST the comparison is direct and the smallest overshoot
++ * seen so far is noted.  Upstream instead relaxes the comparison by
++ * sd->nr_balance_failed; see features.h for why that relaxation is unreachable
++ * while cheaper candidates keep succeeding.
+  */
+ static bool lb_cost_fits(struct lb_env *env, struct lb_concession *concession,
+ 			 struct task_struct *p, unsigned long cost)
+ {
+-	if (!sched_feat(LB_STRICT_BUDGET))
++	if (!lb_concede_cheapest(env))
+ 		return shr_bound(cost, env->sd->nr_balance_failed) <= env->imbalance;
+ 
+ 	if (cost <= env->imbalance)
+@@ -12087,7 +12106,7 @@ static int detach_tasks(struct lb_env *env)
+ 	 * imbalanced_active_balance() escalates for migrate_task only, so a
+ 	 * task larger than the imbalance would otherwise never move.
+ 	 *
+-	 * This is the whole reason LB_STRICT_BUDGET can drop the upstream
++	 * This is the whole reason LB_CONCEDE_CHEAPEST can drop the upstream
+ 	 * relaxation.  Both exist to guarantee progress; this one asks the
+ 	 * candidates present rather than a domain counter that other tasks'
+ 	 * successes keep resetting, and it acts on the first scan that admits
+diff --git a/kernel/sched/features.h b/kernel/sched/features.h
+index 7e02463a420d2..ae3747b288bfc 100644
+--- a/kernel/sched/features.h
++++ b/kernel/sched/features.h
+@@ -161,9 +161,14 @@
+  * first scan that admits nothing rather than once enough failures have been
+  * recorded.
+  *
+- * Turn off to get the upstream shr_bound() relaxation.
++ * Applies only when the balance pulls into an idle CPU (env->idle !=
++ * __CPU_NOT_IDLE).  Handing an idle CPU work is worth an overshoot; for a busy
++ * destination an overshoot can flip the imbalance and bounce the task back,
++ * so it keeps the upstream relaxation.
++ *
++ * Turn off to get the upstream shr_bound() relaxation everywhere.
+  */
+-#define SCHED_FEAT_LB_STRICT_BUDGET 1
++#define SCHED_FEAT_LB_CONCEDE_CHEAPEST 1
+ 
+ #define SCHED_FEAT_WA_IDLE 1
+ #define SCHED_FEAT_WA_WEIGHT 1
+-- 
+2.56.0
+
