@@ -11,7 +11,7 @@ Subject: [PATCH] mglru: MGLRU per-type independent aging (reswapiness)
  4 files changed, 262 insertions(+), 182 deletions(-)
 
 diff --git a/include/linux/mm_inline.h b/include/linux/mm_inline.h
-index a8430a7ae054..3892ec6d3ea1 100644
+index a8430a7ae0544..3892ec6d3ea1f 100644
 --- a/include/linux/mm_inline.h
 +++ b/include/linux/mm_inline.h
 @@ -162,9 +162,9 @@ static inline int folio_lru_gen(const struct folio *folio)
@@ -78,7 +78,7 @@ index a8430a7ae054..3892ec6d3ea1 100644
  	gen = ((flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
  
 diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
-index e18bbe25d967..b9c8f5295f90 100644
+index e18bbe25d967a..b9c8f5295f90d 100644
 --- a/include/linux/mmzone.h
 +++ b/include/linux/mmzone.h
 @@ -549,23 +549,20 @@ enum {
@@ -142,7 +142,7 @@ index e18bbe25d967..b9c8f5295f90 100644
  	unsigned long next_addr;
  	/* to batch promoted pages */
 diff --git a/mm/vmscan.c b/mm/vmscan.c
-index 489e15ef33d7..17de5d6b5acd 100644
+index 489e15ef33d7c..17de5d6b5acd4 100644
 --- a/mm/vmscan.c
 +++ b/mm/vmscan.c
 @@ -852,6 +852,12 @@ enum folio_references {
@@ -977,7 +977,7 @@ index 489e15ef33d7..17de5d6b5acd 100644
  		pr_err("lru_gen: failed to create sysfs group\n");
  
 diff --git a/mm/workingset.c b/mm/workingset.c
-index f351798e723a..3536f97fb91b 100644
+index f351798e723ac..3536f97fb91b2 100644
 --- a/mm/workingset.c
 +++ b/mm/workingset.c
 @@ -283,7 +283,7 @@ static bool lru_gen_test_recent(void *shadow, struct lruvec **lruvec,
@@ -992,4 +992,46 @@ index f351798e723a..3536f97fb91b 100644
 -- 
 2.56.0
 
+From 0b641652d0764e6595ee8f6e24d74e179548568d Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 19:28:03 +0300
+Subject: [PATCH] mglru: keep anon and file aging at the same wall-clock pace
+
+refault recency is counted in gens per type,when one type ages much faster its refaults stop counting and the ctrl keeps evicting it
+---
+ mm/vmscan.c | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index f8b34965a221f..3bd1b450f2ad8 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -5154,13 +5154,20 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 
+ 		if (should_run_aging(lruvec, max_seq, sc, swappiness)) {
+ 			/*
+-			 * Per-type independent aging: only age the type that
+-			 * actually needs it, so a type with enough evictable
+-			 * gens is not forcibly drained while the other is
+-			 * stuck (e.g. file cache protected by le9uo)
++			 * Per-type independent aging: age the type that needs it,
++			 * plus the other one if its youngest gen is not younger, refault
++			 * recency is counted in gens so both types must age at the
++			 * same wall-clock pace or the ctrl stops seeing refaults of
++			 * the faster one
+ 			 */
++			unsigned long born[ANON_AND_FILE];
++
++			for (type = 0; type < ANON_AND_FILE; type++)
++				born[type] = READ_ONCE(lruvec->lrugen.timestamps[type][lru_gen_from_seq(max_seq[type])]);
++
+ 			for_each_evictable_type(type, swappiness) {
+-				if (min_seq[type] + MIN_NR_GENS < max_seq[type])
++				if (min_seq[type] + MIN_NR_GENS < max_seq[type] &&
++				    time_after(born[type], born[!type]))
+ 					continue;
+ 				if (try_to_inc_max_seq(lruvec, max_seq[type], type, swappiness, false))
+ 					need_rotate = true;
+-- 
+2.56.0
 
