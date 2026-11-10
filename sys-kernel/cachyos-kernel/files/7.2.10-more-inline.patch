@@ -1,0 +1,35 @@
+From d03252bce26f4da758fd6d80073e302d2bd679fb Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 10 Nov 2026 10:59:43 +0300
+Subject: [PATCH] sched/fair: more inline
+
+---
+ kernel/sched/fair.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index bfa23e1dce8a..4c32a2f0dba5 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -774,7 +774,7 @@ void update_zero_vruntime(struct cfs_rq *cfs_rq, s64 delta)
+  * This means it is one entry 'behind' but that puts it close enough to where
+  * the bound on entity_key() is at most two lag bounds.
+  */
+-u64 avg_vruntime(struct cfs_rq *cfs_rq)
++inline u64 avg_vruntime(struct cfs_rq *cfs_rq)
+ {
+ 	struct sched_entity *curr = cfs_rq->curr;
+ 	long weight = cfs_rq->sum_weight;
+@@ -990,7 +990,7 @@ static int vruntime_eligible(struct cfs_rq *cfs_rq, u64 vruntime)
+ #endif
+ }
+ 
+-int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se)
++inline int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ {
+ 	return vruntime_eligible(cfs_rq, se->vruntime);
+ }
+-- 
+2.56.0
+
+

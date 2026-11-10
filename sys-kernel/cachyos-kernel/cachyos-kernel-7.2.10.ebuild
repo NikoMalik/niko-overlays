@@ -1015,6 +1015,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-strln.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr.patch"
   eapply "${FILESDIR}/7.2.10-reswappiness.patch"
+  eapply "${FILESDIR}/7.2.10-more-inline.patch"
 
 
 
