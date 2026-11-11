@@ -1,0 +1,45 @@
+From 5e866218b43846f606254088a12efd4512f02e8f Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 11:27:01 +0300
+Subject: [PATCH] kbuild: cut polly and thinlto link memory
+
+drop -polly-dependences-computeout=50000000 so polly falls back to its
+default limit,drop -polly-omp-backend which does nothing without
+-polly-parallel,add THINLTO_JOBS to cap ld.lld thinlto backends since a
+vmlinux link with O3 and polly went past 22 GB
+---
+ Makefile | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index c7abb656c5395..fc9962bce66a6 100644
+--- a/Makefile
++++ b/Makefile
+@@ -965,9 +965,7 @@ POLLY_OPTS := -polly \
+ 	      -polly-invariant-load-hoisting \
+ 	      -polly-loopfusion-greedy \
+ 	      -polly-run-inliner \
+-	      -polly-dependences-computeout=50000000 \
+ 	      -polly-vectorizer=stripmine \
+-	      -polly-omp-backend=LLVM \
+ 	      -polly-detect-profitability-min-per-loop-insts=40
+ 
+ # Polly may optimise loops with dead paths beyound what the linker
+@@ -1153,6 +1151,14 @@ CC_FLAGS_LTO	:= -flto=thin -fsplit-lto-unit
+ # support, so avoid distributed ThinLTO support for now.
+ ifdef CONFIG_LTO_CLANG_THIN
+ KBUILD_LDFLAGS += $(call ld-option,--lto-whole-program-visibility -mllvm -always-rename-promoted-locals=false)
++
++# ld.lld runs one ThinLTO backend per CPU and each one holds its module in
++# memory, with O3 and Polly a vmlinux link can outgrow RAM. THINLTO_JOBS
++# (make variable or environment) caps the backend count, unset keeps the
++# ld.lld default
++ifdef THINLTO_JOBS
++KBUILD_LDFLAGS += --thinlto-jobs=$(THINLTO_JOBS)
++endif
+ endif
+ endif
+ CC_FLAGS_LTO	+= -fvisibility=hidden
+-- 
+2.56.0
+
