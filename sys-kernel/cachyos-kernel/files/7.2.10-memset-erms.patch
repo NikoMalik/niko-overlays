@@ -1,0 +1,65 @@
+From 9ac3e63c9cb0c72b5e0d46f50a22dd3296ba18d2 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 16:40:34 +0300
+Subject: [PATCH] x86/lib: use rep stosb for large memset on erms without fsrs
+
+memset only used rep stosb with fsrs,cpus with erms but no fsrs like
+rocket lake always ran the unrolled loop
+
+userspace bench of the two kernel paths 
+  bytes     loop    stosb
+    512     13.0    17.5   +35%
+    768     19.5    18.2    -7%
+   1024     25.5    19.0   -26%
+   4096    108.1    31.5   -71%
+  16384    411.1   105.8   -74%
+ 262144   8044.7  5057.3   -37%
+
+so erms cpus take rep stosb from 768 bytes and keep the loop below,in
+perf niri spent 2.3% of kernel cycles in memset_orig under nvFlipEvo,the
+nvidia-modeset flip path clears large state twice per frame
+---
+ arch/x86/lib/memset_64.S | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/lib/memset_64.S b/arch/x86/lib/memset_64.S
+index fb5a03cf5ab7..ee46103744c7 100644
+--- a/arch/x86/lib/memset_64.S
++++ b/arch/x86/lib/memset_64.S
+@@ -30,7 +30,8 @@
+  * which the compiler could/should do much better anyway.
+  */
+ SYM_TYPED_FUNC_START(__memset)
+-	ALTERNATIVE "jmp memset_orig", "", X86_FEATURE_FSRS
++	ALTERNATIVE_2 "jmp memset_orig", "jmp memset_erms", X86_FEATURE_ERMS, \
++		      "", X86_FEATURE_FSRS
+ 
+ 	movq %rdi,%r9
+ 	movb %sil,%al
+@@ -45,6 +46,23 @@ SYM_FUNC_ALIAS_MEMFUNC(memset, __memset)
+ SYM_PIC_ALIAS(memset)
+ EXPORT_SYMBOL(memset)
+ 
++/*
++ * ERMS without FSRS: rep stosb has a fixed startup cost, so short sets stay
++ * on the unrolled loop. On Rocket Lake rep stosb wins from 768 bytes, -7% at
++ * 768, -37% to -74% from 1K up, and nvidia-modeset clears large flip state
++ * twice per frame
++ */
++SYM_FUNC_START_LOCAL(memset_erms)
++	cmpq $768,%rdx
++	jb memset_orig
++	movq %rdi,%r9
++	movb %sil,%al
++	movq %rdx,%rcx
++	rep stosb
++	movq %r9,%rax
++	RET
++SYM_FUNC_END(memset_erms)
++
+ SYM_FUNC_START_LOCAL(memset_orig)
+ 	movq %rdi,%r10
+ 
+-- 
+2.56.0
+

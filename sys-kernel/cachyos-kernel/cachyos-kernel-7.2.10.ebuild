@@ -1032,6 +1032,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-teo-default.patch"
   eapply "${FILESDIR}/7.2.10-small-tasks-fixes.patch"
   eapply "${FILESDIR}/7.2.10-nap-rating.patch"
+  eapply "${FILESDIR}/7.2.10-memset-erms.patch"
 
 
 
