@@ -1,0 +1,45 @@
+From 75f8a13d79a8fd68e99f048c81b127479095c823 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 14:34:17 +0300
+Subject: [PATCH] sched/fair: decay entity lag before the enqueue
+
+decay_entity_lag() warns on se->on_rq but enqueue_task_fair() called it
+after enqueue_hierarchy() already set it,so every remote wakeup trapped
+through report_bug,about 4% of kernel cycles in perf
+
+call it before the enqueue so the warning holds and cfs_rq load does not
+include the waking task yet,which the cfs_load + weight formula expects
+---
+ kernel/sched/fair.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index c5ccbc399b665..8a7af02379d5e 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -8367,14 +8367,20 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
+ 	if (curr)
+ 		place_entity(cfs_rq, se, flags);
+ 
++	/*
++	 * Decay the lag before enqueue_hierarchy() sets se->on_rq and adds
++	 * the task to cfs_rq load, the decay formula expects neither. Called
++	 * after it, the on_rq warning trapped on every wakeup
++	 */
++	if (!curr && task_wake && !se->on_rq)
++		decay_entity_lag(cfs_rq, se, flags);
++
+ 	if (se->on_rq && se->sched_delayed)
+ 		requeue_delayed_entity(cfs_rq, se, flags);
+ 
+ 	weight = enqueue_hierarchy(p, flags);
+ 
+ 	if (!curr) {
+-		if (task_wake)
+-			decay_entity_lag(cfs_rq, se, flags);
+ 		reweight_eevdf(cfs_rq, se, weight, false);
+ 		place_entity(cfs_rq, se, flags | ENQUEUE_QUEUED);
+ 		__enqueue_entity(cfs_rq, se);
+-- 
+2.56.0
+

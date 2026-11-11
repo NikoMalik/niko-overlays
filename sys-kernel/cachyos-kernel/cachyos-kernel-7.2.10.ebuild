@@ -1028,6 +1028,9 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-polly-lto.patch"
   eapply "${FILESDIR}/7.2.10-lto-o3.patch"
   eapply "${FILESDIR}/7.2.10-lto-mem.patch"
+  eapply "${FILESDIR}/7.2.10-decay-lag-order.patch"
+  eapply "${FILESDIR}/7.2.10-teo-default.patch"
+  eapply "${FILESDIR}/7.2.10-small-tasks-fixes.patch"
 
 
 

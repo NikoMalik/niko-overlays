@@ -1,0 +1,150 @@
+From 70001b8288d7008e4472fd0048e1c08d62f242d2 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 14:47:34 +0300
+Subject: [PATCH] sched/fair: fix idle check and drop dead push code from small
+ tasks
+
+choose_idle_cpu() used idle_cpu_without() without the nr_running check
+the helper asks its caller to do,a CPU still in idle with a task already
+enqueued looked idle so a second wakeup could stack on it
+
+tick_pushable_task() needed nr_running <= 1 but then asked
+check_pushable_short_task() for h_nr_runnable > 1,it could never push
+so drop it and its tick branch
+
+the push static key was inc'd on every sched domain rebuild and never
+dec'd,set it from PREEMPT_SHORT instead
+---
+ kernel/sched/fair.c     | 80 ++++++-----------------------------------
+ kernel/sched/topology.c |  8 ++++-
+ 2 files changed, 18 insertions(+), 70 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 8a7af02379d5e..07c7fa9cfa4d9 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -8243,9 +8243,16 @@ static int idle_cpu_without(int cpu, struct task_struct *p);
+ 
+ static int choose_idle_cpu(int cpu, struct task_struct *p)
+ {
++	struct rq *rq = cpu_rq(cpu);
++
++	/*
++	 * idle_cpu_without() leaves the nr_running check to its caller, without
++	 * it a CPU still in idle but with a task already enqueued looked idle
++	 * and a second wakeup could stack on it. Only p itself may be queued
++	 */
+ 	return available_idle_cpu(cpu) ||
+-	       choose_sched_idle_rq(cpu_rq(cpu), p) ||
+-	       idle_cpu_without(cpu, p);
++	       choose_sched_idle_rq(rq, p) ||
++	       (idle_cpu_without(cpu, p) && rq->nr_running <= (rq->curr == p));
+ }
+ 
+ static void
+@@ -10018,69 +10025,6 @@ static inline bool sched_push_task_enabled(void);
+ static bool fair_check_pushable_task(struct rq *rq, struct task_struct *p, struct task_struct *next);
+ static int select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags);
+ 
+-/*
+- * See if the alone task running on the CPU should migrate on a better than
+- * the local one.
+- */
+-static inline bool tick_pushable_task(struct task_struct *p, struct rq *rq, struct rq_flags *rf)
+-{
+-	int new_cpu, cpu = cpu_of(rq);
+-
+-	if (!sched_push_task_enabled())
+-		return false;
+-
+-	if (!rf)
+-		return false;
+-
+-	if (WARN_ON(!p))
+-		return false;
+-
+-	if (WARN_ON(!task_current(rq, p)))
+-		return false;
+-
+-	if (is_migration_disabled(p))
+-		return false;
+-
+-	/* If there are several task, wait for being put back */
+-	if (rq->nr_running > 1)
+-		return false;
+-
+-	if (!fair_check_pushable_task(rq, p, NULL))
+-		return false;
+-
+-	if (!raw_spin_trylock(&p->pi_lock))
+-		return false;
+-
+-	new_cpu = select_task_rq_fair(p, cpu, 0);
+-
+-	raw_spin_unlock(&p->pi_lock);
+-
+-	if (new_cpu == cpu)
+-		return false;
+-
+-	/*
+-	 * ->active_balance synchronizes accesses to
+-	 * ->active_balance_work.  Once set, it's cleared
+-	 * only after active load balance is finished.
+-	 */
+-	if (!rq->active_balance) {
+-		rq->active_balance = 1;
+-		rq->push_cpu = new_cpu;
+-	} else {
+-		return false;
+-	}
+-
+-	preempt_disable();
+-	rq_unlock(rq, rf);
+-	stop_one_cpu_nowait(cpu,
+-			    active_load_balance_cpu_stop, rq,
+-			    &rq->active_balance_work);
+-	preempt_enable();
+-	rq_lock(rq, rf);
+-
+-	return true;
+-}
+-
+ DEFINE_STATIC_KEY_FALSE(sched_push_task);
+ 
+ static inline bool sched_push_task_enabled(void)
+@@ -16043,10 +15987,8 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, struct rq_fl
+ 
+ 	task_tick_cache(rq, curr);
+ 
+-	if (!tick_pushable_task(curr, rq, rf)) {
+-		update_misfit_status(curr, rq);
+-		check_update_overutilized_status(task_rq(curr));
+-	}
++	update_misfit_status(curr, rq);
++	check_update_overutilized_status(task_rq(curr));
+ 
+ 	task_tick_core(rq, curr);
+ }
+diff --git a/kernel/sched/topology.c b/kernel/sched/topology.c
+index 8635dae2961ee..c709fd418997f 100644
+--- a/kernel/sched/topology.c
++++ b/kernel/sched/topology.c
+@@ -3486,8 +3486,14 @@ static void partition_sched_domains_locked(int ndoms_new, cpumask_var_t doms_new
+ 	sched_energy_set(has_eas);
+ #endif
+ 
++	/*
++	 * Domains are rebuilt on hotplug and cpuset changes, an inc on every
++	 * rebuild never dropped and kept push on after PREEMPT_SHORT was off
++	 */
+ 	if (sched_feat(PREEMPT_SHORT))
+-		static_branch_inc_cpuslocked(&sched_push_task);
++		static_branch_enable_cpuslocked(&sched_push_task);
++	else
++		static_branch_disable_cpuslocked(&sched_push_task);
+ 
+ 	/* Remember the new sched domains: */
+ 	if (doms_cur != &fallback_doms)
+-- 
+2.56.0
+

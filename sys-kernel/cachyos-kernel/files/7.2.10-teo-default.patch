@@ -1,0 +1,54 @@
+From 24f30322e910e9da0240debf2ea7d023e8cfc6d2 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 14:42:06 +0300
+Subject: [PATCH] cpuidle: make teo the default governor over nap
+
+nap had rating 26 so it won over every other governor,in perf bench sched
+messaging it was 2.6% slower than teo (median 1.748s vs 1.703s,6 runs each)
+and spent 2% more kernel cycles,mostly in nap_fpu_select and the avx512
+predictor
+
+teo goes to 21 so it also beats menu (20),nap goes to 15,both stay
+selectable with cpuidle.governor= or current_governor
+---
+ drivers/cpuidle/governors/nap/nap.c | 6 +++++-
+ drivers/cpuidle/governors/teo.c     | 6 +++++-
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/cpuidle/governors/nap/nap.c b/drivers/cpuidle/governors/nap/nap.c
+index b5ccda34b5583..e9b3ba16827d1 100644
+--- a/drivers/cpuidle/governors/nap/nap.c
++++ b/drivers/cpuidle/governors/nap/nap.c
+@@ -592,7 +592,11 @@ void nap_sysfs_exit(void)
+ 
+ static struct cpuidle_governor nap_governor = {
+ 	.name    = "nap",
+-	.rating  = 26,
++	/*
++	 * Below teo and menu, in perf bench sched messaging nap was 2.6% slower
++	 * than teo and spent 2% more kernel cycles on its idle predictor
++	 */
++	.rating  = 15,
+ 	.enable  = nap_enable,
+ 	.disable = nap_disable,
+ 	.select  = nap_select,
+diff --git a/drivers/cpuidle/governors/teo.c b/drivers/cpuidle/governors/teo.c
+index ac43b9b013b3f..f5b31ca2ce333 100644
+--- a/drivers/cpuidle/governors/teo.c
++++ b/drivers/cpuidle/governors/teo.c
+@@ -563,7 +563,11 @@ static int teo_enable_device(struct cpuidle_driver *drv,
+ 
+ static struct cpuidle_governor teo_governor = {
+ 	.name =		"teo",
+-	.rating =	19,
++	/*
++	 * Above menu (20) and nap so teo is the default, nap and menu stay
++	 * selectable with cpuidle.governor= or current_governor
++	 */
++	.rating =	21,
+ 	.enable =	teo_enable_device,
+ 	.select =	teo_select,
+ 	.reflect =	teo_reflect,
+-- 
+2.56.0
+
