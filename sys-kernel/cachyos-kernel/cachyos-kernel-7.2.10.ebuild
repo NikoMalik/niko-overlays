@@ -1031,6 +1031,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-decay-lag-order.patch"
   eapply "${FILESDIR}/7.2.10-teo-default.patch"
   eapply "${FILESDIR}/7.2.10-small-tasks-fixes.patch"
+  eapply "${FILESDIR}/7.2.10-nap-rating.patch"
 
 
 

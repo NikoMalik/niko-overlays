@@ -11,27 +11,9 @@ predictor
 teo goes to 21 so it also beats menu (20),nap goes to 15,both stay
 selectable with cpuidle.governor= or current_governor
 ---
- drivers/cpuidle/governors/nap/nap.c | 6 +++++-
- drivers/cpuidle/governors/teo.c     | 6 +++++-
- 2 files changed, 10 insertions(+), 2 deletions(-)
+ drivers/cpuidle/governors/teo.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
 
-diff --git a/drivers/cpuidle/governors/nap/nap.c b/drivers/cpuidle/governors/nap/nap.c
-index b5ccda34b5583..e9b3ba16827d1 100644
---- a/drivers/cpuidle/governors/nap/nap.c
-+++ b/drivers/cpuidle/governors/nap/nap.c
-@@ -592,7 +592,11 @@ void nap_sysfs_exit(void)
- 
- static struct cpuidle_governor nap_governor = {
- 	.name    = "nap",
--	.rating  = 26,
-+	/*
-+	 * Below teo and menu, in perf bench sched messaging nap was 2.6% slower
-+	 * than teo and spent 2% more kernel cycles on its idle predictor
-+	 */
-+	.rating  = 15,
- 	.enable  = nap_enable,
- 	.disable = nap_disable,
- 	.select  = nap_select,
 diff --git a/drivers/cpuidle/governors/teo.c b/drivers/cpuidle/governors/teo.c
 index ac43b9b013b3f..f5b31ca2ce333 100644
 --- a/drivers/cpuidle/governors/teo.c

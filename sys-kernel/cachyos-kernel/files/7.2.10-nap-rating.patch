@@ -1,0 +1,32 @@
+From 0e403aad1b1f9fd1dc001daddf3134080ca5f2a8 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Wed, 11 Nov 2026 15:00:11 +0300
+Subject: [PATCH] cpuidle/nap: lower the rating below teo
+
+goes with teo-default,the tree had an older nap so the nap hunk of that
+patch did not apply on 6.18.1-nap.patch,nap now sets NAP_RATING to 15
+---
+ drivers/cpuidle/governors/nap/nap.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/cpuidle/governors/nap/nap.c b/drivers/cpuidle/governors/nap/nap.c
+index a8e39e8457183..7f571a42e940a 100644
+--- a/drivers/cpuidle/governors/nap/nap.c
++++ b/drivers/cpuidle/governors/nap/nap.c
+@@ -94,8 +94,12 @@ extern int nap_oot_register_governor(struct cpuidle_governor *gov);
+ #ifndef NAP_SYSFS_NAME
+ #define NAP_SYSFS_NAME	"nap"
+ #endif
++/*
++ * Below teo (21) and menu (20), in perf bench sched messaging nap was 2.6%
++ * slower than teo and spent 2% more kernel cycles on its idle predictor
++ */
+ #ifndef NAP_RATING
+-#define NAP_RATING	26
++#define NAP_RATING	15
+ #endif
+ 
+ /**************************************************************
+-- 
+2.56.0
+
