@@ -1,0 +1,41 @@
+From e55857528bdde1f9a85c45d9a11c3a63dd2533a5 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 00:21:18 +0300
+Subject: [PATCH] kbuild: pass the O3 unroll and inline thresholds to ld.lld
+
+with thinlto the -mllvm thresholds in KBUILD_CFLAGS only reach the pre-link
+step,the loop unroller and the second inliner run in ld.lld with the
+default thresholds,so pass them to the linker too
+
+maple tree test built like the kernel (O3,no simd,thinlto,--lto-O3),ms,
+median of 4 runs on one core:
+  bench        cflags only   +ldflags
+  WALK         10013          7515   -24.9%
+  LOAD          9523          7961   -16.4%
+  SLOT_STORE    3844          3890    +1.2%
+  MT_FOR_EACH  21172         21527    +1.7%
+  MAS_PREV      8662          8872    +2.4%
+---
+ Makefile | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index fc9962bce66a..84d43ab771e0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1169,6 +1169,12 @@ KBUILD_LDFLAGS += -mllvm -import-instr-limit=1000
+ # O2 no matter what -O the compile step used, so match it to the O3 build
+ ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
+ KBUILD_LDFLAGS += --lto-O3
++# The O3 -mllvm unroll and inline thresholds above only reach the ThinLTO
++# pre-link step, the loop unroller and the second inliner run in ld.lld,
++# pass them there too or they keep the default thresholds
++KBUILD_LDFLAGS += $(call ld-option,-mllvm -unroll-threshold=512 \
++		   -mllvm -inline-threshold=1000 \
++		   -mllvm -unroll-runtime-multi-exit)
+ endif
+ endif
+ 
+-- 
+2.56.0
+

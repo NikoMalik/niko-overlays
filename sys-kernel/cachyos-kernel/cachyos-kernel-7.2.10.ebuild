@@ -675,8 +675,12 @@ cachy_use_config() {
 	# _user_ns
 	kconf set USER_NS
 
-	# ntsync built in so perf sees its static functions,the installed module is stripped
-	kconf set NTSYNC
+	# ntsync built in on desktop so perf sees its static functions,the installed module is stripped
+	if use server; then
+		kconf unset NTSYNC
+	else
+		kconf set NTSYNC
+	fi
 
 	# handheld only
 	if [[ "$(cachy_flavour)" == deckify ]]; then
@@ -1036,6 +1040,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-small-tasks-fixes.patch"
   eapply "${FILESDIR}/7.2.10-nap-rating.patch"
   eapply "${FILESDIR}/7.2.10-memset-erms.patch"
+  eapply "${FILESDIR}/7.2.10-lto-thresholds.patch"
 
 
 
