@@ -675,6 +675,9 @@ cachy_use_config() {
 	# _user_ns
 	kconf set USER_NS
 
+	# ntsync built in so perf sees its static functions,the installed module is stripped
+	kconf set NTSYNC
+
 	# handheld only
 	if [[ "$(cachy_flavour)" == deckify ]]; then
 		kconf unset RCU_LAZY_DEFAULT_OFF
