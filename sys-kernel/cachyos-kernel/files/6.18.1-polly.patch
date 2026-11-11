@@ -13,7 +13,7 @@ index 5e67faefc..51926170c 100644
 +		   -mllvm -polly-invariant-load-hoisting \
 +		   -mllvm -polly-loopfusion-greedy \
 +		   -mllvm -polly-run-inliner \
-+                   -mllvm -polly-dependences-computeout=500000 \
++                   -mllvm -polly-dependences-computeout=50000000 \
 +		   -mllvm -polly-vectorizer=stripmine \
 +                   -mllvm -polly-omp-backend=LLVM \
 +                   -mllvm -polly-detect-profitability-min-per-loop-insts=40
