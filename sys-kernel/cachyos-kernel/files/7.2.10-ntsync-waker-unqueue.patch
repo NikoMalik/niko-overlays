@@ -1,0 +1,151 @@
+From 6d95434c3f0b3a2b4f5a6958d346ba0dbf210fe8 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 13:26:59 +0300
+Subject: [PATCH] ntsync: let the waker unqueue woken any-waiters
+
+perf in a game showed 11 job worker threads in NtWaitForSingleObject
+spending 6.4% of kernel cycles in native_queued_spin_lock_slowpath under
+ntsync_char_ioctl,strace showed 100k waits in 5s with only 6 timeouts,so
+these are real sleeps and every woken waiter took obj->lock again just
+to unqueue,threads woken together all queued on it
+
+the waker already holds that lock,so it takes the entry off any_waiters
+itself and sets entry->unqueued with a release store as its last access,
+the waiter sees it with an acquire load and skips the lock,otherwise it
+unqueues under the lock as before,wait-all is unchanged
+---
+ drivers/misc/ntsync.c | 45 ++++++++++++++++++++++++++++++-------------
+ 1 file changed, 32 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/misc/ntsync.c b/drivers/misc/ntsync.c
+index 6d71382c75cd..c07d0cadb97b 100644
+--- a/drivers/misc/ntsync.c
++++ b/drivers/misc/ntsync.c
+@@ -100,6 +100,8 @@ struct ntsync_q_entry {
+ 	struct ntsync_q *q;
+ 	struct ntsync_obj *obj;
+ 	__u32 index;
++	/* set with release by the waker once it is done with the entry */
++	bool unqueued;
+ };
+ 
+ struct ntsync_q {
+@@ -317,14 +319,28 @@ static void try_wake_all_obj(struct ntsync_device *dev, struct ntsync_obj *obj)
+ 		try_wake_all(dev, entry->q, obj);
+ }
+ 
++/*
++ * Wake an any-waiter and take it off the object's list under the object lock
++ * the caller already holds. Without this every woken waiter took the same
++ * lock again just to unqueue, a pool of threads woken together all contended
++ * on it. The release store is the last access to the entry, after it the
++ * waiter may skip the lock, unqueue and free the entry.
++ */
++static void wake_any_entry(struct ntsync_q_entry *entry)
++{
++	list_del_init(&entry->node);
++	wake_up_process(entry->q->task);
++	smp_store_release(&entry->unqueued, true);
++}
++
+ static void try_wake_any_sem(struct ntsync_obj *sem)
+ {
+-	struct ntsync_q_entry *entry;
++	struct ntsync_q_entry *entry, *next;
+ 
+ 	ntsync_assert_held(sem);
+ 	lockdep_assert(sem->type == NTSYNC_TYPE_SEM);
+ 
+-	list_for_each_entry(entry, &sem->any_waiters, node) {
++	list_for_each_entry_safe(entry, next, &sem->any_waiters, node) {
+ 		struct ntsync_q *q = entry->q;
+ 		int signaled = -1;
+ 
+@@ -333,19 +349,19 @@ static void try_wake_any_sem(struct ntsync_obj *sem)
+ 
+ 		if (atomic_try_cmpxchg(&q->signaled, &signaled, entry->index)) {
+ 			sem->u.sem.count--;
+-			wake_up_process(q->task);
++			wake_any_entry(entry);
+ 		}
+ 	}
+ }
+ 
+ static void try_wake_any_mutex(struct ntsync_obj *mutex)
+ {
+-	struct ntsync_q_entry *entry;
++	struct ntsync_q_entry *entry, *next;
+ 
+ 	ntsync_assert_held(mutex);
+ 	lockdep_assert(mutex->type == NTSYNC_TYPE_MUTEX);
+ 
+-	list_for_each_entry(entry, &mutex->any_waiters, node) {
++	list_for_each_entry_safe(entry, next, &mutex->any_waiters, node) {
+ 		struct ntsync_q *q = entry->q;
+ 		int signaled = -1;
+ 
+@@ -360,19 +376,19 @@ static void try_wake_any_mutex(struct ntsync_obj *mutex)
+ 			mutex->u.mutex.ownerdead = false;
+ 			mutex->u.mutex.count++;
+ 			mutex->u.mutex.owner = q->owner;
+-			wake_up_process(q->task);
++			wake_any_entry(entry);
+ 		}
+ 	}
+ }
+ 
+ static void try_wake_any_event(struct ntsync_obj *event)
+ {
+-	struct ntsync_q_entry *entry;
++	struct ntsync_q_entry *entry, *next;
+ 
+ 	ntsync_assert_held(event);
+ 	lockdep_assert(event->type == NTSYNC_TYPE_EVENT);
+ 
+-	list_for_each_entry(entry, &event->any_waiters, node) {
++	list_for_each_entry_safe(entry, next, &event->any_waiters, node) {
+ 		struct ntsync_q *q = entry->q;
+ 		int signaled = -1;
+ 
+@@ -382,7 +398,7 @@ static void try_wake_any_event(struct ntsync_obj *event)
+ 		if (atomic_try_cmpxchg(&q->signaled, &signaled, entry->index)) {
+ 			if (!event->u.event.manual)
+ 				event->u.event.signaled = false;
+-			wake_up_process(q->task);
++			wake_any_entry(entry);
+ 		}
+ 	}
+ }
+@@ -920,6 +936,7 @@ static int setup_wait(struct ntsync_device *dev,
+ 		entry->obj = obj;
+ 		entry->q = q;
+ 		entry->index = i;
++		entry->unqueued = false;
+ 	}
+ 
+ 	*ret_q = q;
+@@ -993,15 +1010,17 @@ static int ntsync_wait_any(struct ntsync_device *dev, void __user *argp)
+ 
+ 	ret = ntsync_schedule(q, &args);
+ 
+-	/* and finally, unqueue */
++	/* and finally, unqueue, the waker already did it for its own entry */
+ 
+ 	for (i = 0; i < total_count; i++) {
+ 		struct ntsync_q_entry *entry = &q->entries[i];
+ 		struct ntsync_obj *obj = entry->obj;
+ 
+-		all = ntsync_lock_obj(dev, obj);
+-		list_del(&entry->node);
+-		ntsync_unlock_obj(dev, obj, all);
++		if (!smp_load_acquire(&entry->unqueued)) {
++			all = ntsync_lock_obj(dev, obj);
++			list_del(&entry->node);
++			ntsync_unlock_obj(dev, obj, all);
++		}
+ 
+ 		put_obj(obj);
+ 	}
+-- 
+2.56.0
+
