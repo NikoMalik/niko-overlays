@@ -1041,6 +1041,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-nap-rating.patch"
   eapply "${FILESDIR}/7.2.10-memset-erms.patch"
   eapply "${FILESDIR}/7.2.10-lto-thresholds.patch"
+  eapply "${FILESDIR}/7.2.10-ntsync-wait-lock.patch"
 
 
 

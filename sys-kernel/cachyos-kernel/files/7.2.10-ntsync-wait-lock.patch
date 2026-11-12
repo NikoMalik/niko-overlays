@@ -1,0 +1,68 @@
+From ecf7b5372610a19ab761e1cb9bc1405a7177df78 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 11:00:21 +0300
+Subject: [PATCH] ntsync: queue and check wait-any objects under one lock
+
+ntsync_wait_any() took obj->lock of every object three times per wait,
+once to queue,once to check if already signaled and once to unqueue.
+with a game thread pool waiting on shared objects perf showed 5.9% of
+kernel cycles in native_queued_spin_lock_slowpath under ntsync_char_ioctl
+
+queue and check in the same locked section,objects are still checked in
+order with the alert event last,once signaled the rest are only queued
+so the unqueue pass finds every entry
+---
+ drivers/misc/ntsync.c | 28 ++++++++++------------------
+ 1 file changed, 10 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/misc/ntsync.c b/drivers/misc/ntsync.c
+index 4a805919bb0c..6d71382c75cd 100644
+--- a/drivers/misc/ntsync.c
++++ b/drivers/misc/ntsync.c
+@@ -967,33 +967,25 @@ static int ntsync_wait_any(struct ntsync_device *dev, void __user *argp)
+ 	if (args.alert)
+ 		total_count++;
+ 
+-	/* queue ourselves */
+-
+-	for (i = 0; i < total_count; i++) {
+-		struct ntsync_q_entry *entry = &q->entries[i];
+-		struct ntsync_obj *obj = entry->obj;
+-
+-		all = ntsync_lock_obj(dev, obj);
+-		list_add_tail(&entry->node, &obj->any_waiters);
+-		ntsync_unlock_obj(dev, obj, all);
+-	}
+-
+ 	/*
+-	 * Check if we are already signaled.
++	 * Queue ourselves and check if we are already signaled, both under one
++	 * lock of each object. Many threads waiting on the same object made
++	 * separate queue and check passes contend on obj->lock twice per wait.
+ 	 *
+ 	 * Note that the API requires that normal objects are checked before
+ 	 * the alert event. Hence we queue the alert event last, and check
+-	 * objects in order.
++	 * objects in order. Once signaled, the remaining objects are only
++	 * queued so the unqueue pass below can remove us from every list.
+ 	 */
+ 
+ 	for (i = 0; i < total_count; i++) {
+-		struct ntsync_obj *obj = q->entries[i].obj;
+-
+-		if (atomic_read(&q->signaled) != -1)
+-			break;
++		struct ntsync_q_entry *entry = &q->entries[i];
++		struct ntsync_obj *obj = entry->obj;
+ 
+ 		all = ntsync_lock_obj(dev, obj);
+-		try_wake_any_obj(obj);
++		list_add_tail(&entry->node, &obj->any_waiters);
++		if (atomic_read(&q->signaled) == -1)
++			try_wake_any_obj(obj);
+ 		ntsync_unlock_obj(dev, obj, all);
+ 	}
+ 
+-- 
+2.56.0
+
