@@ -675,6 +675,9 @@ cachy_use_config() {
 	# _user_ns
 	kconf set USER_NS
 
+	# 4 MiB kernel log so early boot oopses are still in the buffer when journald starts
+	kconf val LOG_BUF_SHIFT 22
+
 	# ntsync built in on desktop so perf sees its static functions,the installed module is stripped
 	if use server; then
 		kconf unset NTSYNC
