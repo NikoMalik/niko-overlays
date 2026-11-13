@@ -1,0 +1,42 @@
+From 2a730081f5b3e3f92d966a34a13ce1cecd1ad783 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 02:55:05 +0300
+Subject: [PATCH] sched/poc: skip the pending RMW when the bit is already set
+
+__set_cpu_idle_state_poc() runs on every idle entry and exit of every CPU
+and did a locked atomic_or() on the per-LLC pending word each time,pulling
+that shared line exclusive,in a game it was about 1% of kernel cycles
+
+if this CPU's bit is still pending the aggregator has not consumed it and
+re-reads poc_busy_bit after its atomic_xchg(),so read the word first and
+skip the RMW,an smp_mb() orders the poc_busy_bit store before that read
+and pairs with the full barrier of the xchg
+---
+ kernel/sched/poc_selector.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/kernel/sched/poc_selector.c b/kernel/sched/poc_selector.c
+index f34e9c75a2b9..ac05c60a0f6e 100644
+--- a/kernel/sched/poc_selector.c
++++ b/kernel/sched/poc_selector.c
+@@ -675,6 +675,17 @@ void __set_cpu_idle_state_poc(int cpu, int state)
+ 	 */
+ 	if (!!((u64)atomic64_read(&sd_share->poc_busy_mask) & bm) == !state)
+ 		return;
++	/*
++	 * Every CPU of the LLC enters and leaves idle through here and the
++	 * locked RMW pulls the shared pending line exclusive each time. If
++	 * this CPU's bit is still pending the aggregator has not consumed it
++	 * yet and re-reads poc_busy_bit after its atomic_xchg(), so a plain
++	 * read is enough. The barrier orders the poc_busy_bit store before
++	 * that read, pairing with the full barrier of the xchg.
++	 */
++	smp_mb();
++	if (atomic_read(&sd_share->poc_pending[bit >> 3]) & (1 << (bit & 7)))
++		return;
+ 	atomic_or(1 << (bit & 7), &sd_share->poc_pending[bit >> 3]);
+ }
+ /**************************************************************
+-- 
+2.56.1
+
