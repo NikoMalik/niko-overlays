@@ -1047,6 +1047,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-ntsync-wait-lock.patch"
   eapply "${FILESDIR}/7.2.10-ntsync-waker-unqueue.patch"
   eapply "${FILESDIR}/7.2.10-ntsync-wake-q.patch"
+  eapply "${FILESDIR}/7.2.10-mglru-kswapd-wake-order.patch"
 
 
 

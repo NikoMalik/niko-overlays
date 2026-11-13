@@ -1,0 +1,63 @@
+From 69b8211c1ac9ecdfd1789c8441f599d3aff12702 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 01:14:37 +0300
+Subject: [PATCH] mm/mglru: check the kswapd wake order before a min_ttl oom
+ kill
+
+the high-order guard in lru_gen_age_node() looked at sc->order but
+kswapd_shrink_node() drops it to 0 once a compaction gap is reclaimed,
+and defrag_mode wakes kswapd at pageblock order for order-0 requests,
+so a kswapd run reclaiming for a free 2M block aged every generation
+under min_ttl and oom killed a game with 5.5G of inactive file cache
+and 3G of free swap left
+
+keep the order kswapd was woken for in scan_control and skip the
+min_ttl kill when it is non-zero
+---
+ mm/vmscan.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 90673e80e6f7..1a7819b55cbc 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -161,6 +161,12 @@ struct scan_control {
+ 	/* Allocation order */
+ 	s8 order;
+ 
++	/*
++	 * Order kswapd was woken for, kswapd_shrink_node() drops order to 0
++	 * once it reclaimed a compaction gap but this one stays
++	 */
++	s8 kswapd_order;
++
+ 	/* Scan (total_size >> priority) pages at once */
+ 	s8 priority;
+ 
+@@ -4315,9 +4321,13 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
+ 	 *
+ 	 * Not for a high-order kswapd run: a missing contiguous block is for
+ 	 * compaction to fix, killing a task frees order-0 pages that may not
+-	 * merge and leaves plenty of free memory behind.
++	 * merge and leaves plenty of free memory behind. Check the order kswapd
++	 * was woken for, sc->order drops to 0 after the compaction gap and
++	 * defrag_mode wakes kswapd at pageblock order for order-0 requests,
++	 * that reclaim ages every generation fast without any thrashing.
+ 	 */
+-	if (!reclaimable && !sc->order && mutex_trylock(&oom_lock)) {
++	if (!reclaimable && !sc->order && !sc->kswapd_order &&
++	    mutex_trylock(&oom_lock)) {
+ 		struct oom_control oc = {
+ 			.gfp_mask = sc->gfp_mask,
+ 		};
+@@ -7329,6 +7339,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int highest_zoneidx)
+ 	struct scan_control sc = {
+ 		.gfp_mask = GFP_KERNEL,
+ 		.order = order,
++		.kswapd_order = order,
+ 		.may_unmap = 1,
+ 	};
+ 
+-- 
+2.56.1
+
