@@ -1049,6 +1049,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-ntsync-wake-q.patch"
   eapply "${FILESDIR}/7.2.10-mglru-kswapd-wake-order.patch"
   eapply "${FILESDIR}/7.2.10-poc-pending-read.patch"
+  eapply "${FILESDIR}/7.2.10-tg-cpus-cache.patch"
 
 
 

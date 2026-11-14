@@ -1,0 +1,77 @@
+From c7a3d4f20d35baed453f2c1c1e1968b7ee51d819 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 11:31:27 +0300
+Subject: [PATCH] sched/fair: cache the cpuset cpu count of a task group per
+ jiffy
+
+calc_concur_shares() runs on every enqueue and dequeue for each group
+level and tg_cpus() called cpuset_num_cpus() each time,which walks the
+cgroup up to its effective cpuset,in a game profile that was 0.45% of
+kernel cycles with four cpu controlled levels above the game
+
+the count only changes on cpuset or hotplug updates and the shares follow
+tick-averaged load anyway,so keep it in task_group and refresh it at most
+once per jiffy,the fields sit on the runnable_avg line that the same path
+already reads
+---
+ kernel/sched/fair.c  | 24 ++++++++++++++++++++++--
+ kernel/sched/sched.h |  8 ++++++++
+ 2 files changed, 30 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 07c7fa9cfa4d..18204ff5b254 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -5229,8 +5229,28 @@ static int tg_cpus(struct task_group *tg)
+ 
+ 	if (cpusets_enabled()) {
+ 		struct cgroup *cgrp = tg->css.cgroup;
+-		if (cgrp)
+-			nr = cpuset_num_cpus(cgrp);
++
++		/*
++		 * Every enqueue and dequeue recomputes the shares of each group
++		 * level and cpuset_num_cpus() walks the cgroup up to its cpuset
++		 * each time. The count changes only on cpuset or hotplug updates,
++		 * and the shares already follow tick-averaged load, so reuse it
++		 * within a jiffy. A cached 0 is the never filled state.
++		 */
++		if (cgrp) {
++			unsigned long now = jiffies;
++			int cached = 0;
++
++			if (smp_load_acquire(&tg->cpuset_cpus_stamp) == now)
++				cached = READ_ONCE(tg->cpuset_cpus);
++			if (cached) {
++				nr = cached;
++			} else {
++				nr = cpuset_num_cpus(cgrp);
++				WRITE_ONCE(tg->cpuset_cpus, nr);
++				smp_store_release(&tg->cpuset_cpus_stamp, now);
++			}
++		}
+ 	}
+ 
+ 	/*
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index fc2b81334e9e..5be1dfdce459 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -495,6 +495,14 @@ struct task_group {
+ 	 */
+ 	atomic_long_t		load_avg ____cacheline_aligned;
+ 	atomic_long_t		runnable_avg;
++	/*
++	 * tg_cpus() cache, refreshed at most once per jiffy. It sits on the
++	 * runnable_avg line that calc_concur_shares() reads anyway, so a hit
++	 * costs no extra miss and the refresh does not dirty the read-mostly
++	 * fields above.
++	 */
++	unsigned long		cpuset_cpus_stamp;
++	int			cpuset_cpus;
+ 
+ #endif /* CONFIG_FAIR_GROUP_SCHED */
+ 
+-- 
+2.56.1
+
