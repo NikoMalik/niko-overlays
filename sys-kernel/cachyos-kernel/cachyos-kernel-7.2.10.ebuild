@@ -1050,6 +1050,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-mglru-kswapd-wake-order.patch"
   eapply "${FILESDIR}/7.2.10-poc-pending-read.patch"
   eapply "${FILESDIR}/7.2.10-tg-cpus-cache.patch"
+  eapply "${FILESDIR}/7.2.10-lz4kdr-bounds.patch"
 
 
 

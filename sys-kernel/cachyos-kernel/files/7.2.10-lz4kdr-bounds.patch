@@ -1,0 +1,93 @@
+From 7ab34ee3d8af46c6774bbab19a2e695ca7adbc1b Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sat, 14 Nov 2026 12:54:54 +0300
+Subject: [PATCH] lz4kdr: reject tiny inputs and use memmove for overlapping
+ copies
+
+encode_any() reads 8 bytes at in + 1 before its first bounds check,zram
+always passes a page but lz4kdr_encode() is exported and a shorter input
+read past the buffer,asan in a userspace build showed it at 1 byte,return
+incompressible for inputs up to NR_COPY_MIN which never compress anyway
+
+the decoder copies a whole 8 or 16 byte chunk while the offset is smaller,
+the bytes past the offset are rewritten by the next copy but memcpy() with
+overlapping ranges is undefined,use memmove() there,with a constant size
+it compiles to the same 453 decoder instructions
+---
+ lib/lz4kdr/lz4kdr_decode.c  |  6 +++---
+ lib/lz4kdr/lz4kdr_encode.c  |  7 +++++++
+ lib/lz4kdr/lz4kdr_private.h | 11 +++++++++++
+ 3 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/lib/lz4kdr/lz4kdr_decode.c b/lib/lz4kdr/lz4kdr_decode.c
+index 6a8e2bb5095b..7b65c0802d1d 100644
+--- a/lib/lz4kdr/lz4kdr_decode.c
++++ b/lib/lz4kdr/lz4kdr_decode.c
+@@ -103,13 +103,13 @@ static void out_repeat_overlap(
+ 		COPY_MIN = R_COPY_MIN >> 1,
+ 		OFFSET_LIMIT = COPY_MIN >> 1
+ 	};
+-	m_copy(out_at, out_from, COPY_MIN);
++	m_copy_overlap(out_at, out_from, COPY_MIN);
+ /* (1 < offset < R_COPY_MIN/2) && out_copy_end + R_COPY_SAFE_2X  <= out_end */
+ 	out_at += offset;
+ 	if (offset <= OFFSET_LIMIT)
+ 		offset <<= 1;
+ 	do {
+-		m_copy(out_at, out_from, COPY_MIN);
++		m_copy_overlap(out_at, out_from, COPY_MIN);
+ 		out_at += offset;
+ 		if (offset <= OFFSET_LIMIT)
+ 			offset <<= 1;
+@@ -234,7 +234,7 @@ static int decode(
+ 					       R_COPY_MIN);
+ 		} else if (likely(offset >= (R_COPY_MIN >> 1) &&
+ 				  out_copy_end <= out_safe_end)) {
+-			m_copy(out_at, out_from, R_COPY_MIN);
++			m_copy_overlap(out_at, out_from, R_COPY_MIN);
+ 			out_at += offset;
+ 			while_lt_copy_x(out_at, out_from, out_copy_end, R_COPY_MIN);
+ 		} else if (likely(offset > 0)) {
+diff --git a/lib/lz4kdr/lz4kdr_encode.c b/lib/lz4kdr/lz4kdr_encode.c
+index 8bfecd032d4c..f81186a74a6e 100644
+--- a/lib/lz4kdr/lz4kdr_encode.c
++++ b/lib/lz4kdr/lz4kdr_encode.c
+@@ -538,6 +538,13 @@ int lz4kdr_encode(
+ 		return LZ4KDR_STATUS_FAILED; /* pointer overflow */
+ 	if (in_max > (1 << BLOCK_4KB_LOG2))
+ 		return LZ4KDR_STATUS_FAILED;
++	/*
++	 * encode_any() reads 8 bytes at in + 1 before its first bounds check,
++	 * zram always passes a whole page but other callers may not, and a
++	 * block this small never compresses anyway
++	 */
++	if (in_max <= NR_COPY_MIN)
++		return LZ4KDR_STATUS_INCOMPRESSIBLE;
+ 	if (unlikely(!out_limit || out_limit > io_min))
+ 		out_limit = (unsigned)io_min;
+ 	if (unlikely(nr_encoded_bytes_max(in_max, NR_4KB_LOG2) > out_max))
+diff --git a/lib/lz4kdr/lz4kdr_private.h b/lib/lz4kdr/lz4kdr_private.h
+index f78e52cf5ff0..240b63972834 100644
+--- a/lib/lz4kdr/lz4kdr_private.h
++++ b/lib/lz4kdr/lz4kdr_private.h
+@@ -99,6 +99,17 @@ inline static void m_copy(void *dst, const void *src, size_t total)
+ 	(void)__builtin_memcpy(dst, src, total);
+ }
+ 
++/*
++ * The decoder copies a whole chunk while the match offset is smaller than
++ * the chunk, the bytes past the offset are rewritten by the next copy. A
++ * memcpy() with overlapping ranges is undefined, memmove() of a constant
++ * size compiles to the same loads and stores.
++ */
++inline static void m_copy_overlap(void *dst, const void *src, size_t total)
++{
++	(void)__builtin_memmove(dst, src, total);
++}
++
+ inline static void m_set(void *dst, uint8_t value, size_t total)
+ {
+ 	(void)__builtin_memset(dst, value, total);
+-- 
+2.56.1
+
