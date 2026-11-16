@@ -711,6 +711,13 @@ cachy_use_config() {
 		kconf set LE9UO_PROFILE_ANON
 	fi
 
+	# desktop boots with vm.defrag_mode=1,whole pageblocks stay free so thp faults rarely fall back to 4k
+	if use server; then
+		kconf unset DEFRAG_MODE_DEFAULT
+	else
+		kconf set DEFRAG_MODE_DEFAULT
+	fi
+
 
 
     # possible issues on nvidia and amd
@@ -1056,6 +1063,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-tg-cpus-cache.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-bounds.patch"
   eapply "${FILESDIR}/7.2.10-rwsem-nopause.patch"
+  eapply "${FILESDIR}/7.2.10-defrag-mode-default.patch"
 
 
 

@@ -1,0 +1,59 @@
+From 0c0adfd1deda7161ef55b4778c549960edb2caee Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 11:22:55 +0300
+Subject: [PATCH] mm/page_alloc: add a config to boot with vm.defrag_mode on
+
+defrag_mode stops the allocator from mixing migratetypes inside a
+pageblock and makes kswapd/kcompactd free whole pageblocks,on a 16g
+desktop with thp always it took failed thp faults from about 25% to 7%
+for about 0.5% of one cpu in kswapd during builds
+
+it stays off by default upstream because small memory machines and
+servers without thp only pay the earlier reclaim,so make it a config
+that a desktop profile can turn on instead of every user adding a sysctl
+---
+ mm/Kconfig      | 14 ++++++++++++++
+ mm/page_alloc.c |  2 +-
+ 2 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/mm/Kconfig b/mm/Kconfig
+index 0e37cac37c74..036755eea4a3 100644
+--- a/mm/Kconfig
++++ b/mm/Kconfig
+@@ -758,6 +758,20 @@ config COMPACT_UNEVICTABLE_DEFAULT
+ 	default 0 if PREEMPT_RT
+ 	default 1
+ 
++config DEFRAG_MODE_DEFAULT
++	bool "Enable vm.defrag_mode at boot"
++	depends on COMPACTION && TRANSPARENT_HUGEPAGE_ALWAYS
++	default n
++	help
++	  Sets the boot value of the vm.defrag_mode sysctl to 1. The page
++	  allocator then keeps pageblocks of one migratetype instead of
++	  mixing them under pressure, and kswapd/kcompactd free whole
++	  pageblocks ahead of time, so THP faults fall back to 4k pages
++	  much less often. The cost is earlier background reclaim.
++
++	  Useful on desktops and build machines with THP always. Leave it
++	  off on small memory machines and on servers that do not use THP.
++
+ #
+ # support for free page reporting
+ config PAGE_REPORTING
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 13f4a37b2442..0303d7e97b80 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -276,7 +276,7 @@ static int watermark_boost_factor __read_mostly;
+ static int watermark_boost_factor __read_mostly = 15000;
+ #endif
+ static int watermark_scale_factor = 10;
+-int defrag_mode;
++int defrag_mode = IS_ENABLED(CONFIG_DEFRAG_MODE_DEFAULT);
+ 
+ /* movable_zone is the "real" zone pages in ZONE_MOVABLE are taken from */
+ int movable_zone;
+-- 
+2.56.1
+
