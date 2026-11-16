@@ -979,7 +979,6 @@ src_prepare() {
   eapply "${FILESDIR}/6.18.1-epb.patch"
   eapply "${FILESDIR}/6.18.1-crypto-late.patch"
   eapply "${FILESDIR}/6.18.1-memcontrol.patch"
-  eapply "${FILESDIR}/6.18.1-better_idle.patch"
   eapply "${FILESDIR}/6.18.1-lto-size.patch"
   eapply "${FILESDIR}/6.18.1-harder_clang.patch"
   eapply "${FILESDIR}/6.18.1-mharden_none.patch"
@@ -1066,10 +1065,8 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-lz4kdr-bounds.patch"
   eapply "${FILESDIR}/7.2.10-defrag-mode-default.patch"
   eapply "${FILESDIR}/7.2.10-pcp-prefetch.patch"
-  eapply "${FILESDIR}/7.2.10-better-idle-fix.patch"
   eapply "${FILESDIR}/7.2.10-crash-kexec-noinline.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-decode-fast.patch"
-  eapply "${FILESDIR}/7.2.10-newidle-half-switch.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-match-peel.patch"
 
 
