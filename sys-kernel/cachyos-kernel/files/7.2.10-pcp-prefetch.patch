@@ -1,0 +1,53 @@
+From 6d14661e5f667026661bb86053fa5383cb13959b Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 11:46:41 +0300
+Subject: [PATCH] mm/page_alloc: prefetch the next free page when taking one
+ off a list
+
+perf annotate of __rmqueue_pcplist during a parallel clang build puts
+45% of the function on list_del() of the pcp list and 26% on list_del()
+of the buddy free list in the inlined refill,both wait for the struct
+page of the neighbour that the unlink writes to,which is cold
+
+after the unlink the new first entry is warm,so its next pointer is
+free to read,prefetch the page behind it so the next allocation from
+the same list does not stall on it,on the pcp path the caller clears
+the 4k page in between which is enough time for the line to arrive
+---
+ mm/page_alloc.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 0303d7e97b80..2f632bbc2382 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -1906,6 +1906,13 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
+ 
+ 		page_del_and_expand(zone, page, order, current_order,
+ 				    migratetype);
++		/*
++		 * Unlinking the next page will write to its neighbour's
++		 * struct page, which is cold. The new first entry was just
++		 * written above, so reading its next pointer is a cache hit.
++		 * Start the miss for the next refill round now.
++		 */
++		prefetchw(area->free_list[migratetype].next->next);
+ 		trace_mm_page_alloc_zone_locked(page, order, migratetype,
+ 				pcp_allowed_order(order) &&
+ 				migratetype < MIGRATE_PCPTYPES);
+@@ -3355,6 +3362,12 @@ struct page *__rmqueue_pcplist(struct zone *zone, unsigned int order,
+ 
+ 		page = list_first_entry(list, struct page, pcp_list);
+ 		list_del(&page->pcp_list);
++		/*
++		 * Same as in __rmqueue_smallest(): the next allocation from
++		 * this list writes to the struct page after the new first
++		 * entry, fetch it while the caller clears this page.
++		 */
++		prefetchw(list->next->next);
+ 		pcp->count -= 1 << order;
+ 	} while (check_new_pages(page, order));
+ 
+-- 
+2.56.1
+

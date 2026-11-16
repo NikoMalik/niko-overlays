@@ -1064,6 +1064,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-lz4kdr-bounds.patch"
   eapply "${FILESDIR}/7.2.10-rwsem-nopause.patch"
   eapply "${FILESDIR}/7.2.10-defrag-mode-default.patch"
+  eapply "${FILESDIR}/7.2.10-pcp-prefetch.patch"
 
 
 
