@@ -1,0 +1,62 @@
+From 4a6bc04fd97d8bc2dccdd307292f52096d41b96c Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 22:37:37 +0300
+Subject: [PATCH] lz4kdr: peel the first 8 bytes off the match length loop
+
+perf record -e branch-misses on the encoder puts more than half of its
+mispredicts on the exit of the 8-byte compare loop in repeat_end(),not
+on the hash probe loop,match lengths are random so the loop exit cannot
+be predicted well,but most matches end within the first 8 bytes after
+REPEAT_MIN,so give that check a branch of its own
+
+the output is byte for byte the same
+
+  before  6485 6482 6480
+  after   6343 6342 6343
+
+  python heap   5017 -> 4897
+  machine code  7000 -> 6928
+  text          8839 -> 8657
+  compressed    2899 -> 2867
+
+every page round trips,the test suite passes under asan and ubsan
+---
+ lib/lz4kdr/lz4kdr_encode.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/lib/lz4kdr/lz4kdr_encode.c b/lib/lz4kdr/lz4kdr_encode.c
+index f81186a74a6e..4fc58a90cd94 100644
+--- a/lib/lz4kdr/lz4kdr_encode.c
++++ b/lib/lz4kdr/lz4kdr_encode.c
+@@ -357,6 +357,20 @@ static __always_inline const uint8_t *repeat_end(
+ {
+ 	q += REPEAT_MIN;
+ 	r += REPEAT_MIN;
++	/*
++	 * First 8 bytes peeled off the loop: most matches end there, and a
++	 * branch of its own predicts that far better than the loop exit,
++	 * which also has to cover the long matches.
++	 */
++	{
++		const uint64_t x = read8_at(q) ^ read8_at(r);
++		if (x)
++			return r + ((uint16_t)__builtin_ctzl(x) >> BYTE_BITS_LOG2);
++		q += sizeof(uint64_t);
++		r += sizeof(uint64_t);
++		if (unlikely(r > in_end_safe))
++			goto tail;
++	}
+ 	/* An AVX2 32B-at-a-time vector compare lived here; removed after
+ 	 * it regressed the "exe" corpus 7-24% (see the top-of-file comment
+ 	 * for what that corpus really was) -- back to upstream LZ4KD's
+@@ -371,6 +385,7 @@ static __always_inline const uint8_t *repeat_end(
+ 		q += sizeof(uint64_t);
+ 		r += sizeof(uint64_t);
+ 	} while (likely(r <= in_end_safe)); /* once, at input block end */
++tail:
+ 	while (r < in_end) {
+ 		if (*q != *r) return r;
+ 		++q;
+-- 
+2.56.1
+
