@@ -720,9 +720,11 @@ cachy_use_config() {
 
 
 
-    # possible issues on nvidia and amd
-	# kconf unset INIT_ON_ALLOC_DEFAULT_ON
-	# einfo "Unset INIT_ON_ALLOC_DEFAULT_ON"
+	# desktop stops zeroing every page and kmalloc object on allocation,user pages are still zeroed via __GFP_ZERO
+	# nvidia then needs NVreg_InitializeSystemMemoryAllocations=1 (the default) or its own buffers keep old data
+	if ! use server; then
+		kconf unset INIT_ON_ALLOC_DEFAULT_ON
+	fi
 
   kconf set EXPERT
 	kconf set SCHED_CLUSTER
@@ -1065,6 +1067,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-rwsem-nopause.patch"
   eapply "${FILESDIR}/7.2.10-defrag-mode-default.patch"
   eapply "${FILESDIR}/7.2.10-pcp-prefetch.patch"
+  eapply "${FILESDIR}/7.2.10-better-idle-fix.patch"
 
 
 
