@@ -1,0 +1,46 @@
+From 57eca8f86b7c82cf62caba226cad84ef816b8bc2 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Mon, 16 Nov 2026 14:05:52 +0300
+Subject: [PATCH] locking/rwsem: turn the no-pause owner spin on by default
+
+kernel.rwsem_spin_nopause now boots as 1,a spinner skips cpu_relax()
+for the first 1000 rounds of each owner,kernel.rwsem_spin_nopause=0
+brings PAUSE back on every round
+
+switch the branch to static_branch_likely so the default path is the
+fall through one
+---
+ kernel/locking/rwsem.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/locking/rwsem.c b/kernel/locking/rwsem.c
+index 389dfc646500..cf20756efd5e 100644
+--- a/kernel/locking/rwsem.c
++++ b/kernel/locking/rwsem.c
+@@ -714,11 +714,12 @@ enum owner_state {
+  * cpu_relax() on every round notices the owner's release that much later.
+  * kernel.rwsem_spin_nopause=1 skips it for the first RWSEM_NOPAUSE_SPINS
+  * rounds of each owner, at the cost of starving an SMT sibling that may be
+- * the owner itself. Off by default so both can be measured on one boot.
++ * the owner itself. On by default, kernel.rwsem_spin_nopause=0 brings back
++ * cpu_relax() on every round.
+  */
+ #define RWSEM_NOPAUSE_SPINS	1000
+ 
+-static DEFINE_STATIC_KEY_FALSE(rwsem_spin_nopause);
++static DEFINE_STATIC_KEY_TRUE(rwsem_spin_nopause);
+ 
+ static const struct ctl_table rwsem_sysctl_table[] = {
+ 	{
+@@ -837,7 +838,7 @@ rwsem_spin_on_owner(struct rw_semaphore *sem)
+ 			break;
+ 		}
+ 
+-		if (!static_branch_unlikely(&rwsem_spin_nopause) ||
++		if (!static_branch_likely(&rwsem_spin_nopause) ||
+ 		    ++spins > RWSEM_NOPAUSE_SPINS)
+ 			cpu_relax();
+ 	}
+-- 
+2.56.1
+

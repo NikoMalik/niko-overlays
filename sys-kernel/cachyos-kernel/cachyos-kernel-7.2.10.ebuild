@@ -1068,6 +1068,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-defrag-mode-default.patch"
   eapply "${FILESDIR}/7.2.10-pcp-prefetch.patch"
   eapply "${FILESDIR}/7.2.10-better-idle-fix.patch"
+  eapply "${FILESDIR}/7.2.10-rwsem-nopause-default.patch"
 
 
 
