@@ -1070,6 +1070,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-better-idle-fix.patch"
   eapply "${FILESDIR}/7.2.10-rwsem-nopause-default.patch"
   eapply "${FILESDIR}/7.2.10-crash-kexec-noinline.patch"
+  eapply "${FILESDIR}/7.2.10-lz4kdr-decode-fast.patch"
 
 
 
