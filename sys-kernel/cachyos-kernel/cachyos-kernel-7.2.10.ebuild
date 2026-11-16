@@ -494,6 +494,10 @@ cachy_use_config() {
 			kconf unset GENERIC_CPU
 			kconf unset MZEN4
 			kconf set X86_NATIVE_CPU
+			if ! grep -qw ibt /proc/cpuinfo; then
+				kconf unset X86_KERNEL_IBT
+				einfo "CPU has no CET IBT, CONFIG_X86_KERNEL_IBT disabled (-fcf-protection=none)"
+			fi
 			;;
 		*) die "Invalid _processor_opt value: ${_processor_opt}" ;;
 	esac
