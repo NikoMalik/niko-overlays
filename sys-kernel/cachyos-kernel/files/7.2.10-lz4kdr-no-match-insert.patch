@@ -1,0 +1,74 @@
+From de4a058734a5aee1970abfed710c5b55afa8496d Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 11:50:42 +0300
+Subject: [PATCH] lz4kdr: drop the hash table insert after every match
+
+after each match the encoder hashed the last byte of the match into
+ht[],perf annotate puts that load and multiply at about 12% of
+encode_fast,and in a 1024-entry table the insert mostly evicts entries
+the probe loop would have matched later,so heap pages get smaller
+without it
+
+the format is unchanged,hash() has no other user and goes away too
+
+
+  python heap    18717358 -> 18360960  -1.9%   12762 12940 -> 12307 12323
+  machine code   44670152 -> 44776403  +0.24%  18233 18448 -> 18024 17947
+  text           11493417 -> 11570676  +0.67%  22799 22906 -> 22463 22433
+  compressed     20864374 -> 20858281          2172  2178  -> 2211  2202
+  all            95.74 MB -> 95.57 MB  -0.19%
+
+zram holds mostly anonymous memory,which the heap set stands for
+
+every page round trips,the test suite passes under asan and ubsan
+---
+ lib/lz4kdr/lz4kdr_encode.c | 19 +++++++------------
+ 1 file changed, 7 insertions(+), 12 deletions(-)
+
+diff --git a/lib/lz4kdr/lz4kdr_encode.c b/lib/lz4kdr/lz4kdr_encode.c
+index 4fc58a90cd94..b2766cacf581 100644
+--- a/lib/lz4kdr/lz4kdr_encode.c
++++ b/lib/lz4kdr/lz4kdr_encode.c
+@@ -403,13 +403,6 @@ const uint8_t *lz4kdr_repeat_end(
+ 	return repeat_end(q, r, in_end_safe, in_end);
+ }
+ 
+-/* CR increase order: +STEP, have OFFSETS, use _5b(most impact) */
+-/* *_6b to compete with LZ4 */
+-inline static uint_fast32_t hash(const uint8_t *r)
+-{
+-	return hash64_5b(r, HT_LOG2);
+-}
+-
+ /*
+  * Proof that 'r' increments are safe-NO pointer overflows are possible:
+  *
+@@ -473,10 +466,7 @@ static int encode_any(
+ 			 * (v>>8)'s low 5 bytes = r[1..6) hash position r+1 --
+ 			 * one load instead of two, and both ht[] loads/hashes
+ 			 * can issue back to back instead of waiting on the
+-			 * first equal4pv(). This bypasses hash()/hashed()
+-			 * entirely for the probe loop; hash() is still used
+-			 * once per match below (ht[hash(r - 1)]), just far
+-			 * less often than it was called here.
++			 * first equal4pv(). This bypasses hashed() entirely.
+ 			 */
+ 			{
+ 				const uint64_t v = read8_at(r);
+@@ -511,7 +501,12 @@ static int encode_any(
+ 		if (unlikely((r += r_bytes_max) > in_end_safe))
+ 			return out_tail2(out_at, out_end, out, r, in_end,
+ 					 NR_LOG2, OFF_LOG2);
+-		ht[hash(r - 1)] = (uint16_t)(r - 1 - in0);
++		/*
++		 * No ht[] insert for the last byte of the match: in a
++		 * 1024-entry table it mostly evicts entries the probe loop
++		 * would have found, and its extra load and multiply cost
++		 * about 12% of the encoder.
++		 */
+ 	}
+ }
+ 
+-- 
+2.56.1
+

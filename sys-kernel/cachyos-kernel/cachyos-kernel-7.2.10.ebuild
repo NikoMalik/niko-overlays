@@ -1068,6 +1068,8 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-crash-kexec-noinline.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-decode-fast.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-match-peel.patch"
+  eapply "${FILESDIR}/7.2.10-lz4kdr-fxhash.patch"
+  eapply "${FILESDIR}/7.2.10-lz4kdr-no-match-insert.patch"
 
 
 

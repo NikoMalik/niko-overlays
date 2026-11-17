@@ -1,0 +1,40 @@
+From aba95990c1901f0228d28e27e76e4c07b3ab0075 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 11:13:19 +0300
+Subject: [PATCH] lz4kdr: use the FxHash multiplier for the 5-byte hash
+
+the encoder hashes 5 bytes into a 1024-entry table with one 64-bit
+multiply,swap 889523592379 for the FxHash constant 0x517cc1b727220a95,
+it mixes the bits better so fewer positions collide and a few more
+matches are found,the speed is the same and the hash is not part of
+the format,old data decodes as before
+
+
+  python heap   15138762 -> 15031645  -0.71%
+  machine code  36041540 -> 35998134  -0.12%
+  text          11492602 -> 11493417  +0.01%
+
+encode cycles per page stayed within run to run noise
+
+every page round trips,the test suite passes under asan and ubsan
+---
+ lib/lz4kdr/lz4kdr_private.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/lib/lz4kdr/lz4kdr_private.h b/lib/lz4kdr/lz4kdr_private.h
+index 240b63972834..ac4dfaf1a147 100644
+--- a/lib/lz4kdr/lz4kdr_private.h
++++ b/lib/lz4kdr/lz4kdr_private.h
+@@ -217,7 +217,8 @@ inline static uint_fast32_t hash32(const uint8_t *r, uint32_t shift)
+ 
+ inline static uint_fast32_t hash64v_5b(const uint64_t r, uint32_t shift)
+ {
+-	const uint64_t m = 889523592379ULL;
++	/* FxHash constant, fewer collisions in the 1024-entry table */
++	const uint64_t m = 0x517cc1b727220a95ULL;
+ 	const uint64_t up_shift = 24;
+ 	return (uint32_t)(((r << up_shift) * m) >> (DWORD_BITS - shift));
+ }
+-- 
+2.56.1
+
