@@ -1,4 +1,4 @@
-From 451b4d3c43f276e8234f54351402bf88531197cb Mon Sep 17 00:00:00 2001
+From 7c224f8f9db38467e2c96dbcad92119c5b8a1585 Mon Sep 17 00:00:00 2001
 From: NikoMalik <NikoMalik@users.noreply.github.com>
 Date: Tue, 17 Nov 2026 12:10:15 +0300
 Subject: [PATCH] sched/fair: rebuild load weight when switching to fair
@@ -10,17 +10,22 @@ a task coming from rt or dl keeps whatever se.load it had when it left
 fair,those classes don't update it,so after a PI boost ends or rtkit
 drops a thread back to SCHED_OTHER the task runs with a stale weight
 until the next reweight,add switching_to_fair() and rebuild the weight
-before the task is enqueued,with BORE set_load_weight() already goes
-through effective_prio_bore()
+before the task is enqueued
+
+with BORE set_load_weight() goes through effective_prio_bore(),which
+still sees the burst penalty from before the class switch,while
+switched_to_fair() only clears it after the enqueue,BORE then keeps the
+penalized weight until the penalty changes again,so reset the burst
+state in switching_to_fair() before the weight is built
 ---
- kernel/sched/fair.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
+ kernel/sched/fair.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
 
 diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
-index 5a302fe03ff7..dbe33e0ef576 100644
+index 5a302fe03ff7..3d65164e7e12 100644
 --- a/kernel/sched/fair.c
 +++ b/kernel/sched/fair.c
-@@ -16154,6 +16154,15 @@ static void switched_from_fair(struct rq *rq, struct task_struct *p)
+@@ -16154,6 +16154,22 @@ static void switched_from_fair(struct rq *rq, struct task_struct *p)
  	detach_task_cfs_rq(p);
  }
  
@@ -30,13 +35,20 @@ index 5a302fe03ff7..dbe33e0ef576 100644
 +	 * Tasks may come from classes that don't keep se.load up to date.
 +	 * Rebuild it before the task is enqueued.
 +	 */
++#ifdef CONFIG_SCHED_BORE
++	/*
++	 * switched_to_fair() resets the burst state after the enqueue,
++	 * reset it first so the weight is not built from the old penalty
++	 */
++	reset_task_bore(p);
++#endif /* CONFIG_SCHED_BORE */
 +	set_load_weight(p, false);
 +}
 +
  static void switched_to_fair(struct rq *rq, struct task_struct *p)
  {
  	WARN_ON_ONCE(p->se.sched_delayed);
-@@ -16538,6 +16547,7 @@ DEFINE_SCHED_CLASS(fair) = {
+@@ -16538,6 +16554,7 @@ DEFINE_SCHED_CLASS(fair) = {
  	.prio_changed		= prio_changed_fair,
  	.switching_from		= switching_from_fair,
  	.switched_from		= switched_from_fair,
