@@ -1070,6 +1070,8 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-lz4kdr-match-peel.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-fxhash.patch"
   eapply "${FILESDIR}/7.2.10-lz4kdr-no-match-insert.patch"
+  eapply "${FILESDIR}/7.2.10-eevdf-vprot-reweight.patch"
+  eapply "${FILESDIR}/7.2.10-fair-switching-to-weight.patch"
 
 
 

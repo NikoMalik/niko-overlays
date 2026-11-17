@@ -1,0 +1,49 @@
+From 451b4d3c43f276e8234f54351402bf88531197cb Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 12:10:15 +0300
+Subject: [PATCH] sched/fair: rebuild load weight when switching to fair
+
+backport of the lore patch
+https://lore.kernel.org/all/20260528131238.3879110-1-quzicheng315@gmail.com/
+
+a task coming from rt or dl keeps whatever se.load it had when it left
+fair,those classes don't update it,so after a PI boost ends or rtkit
+drops a thread back to SCHED_OTHER the task runs with a stale weight
+until the next reweight,add switching_to_fair() and rebuild the weight
+before the task is enqueued,with BORE set_load_weight() already goes
+through effective_prio_bore()
+---
+ kernel/sched/fair.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 5a302fe03ff7..dbe33e0ef576 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -16154,6 +16154,15 @@ static void switched_from_fair(struct rq *rq, struct task_struct *p)
+ 	detach_task_cfs_rq(p);
+ }
+ 
++static void switching_to_fair(struct rq *rq, struct task_struct *p)
++{
++	/*
++	 * Tasks may come from classes that don't keep se.load up to date.
++	 * Rebuild it before the task is enqueued.
++	 */
++	set_load_weight(p, false);
++}
++
+ static void switched_to_fair(struct rq *rq, struct task_struct *p)
+ {
+ 	WARN_ON_ONCE(p->se.sched_delayed);
+@@ -16538,6 +16547,7 @@ DEFINE_SCHED_CLASS(fair) = {
+ 	.prio_changed		= prio_changed_fair,
+ 	.switching_from		= switching_from_fair,
+ 	.switched_from		= switched_from_fair,
++	.switching_to		= switching_to_fair,
+ 	.switched_to		= switched_to_fair,
+ 
+ 	.get_rr_interval	= get_rr_interval_fair,
+-- 
+2.56.1
+

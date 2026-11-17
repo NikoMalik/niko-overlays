@@ -1,0 +1,60 @@
+From df057b9c1e8cb485d04813239c5545668fc8cdf1 Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Tue, 17 Nov 2026 12:09:43 +0300
+Subject: [PATCH] sched/eevdf: fix vprot across reweighting
+
+backport of the lore patch
+https://lore.kernel.org/all/20261016153721.7843-1-kayracizmeci@gmail.com/
+
+when the current entity is reweighted without an active slice
+protection,vprot kept its old absolute value while vruntime was
+rebuilt from the rescaled lag,so vruntime could land below vprot and
+protect_slice() turned true again,keeping current from being preempted,
+group entities are reweighted all the time through update_cfs_group()
+
+reset vprot to vruntime in that case,and cancel the protection when
+the donor is enqueued again in the middle of a sched_change pattern
+---
+ kernel/sched/fair.c | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index f73ce250dafb..5a302fe03ff7 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -5034,12 +5034,15 @@ static void reweight_eevdf(struct cfs_rq *cfs_rq, struct sched_entity *se,
+ 	update_load_set(&se->h_load, weight);
+ 
+ 	if (on_rq) {
+-		if (rel_vprot)
+-			se->vprot += avruntime;
+ 		se->deadline += avruntime;
+ 		se->rel_deadline = 0;
+ 		se->vruntime = avruntime - se->vlag;
+ 
++		if (rel_vprot)
++			se->vprot += avruntime;
++		else if (curr)
++			se->vprot = se->vruntime;
++
+ 		if (!curr)
+ 			__enqueue_entity(cfs_rq, se);
+ 		cfs_rq->h_nr_queued++;
+@@ -8410,6 +8413,14 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
+ 	if (!curr) {
+ 		reweight_eevdf(cfs_rq, se, weight, false);
+ 		place_entity(cfs_rq, se, flags | ENQUEUE_QUEUED);
++		/*
++		 * During a sched_change pattern, current is dequeued and
++		 * cfs_rq->curr becomes NULL while rq->donor == p. As all
++		 * properties can change, cancel slice protection which is
++		 * not reliable anymore.
++		 */
++		if (task_current_donor(rq, p))
++			cancel_protect_slice(se);
+ 		__enqueue_entity(cfs_rq, se);
+ 	}
+ 
+-- 
+2.56.1
+
