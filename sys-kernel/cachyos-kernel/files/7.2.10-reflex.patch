@@ -55,7 +55,7 @@ index db83f33656..1951f9e71c 100644
  
 +config CPU_FREQ_GOV_REFLEX
 +	tristate "'reflex' cpufreq policy governor"
-+	default m
++	default y
 +	depends on CPU_FREQ && SMP && CPU_FREQ_GOV_SCHEDUTIL
 +	select CPU_FREQ_GOV_ATTR_SET
 +	select IRQ_WORK
