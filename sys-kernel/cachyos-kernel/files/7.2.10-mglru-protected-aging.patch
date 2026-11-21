@@ -1,0 +1,74 @@
+From 0918d2ff8c2e34436aefcd4ea1327b7e275c260a Mon Sep 17 00:00:00 2001
+From: NikoMalik <NikoMalik@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 23:52:21 +0300
+Subject: [PATCH] mglru: leave the protected type out of aging and min_ttl
+
+when anon is under vm.anon_min_ratio or clean file under vm.clean_min_ratio
+shrink_folio_list() keeps every folio of that type,aging it anyway only folds
+its oldest gen forward,so every memcg looks younger than min_ttl and kswapd
+oom kills with gigabytes of cache and free swap left
+---
+ mm/vmscan.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 1a7819b55cbc..3dcae010e1ec 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -4260,6 +4260,16 @@ static bool lruvec_is_sizable(struct lruvec *lruvec, struct scan_control *sc)
+ 	return mem_cgroup_online(memcg) ? (total >> sc->priority) : total;
+ }
+ 
++/*
++ * Same rule shrink_folio_list() applies: folios of this type are kept, so
++ * aging it only folds its oldest gen forward and makes it look young
++ */
++static bool lru_gen_type_protected(struct scan_control *sc, int type)
++{
++	return type == LRU_GEN_FILE ? sc->clean_below_min :
++	       sc->anon_below_min && !sc->clean_below_min;
++}
++
+ static bool lruvec_is_reclaimable(struct lruvec *lruvec, struct scan_control *sc,
+ 				  unsigned long min_ttl)
+ {
+@@ -4278,6 +4288,9 @@ static bool lruvec_is_reclaimable(struct lruvec *lruvec, struct scan_control *sc
+ 	for_each_evictable_type(type, swappiness) {
+ 		unsigned long ts;
+ 
++		if (lru_gen_type_protected(sc, type))
++			continue;
++
+ 		gen = lru_gen_from_seq(min_seq[type]);
+ 		ts = READ_ONCE(lruvec->lrugen.timestamps[type][gen]);
+ 		if (time_before(ts, birth))
+@@ -4303,6 +4316,7 @@ static void lru_gen_age_node(struct pglist_data *pgdat, struct scan_control *sc)
+ 	VM_WARN_ON_ONCE(!current_is_kswapd());
+ 
+ 	set_initial_priority(pgdat, sc);
++	prepare_workingset_protection(pgdat, sc);
+ 
+ 	memcg = mem_cgroup_iter(NULL, NULL, NULL);
+ 	do {
+@@ -5172,7 +5186,8 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 			 * plus the other one if its youngest gen is not younger, refault
+ 			 * recency is counted in gens so both types must age at the
+ 			 * same wall-clock pace or the ctrl stops seeing refaults of
+-			 * the faster one
++			 * the faster one. A type the workingset protection keeps is
++			 * not evicted, so it is left alone
+ 			 */
+ 			unsigned long born[ANON_AND_FILE];
+ 
+@@ -5180,6 +5195,8 @@ static bool try_to_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc)
+ 				born[type] = READ_ONCE(lruvec->lrugen.timestamps[type][lru_gen_from_seq(max_seq[type])]);
+ 
+ 			for_each_evictable_type(type, swappiness) {
++				if (lru_gen_type_protected(sc, type))
++					continue;
+ 				if (min_seq[type] + MIN_NR_GENS < max_seq[type] &&
+ 				    time_after(born[type], born[!type]))
+ 					continue;
+-- 
+2.56.1
+

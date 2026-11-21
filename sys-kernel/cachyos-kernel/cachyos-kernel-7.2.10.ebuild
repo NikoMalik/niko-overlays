@@ -1072,6 +1072,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-lz4kdr-no-match-insert.patch"
   eapply "${FILESDIR}/7.2.10-eevdf-vprot-reweight.patch"
   eapply "${FILESDIR}/7.2.10-fair-switching-to-weight.patch"
+  eapply "${FILESDIR}/7.2.10-mglru-protected-aging.patch"
 
 
 
