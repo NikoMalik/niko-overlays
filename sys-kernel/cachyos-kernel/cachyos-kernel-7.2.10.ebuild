@@ -718,6 +718,11 @@ cachy_use_config() {
 		kconf set DEFRAG_MODE_DEFAULT
 	fi
 
+	# desktop boots with the reflex governor unless _per_gov asked for performance
+	if ! use server && [[ ${_per_gov} != yes ]]; then
+		kconf unset CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
+		kconf set CPU_FREQ_DEFAULT_GOV_REFLEX
+	fi
 
 
 	# desktop stops zeroing every page and kmalloc object on allocation,user pages are still zeroed via __GFP_ZERO
@@ -1073,6 +1078,7 @@ src_prepare() {
   eapply "${FILESDIR}/7.2.10-eevdf-vprot-reweight.patch"
   eapply "${FILESDIR}/7.2.10-fair-switching-to-weight.patch"
   eapply "${FILESDIR}/7.2.10-mglru-protected-aging.patch"
+  eapply "${FILESDIR}/7.2.10-reflex-default-gov.patch"
 
 
 
