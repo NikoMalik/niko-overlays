@@ -9,7 +9,7 @@ EAPI=8
 KERNEL_IUSE_GENERIC_UKI=1
 KERNEL_IUSE_MODULES_SIGN=1
 
-LLVM_COMPAT=( {17..22} )
+LLVM_COMPAT=( {19..23} )
 LLVM_OPTIONAL=1
 
 inherit eapi9-pipestatus toolchain-funcs flag-o-matic llvm-r2 kernel-build
