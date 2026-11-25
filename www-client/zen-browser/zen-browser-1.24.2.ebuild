@@ -658,7 +658,7 @@ src_install() {
 
 	local size
 	for size in 16 32 48 64 128; do
-		local icon="${bindir}/browser/chrome/icons/default/default${size}.png"
+		local icon="engine/browser/branding/release/default${size}.png"
 		[[ -f ${icon} ]] && newicon -s ${size} "${icon}" zen.png
 	done
 
